@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Garnet Guard: a second reviewer for every dependency update</title>
+  <meta name="description" content="Garnet Guard checks every dependency update against the last release you trusted, and tells you when it looks different in ways that matter. Open source, Apache-2.0, no telemetry.">
+  <meta property="og:title" content="Garnet Guard">
+  <meta property="og:description" content="A second reviewer for every dependency update. Trust the last release. Check the next.">
+  <meta name="theme-color" content="#8E1B2C">
+  <link rel="icon" type="image/svg+xml" href="assets/brand/favicon-32.svg">
+  <link rel="stylesheet" href="assets/style.css">
+  <script src="assets/site.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="top">
+    <div class="wrap top-inner">
+      <a class="brand" href="./" aria-label="Garnet Guard home">
+        <img class="lockup lockup-light" src="assets/brand/lockup-horizontal.svg" alt="Garnet Guard" width="178" height="40">
+        <img class="lockup lockup-dark" src="assets/brand/lockup-horizontal-reverse.svg" alt="" width="178" height="40">
+      </a>
+      <nav aria-label="Primary">
+        <a href="#replays">Replays</a>
+        <a href="#how">How it works</a>
+        <a href="#start">Get started</a>
+        <a href="https://github.com/orca-solutions/garnet-guard">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span>Pre-alpha · open source · Apache-2.0</p>
+          <h1>A second reviewer for every dependency update.</h1>
+          <p class="lede">Garnet Guard checks every dependency update against the last release you trusted, and tells you when it looks different in ways that matter.</p>
+          <p class="tagline">Trust the last release. Check the next.</p>
+          <div class="cta">
+            <a class="btn btn-primary" href="#replays">See the replays</a>
+            <a class="btn btn-quiet" href="https://github.com/orca-solutions/garnet-guard">Read the code</a>
+          </div>
+          <p class="fine">Nothing is published to PyPI yet. The comment on the right is what the first release posts for the real lightning 2.6.2 compromise, taken from <a href="#replay-lightning-262">the replay below</a>.</p>
+        </div>
+
+        <figure class="hero-figure">
+          <div class="gh-comment" aria-label="Example Garnet Guard pull request comment">
+            <div class="gh-head">
+              <span class="gh-avatar" aria-hidden="true"></span>
+              <span><strong>github-actions</strong> <span class="gh-bot">bot</span> commented</span>
+            </div>
+            <div class="gh-body">
+              <p class="gh-title"><img src="assets/brand/favicon-16.svg" width="16" height="16" alt=""> <strong>Garnet Guard: 1 update needs a look</strong></p>
+              <div class="gh-alert">
+                <p class="gh-alert-label"><span class="tri" aria-hidden="true">!</span> Warning</p>
+                <p><strong>lightning 2.6.1 → 2.6.2</strong></p>
+                <ul>
+                  <li><a href="rules/GRN-C003"><code>GRN-C003</code></a> 2.6.2 adds import-time calls to sensitive APIs: <code>lightning/__init__.py:14</code> calls <code>subprocess.Popen</code> (in <code>_run_runtime()</code>, reached at import).</li>
+                  <li><a href="rules/GRN-T004"><code>GRN-T004</code></a> <code>github.com/Lightning-AI/pytorch-lightning</code> has a tag for 2.6.1 but none for 2.6.2.</li>
+                </ul>
+              </div>
+              <p class="gh-foot">Garnet Guard · what is this? · GRN-C003 · GRN-T004</p>
+            </div>
+          </div>
+          <figcaption>Rendered in the GitHub style the Action uses. A finding is amber because it is a reason to look, not a verdict.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="numbers" aria-labelledby="numbers-h">
+      <div class="wrap">
+        <h2 id="numbers-h" class="visually-hidden">Replay results</h2>
+        <dl class="stats">
+          <div>
+            <dt>Replayed 2026 compromises flagged</dt>
+            <dd><span class="big">3 of 3</span> <span class="unit">from content and tags alone</span></dd>
+          </div>
+          <div>
+            <dt>Clean updates that warned</dt>
+            <dd><span class="big">0 of 20</span> <span class="unit">false positives in the clean set</span></dd>
+          </div>
+          <div>
+            <dt>Package code executed</dt>
+            <dd><span class="big">None</span> <span class="unit">Garnet reads releases as bytes</span></dd>
+          </div>
+        </dl>
+        <p class="fine center">Replayed on 2026-10-10 with <code>uv run python -m backtest</code>. Twenty clean updates is a small set; the larger clean-corpus backtest is due by December 1, 2026, and its numbers will replace these, misses included. <a href="replays/2026-10-10.txt">Full replay output</a>.</p>
+      </div>
+    </section>
+
+    <section id="replays" class="replays" aria-labelledby="replays-h">
+      <div class="wrap">
+        <h2 id="replays-h">Replays</h2>
+        <p class="section-lede">Each replay downloads the release a project trusted and the compromised release that followed, checks both against the hashes PyPI published, and diffs them. Nothing is run. This is the actual output.</p>
+
+        <div class="tabs" role="tablist" aria-label="Replayed incidents">
+          <button role="tab" id="tab-lightning-262" aria-controls="replay-lightning-262" aria-selected="true">lightning 2.6.2</button>
+          <button role="tab" id="tab-lightning-263" aria-controls="replay-lightning-263" aria-selected="false" tabindex="-1">lightning 2.6.3</button>
+          <button role="tab" id="tab-elementary" aria-controls="replay-elementary" aria-selected="false" tabindex="-1">elementary-data 0.23.3</button>
+          <button role="tab" id="tab-clean" aria-controls="replay-clean" aria-selected="false" tabindex="-1">20 clean updates</button>
+        </div>
+
+        <article class="panel" id="replay-lightning-262" role="tabpanel" aria-labelledby="tab-lightning-262">
+          <header class="panel-head">
+            <h3>lightning 2.6.1 → 2.6.2 <span class="verdict verdict-warn">warn</span></h3>
+            <p class="meta">PyPI · April 30, 2026 · <a href="https://osv.dev/vulnerability/MAL-2026-3201">MAL-2026-3201</a></p>
+          </header>
+          <p>Uploaded with a stolen token. A thread started in <code>lightning/__init__.py</code> launches a Bun-based credential stealer the moment anything imports the package. Install-script blocking does not help here, because the payload runs at import, not at install.</p>
+          <pre class="term" tabindex="0"><code><span class="t-b">lightning 2.6.1 → 2.6.2: <span class="t-warn">WARN</span></span>
+  <span class="t-warn">WARN</span>  GRN-C003 new-import-time-exec: 2.6.2 adds import-time calls to sensitive APIs in 1 module(s)
+           - lightning/__init__.py:14 calls subprocess.Popen (in _run_runtime(), reached at import)
+  <span class="t-warn">WARN</span>  GRN-T004 no-matching-tag: github.com/Lightning-AI/pytorch-lightning has a tag for 2.6.1 but none for 2.6.2
+           - 2.6.1 → tag 2.6.1 at 655a3a91828694b9bfc241177f474741e483aeaa &lt;https://github.com/Lightning-AI/lightning/tree/2.6.1&gt;
+           - 2.6.2: no tag named 2.6.2, v2.6.2, lightning-2.6.2 or lightning-v2.6.2 &lt;https://github.com/Lightning-AI/pytorch-lightning/tags&gt;
+
+verdict: warn</code></pre>
+          <div class="limits">
+            <h4>What this replay could not see</h4>
+            <p><code>GRN-T001</code> (lost provenance) cannot fire here: lightning did not publish attestations before the incident, so there was no provenance to lose. <code>GRN-T004</code> is evaluated against the repository's tags as they exist today, not as they stood on April 30.</p>
+          </div>
+        </article>
+
+        <article class="panel" id="replay-lightning-263" role="tabpanel" aria-labelledby="tab-lightning-263">
+          <header class="panel-head">
+            <h3>lightning 2.6.1 → 2.6.3 <span class="verdict verdict-warn">warn</span></h3>
+            <p class="meta">PyPI · April 30, 2026 · <a href="https://osv.dev/vulnerability/MAL-2026-3201">MAL-2026-3201</a></p>
+          </header>
+          <p>A second upload of the same payload minutes later, with no git tag and no workflow run. Garnet compares it with 2.6.1, the last release the project would have trusted.</p>
+          <pre class="term" tabindex="0"><code><span class="t-b">lightning 2.6.1 → 2.6.3: <span class="t-warn">WARN</span></span>
+  <span class="t-warn">WARN</span>  GRN-C003 new-import-time-exec: 2.6.3 adds import-time calls to sensitive APIs in 1 module(s)
+           - lightning/__init__.py:14 calls subprocess.Popen (in _run_runtime(), reached at import)
+  <span class="t-warn">WARN</span>  GRN-T004 no-matching-tag: github.com/Lightning-AI/pytorch-lightning has a tag for 2.6.1 but none for 2.6.3
+           - 2.6.1 → tag 2.6.1 at 655a3a91828694b9bfc241177f474741e483aeaa &lt;https://github.com/Lightning-AI/lightning/tree/2.6.1&gt;
+           - 2.6.3: no tag named 2.6.3, v2.6.3, lightning-2.6.3 or lightning-v2.6.3 &lt;https://github.com/Lightning-AI/pytorch-lightning/tags&gt;
+
+verdict: warn</code></pre>
+          <div class="limits">
+            <h4>What this replay could not see</h4>
+            <p>The same limits as 2.6.2: no earlier attestations for <code>GRN-T001</code> to compare against, and tags as they exist today.</p>
+          </div>
+        </article>
+
+        <article class="panel" id="replay-elementary" role="tabpanel" aria-labelledby="tab-elementary">
+          <header class="panel-head">
+            <h3>elementary-data 0.23.2 → 0.23.3 <span class="verdict verdict-warn">warn</span></h3>
+            <p class="meta">PyPI · April 24, 2026 · <a href="https://osv.dev/vulnerability/MAL-2026-3083">MAL-2026-3083</a></p>
+          </header>
+          <p>Published by the project's own CI after a GitHub Actions script injection, so the upload path looked normal. The release adds <code>elementary.pth</code>, which runs a base64 payload every time Python starts, for every program on the machine.</p>
+          <pre class="term" tabindex="0"><code><span class="t-b">elementary-data 0.23.2 → 0.23.3: <span class="t-warn">WARN</span></span>
+  <span class="t-warn">WARN</span>  GRN-C001 new-pth-file: 0.23.3 adds code that runs at every Python startup (.pth)
+           - new elementary.pth (246,691 bytes, 1 executable line(s)): import os, subprocess, tempfile, base64; x = os.path.join(tempfile.gettempdir(), ".trinny-security-update"); result = "ignore" if os.path.exists(x) else exec(b…
+  <span class="t-warn">WARN</span>  GRN-T004 no-matching-tag: github.com/elementary-data/elementary has a tag for 0.23.2 but none for 0.23.3
+           - 0.23.2 → tag v0.23.2 at c642a369fbe1d1be2ae9eb5e981b8863ece21bed &lt;https://github.com/elementary-data/elementary/tree/v0.23.2&gt;
+           - 0.23.3: no tag named 0.23.3, v0.23.3, elementary-data-0.23.3 or elementary-data-v0.23.3 &lt;https://github.com/elementary-data/elementary/tags&gt;
+
+verdict: warn</code></pre>
+          <div class="limits">
+            <h4>What this replay could not see</h4>
+            <p>Because the project's own pipeline published the release, provenance checks alone would have passed it. The signal is in the content: the new <code>.pth</code> file. <code>GRN-T004</code> is evaluated against tags as they exist today.</p>
+          </div>
+        </article>
+
+        <article class="panel" id="replay-clean" role="tabpanel" aria-labelledby="tab-clean">
+          <header class="panel-head">
+            <h3>20 clean updates <span class="verdict verdict-pass">pass</span></h3>
+            <p class="meta">Routine releases of popular packages, including the clean releases on either side of each incident.</p>
+          </header>
+          <p>A reviewer that warns on everything gets ignored. These updates produced no warning from a detection rule.</p>
+          <ul class="clean-list">
+            <li><code>lightning</code> 2.6.4 → 2.6.5</li>
+            <li><code>lightning</code> 2.6.5 → 2.6.6</li>
+            <li><code>elementary-data</code> 0.23.2 → 0.23.4</li>
+            <li><code>requests</code> 2.32.4 → 2.32.5</li>
+            <li><code>urllib3</code> 2.4.0 → 2.5.0</li>
+            <li><code>certifi</code> 2025.7.14 → 2025.8.3</li>
+            <li><code>idna</code> 3.9 → 3.10</li>
+            <li><code>attrs</code> 25.3.0 → 25.4.0</li>
+            <li><code>packaging</code> 25.0 → 26.0</li>
+            <li><code>jinja2</code> 3.1.5 → 3.1.6</li>
+            <li><code>click</code> 8.2.1 → 8.3.0</li>
+            <li><code>pydantic</code> 2.11.7 → 2.12.0</li>
+            <li><code>httpx</code> 0.28.0 → 0.28.1</li>
+            <li><code>setuptools</code> 80.8.0 → 80.9.0</li>
+            <li><code>django</code> 5.2.6 → 5.2.7</li>
+            <li><code>numpy</code> 2.3.3 → 2.3.4</li>
+            <li><code>boto3</code> 1.40.40 → 1.40.41</li>
+            <li><code>rich</code> 14.1.0 → 14.2.0</li>
+            <li><code>sigstore</code> 4.0.0 → 4.1.0</li>
+            <li><code>pypi-attestations</code> 0.0.28 → 0.0.29</li>
+          </ul>
+        </article>
+
+        <p class="fine">Malicious files are not hosted here. The replay fetches them from files.pythonhosted.org by URL and SHA-256, listed in <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><code>backtest/incidents.toml</code></a>, using hashes from Datadog's <a href="https://github.com/DataDog/malicious-software-packages-dataset">malicious-software-packages-dataset</a>. Advisories are from <a href="https://osv.dev/">OSV</a>.</p>
+      </div>
+    </section>
+
+    <section id="how" class="how" aria-labelledby="how-h">
+      <div class="wrap">
+        <h2 id="how-h">How it works</h2>
+        <p class="section-lede">The attacks that hurt in 2025 and 2026 were not new packages. They were new versions of packages people already trusted, and each one looked different from the last good release in ways a machine can check.</p>
+        <div class="cards">
+          <div class="card">
+            <h3>Trust downgrade</h3>
+            <p>The new release has no provenance attestation when the old one did, was built by a different repository or workflow, or has no matching git tag.</p>
+            <p class="rules"><a href="rules/GRN-T001"><code>GRN-T001</code></a> <a href="rules/GRN-T002"><code>GRN-T002</code></a> <a href="rules/GRN-T003"><code>GRN-T003</code></a> <a href="rules/GRN-T004"><code>GRN-T004</code></a></p>
+          </div>
+          <div class="card">
+            <h3>Risky content change</h3>
+            <p>A new <code>.pth</code> file, a new build hook, or new code that runs a process, loads code or uses the network at import time.</p>
+            <p class="rules"><a href="rules/GRN-C001"><code>GRN-C001</code></a> <a href="rules/GRN-C002"><code>GRN-C002</code></a> <a href="rules/GRN-C003"><code>GRN-C003</code></a></p>
+          </div>
+          <div class="card">
+            <h3>Known bad</h3>
+            <p>The release matches an OSV malicious-package advisory, so a feed has already confirmed it.</p>
+            <p class="rules"><a href="rules/GRN-K001"><code>GRN-K001</code></a></p>
+          </div>
+        </div>
+        <ul class="principles">
+          <li><strong>Never runs the code it inspects.</strong> Releases are read as bytes and parsed with <code>ast</code>.</li>
+          <li><strong>“Couldn't check” is never “pass”.</strong> A fetch or parse that fails is reported as a finding.</li>
+          <li><strong>Quiet on clean updates.</strong> Passing packages collapse to one line in the comment.</li>
+          <li><strong>Explainable.</strong> Every finding names a rule and its evidence, and <code>garnet explain</code> says what to do.</li>
+        </ul>
+
+        <h3 class="sub" id="explain">What the replayed rules say</h3>
+        <p>From <code>garnet explain</code>:</p>
+        <dl class="explain">
+          <div id="rule-GRN-C001">
+            <dt><code>GRN-C001</code> new-pth-file</dt>
+            <dd>Python runs <code>import</code> lines in .pth files in site-packages every time the interpreter starts, for every program, before any of your code. Almost no package needs a new one. <em>What to do:</em> read the .pth file. If it is a legitimate path hook (editable installs, namespace helpers) the release notes usually say so; otherwise treat the release as compromised.</dd>
+          </div>
+          <div id="rule-GRN-C003">
+            <dt><code>GRN-C003</code> new-import-time-exec</dt>
+            <dd>Module top-level code runs the moment anything imports the package, including your test suite and CI. <em>What to do:</em> read the flagged lines. Network or subprocess calls at import are rare in libraries; ask whether the release notes explain them.</dd>
+          </div>
+          <div id="rule-GRN-T001">
+            <dt><code>GRN-T001</code> lost-provenance</dt>
+            <dd>The trusted version was published by CI with a Sigstore attestation proving which repository and workflow built it. A new file with no attestation was most likely uploaded some other way, for example with a stolen or leaked API token. <em>What to do:</em> don't merge yet. Check the project's repository for a release workflow run and a tag for this version.</dd>
+          </div>
+          <div id="rule-GRN-T004">
+            <dt><code>GRN-T004</code> no-matching-tag</dt>
+            <dd>Projects that tag releases normally tag every release. A version on the registry with no tag was probably not built from the repository's history, which is typical of a token-based upload. <em>What to do:</em> check the repository's tags and releases page. A missing tag can be an oversight, so confirm with the maintainers before merging.</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <section id="start" class="start" aria-labelledby="start-h">
+      <div class="wrap">
+        <h2 id="start-h">Get started</h2>
+        <p class="section-lede">Garnet Guard is pre-alpha. You can run the prototype from source today; the PyPI package and the GitHub Action come with the first release.</p>
+        <div class="steps">
+          <div class="step">
+            <h3><span class="step-n">1</span> Today, from source</h3>
+<pre class="code" tabindex="0"><code>git clone https://github.com/orca-solutions/garnet-guard
+cd garnet-guard &amp;&amp; uv sync
+uv run garnet diff lightning 2.6.1 2.6.2
+uv run python -m backtest   # replay every incident</code></pre>
+          </div>
+          <div class="step">
+            <h3><span class="step-n">2</span> First release: one command <span class="soon">planned</span></h3>
+<pre class="code" tabindex="0"><code>uvx garnet-guard check --git-base origin/main</code></pre>
+            <p class="fine">Compares your lockfile with the one on <code>main</code>. Works with uv.lock, poetry.lock, pylock.toml and pinned requirements.txt.</p>
+          </div>
+          <div class="step">
+            <h3><span class="step-n">3</span> First release: on every Dependabot PR <span class="soon">planned</span></h3>
+<pre class="code" tabindex="0"><code>permissions:
+  contents: read
+  pull-requests: write
+steps:
+  - uses: orca-solutions/garnet-guard@&lt;sha&gt;
+    with:
+      fail-on: block</code></pre>
+          </div>
+        </div>
+        <p class="fine">npm support follows Python. Agent hooks for Claude Code and Codex, which stop an agent from quietly adding a risky dependency, are on the <a href="https://github.com/orca-solutions/garnet-guard/blob/main/ROADMAP.md">roadmap</a>.</p>
+      </div>
+    </section>
+
+    <section class="open" aria-labelledby="open-h">
+      <div class="wrap">
+        <h2 id="open-h">Open, and staying that way</h2>
+        <ul class="open-list">
+          <li><strong>Apache-2.0.</strong> The whole engine and every rule.</li>
+          <li><strong>No telemetry.</strong> No account, no API key, nothing phones home. This page loads nothing from third parties either.</li>
+          <li><strong>Detection is never paywalled.</strong> Free for public and private repositories. See <a href="https://github.com/orca-solutions/garnet-guard/blob/main/OPEN_CORE.md">OPEN_CORE.md</a>.</li>
+          <li><strong>Complementary.</strong> Keep your cooldown, pip-audit and malware feeds. Garnet answers a different question: is this release built and shaped like the last one you trusted?</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot-inner">
+      <div>
+        <img class="foot-mark mark-light" src="assets/brand/mark-colour.svg" alt="" width="36" height="36">
+        <img class="foot-mark mark-dark" src="assets/brand/mark-reverse.svg" alt="" width="36" height="36">
+        <p class="tagline">Trust the last release. Check the next.</p>
+      </div>
+      <div class="foot-links">
+        <a href="https://github.com/orca-solutions/garnet-guard">Source</a>
+        <a href="https://github.com/orca-solutions/garnet-guard/blob/main/THREAT_MODEL.md">Threat model</a>
+        <a href="https://github.com/orca-solutions/garnet-guard/blob/main/SECURITY.md">Report a vulnerability</a>
+        <a href="https://github.com/orca-solutions/garnet-guard/issues/new?template=false-positive.md">Report a false positive</a>
+      </div>
+      <p class="credit">Garnet Guard builds on work by PyPI, Sigstore, OSV, the OpenSSF and the researchers who documented each incident. Garnet Guard and the pomegranate mark are trademarks of the Garnet Guard project.</p>
+    </div>
+  </footer>
+</body>
+</html>
