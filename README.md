@@ -8,17 +8,17 @@
 # Garnet Guard
 
 <p align="center">
+  <a href="https://github.com/orca-solutions/garnet-guard/actions/workflows/ci.yml"><img src="https://github.com/orca-solutions/garnet-guard/actions/workflows/ci.yml/badge.svg" alt="CI" height="20"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/orca-solutions/garnet-guard"><img src="https://api.scorecard.dev/projects/github.com/orca-solutions/garnet-guard/badge" alt="OpenSSF Scorecard" height="20"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-8E1B2C" alt="License: Apache-2.0" height="20"></a>
   <img src="https://img.shields.io/badge/status-pre--alpha-5C636B" alt="Status: pre-alpha" height="20">
   <a href="backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20incidents-3%2F3%20warn-8E1B2C" alt="Replayed incidents: 3 of 3 warn" height="20"></a>
   <a href="backtest/clean.toml"><img src="https://img.shields.io/badge/clean%20updates-0%2F20%20warn-1B1F24" alt="Clean updates: 0 of 20 warn" height="20"></a>
 </p>
 
-<!-- Badges, once the first release and CI exist (the "checked by" badge goes live when Garnet Guard checks its own dependency PRs, SPEC §11):
+<!-- Badges, once the first release exists (the "checked by" badge goes live when Garnet Guard checks its own dependency PRs, SPEC §11):
 [![Dependencies checked by Garnet Guard](docs/brand/badge/checked-by-garnet-guard.svg)](https://github.com/orca-solutions/garnet-guard)
 [![PyPI](https://img.shields.io/pypi/v/garnet-guard)](https://pypi.org/project/garnet-guard/)
-[![CI](https://github.com/orca-solutions/garnet-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/orca-solutions/garnet-guard/actions/workflows/ci.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/orca-solutions/garnet-guard/badge)](https://scorecard.dev/viewer/?uri=github.com/orca-solutions/garnet-guard)
 -->
 
 **Garnet Guard checks every dependency update against the last release you trusted, and tells you when it looks different in ways that matter.**
