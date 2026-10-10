@@ -28,6 +28,8 @@ ALLOWED_HOSTS = frozenset(
 )
 
 DEFAULT_MAX_BYTES = 200 * 1024 * 1024
+# Whole-request deadline, including slow streaming bodies (httpx timeouts are per read).
+REQUEST_DEADLINE_SECONDS = 300.0
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
@@ -63,6 +65,7 @@ class Http:
         github_token: str | None = None,
         retries: int = 3,
         user_agent: str = "garnet-guard",
+        transport: httpx.BaseTransport | None = None,  # tests only
     ) -> None:
         self._token = github_token
         self._retries = retries
@@ -70,8 +73,11 @@ class Http:
             verify=_ssl_context(),
             timeout=httpx.Timeout(30.0, connect=10.0),
             follow_redirects=False,
-            headers={"User-Agent": user_agent},
+            # identity: archives are already compressed, and a compressed body
+            # would expand in memory before the size cap could see it.
+            headers={"User-Agent": user_agent, "Accept-Encoding": "identity"},
             trust_env=True,
+            transport=transport,
         )
 
     def close(self) -> None:
@@ -106,9 +112,11 @@ class Http:
         redirects: int = 5,
     ) -> Response:
         parts = urlsplit(url)
-        if parts.scheme != "https":
-            raise NetError(f"refusing non-HTTPS URL: {url}")
         host = (parts.hostname or "").lower()
+        if parts.scheme != "https":
+            raise NetError(f"refusing non-HTTPS URL for host {host or '?'}")
+        if parts.username is not None or parts.password is not None:
+            raise NetError(f"refusing URL with credentials for host {host}")
         if host not in ALLOWED_HOSTS:
             raise NetError(f"host not in allowlist: {host}")
         hdrs = dict(headers or {})
@@ -116,11 +124,14 @@ class Http:
             hdrs["Authorization"] = f"Bearer {self._token}"
 
         delay = 1.0
+        deadline = time.monotonic() + REQUEST_DEADLINE_SECONDS
         for attempt in range(self._retries + 1):
             try:
                 with self._client.stream(method, url, headers=hdrs, json=json_body) as resp:
-                    if resp.status_code in (301, 302, 307, 308) and redirects > 0:
+                    if resp.status_code in (301, 302, 307, 308):
                         location = resp.headers.get("location", "")
+                        if redirects <= 0 or not location:
+                            raise NetError(f"bad or too many redirects from {host}")
                         target = str(httpx.URL(url).join(location))
                         return self._request(
                             method,
@@ -139,11 +150,18 @@ class Http:
                     declared = resp.headers.get("content-length")
                     if declared and declared.isdigit() and int(declared) > max_bytes:
                         raise NetError(f"response from {host} exceeds {max_bytes} bytes")
+                    encoding = resp.headers.get("content-encoding", "identity").lower()
+                    if encoding not in ("", "identity"):
+                        raise NetError(f"{host} sent a {encoding}-encoded body despite identity")
                     buf = bytearray()
-                    for chunk in resp.iter_bytes():
+                    for chunk in resp.iter_raw():
                         buf += chunk
                         if len(buf) > max_bytes:
                             raise NetError(f"response from {host} exceeds {max_bytes} bytes")
+                        if time.monotonic() > deadline:
+                            raise NetError(
+                                f"request to {host} exceeded {REQUEST_DEADLINE_SECONDS:.0f}s"
+                            )
                     return Response(resp.status_code, bytes(buf), url)
             except httpx.HTTPError as err:
                 if attempt < self._retries:

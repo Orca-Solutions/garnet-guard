@@ -62,3 +62,83 @@ def test_entry_count_limit() -> None:
     data = wheel({f"f{i}.txt": "x" for i in range(20)})
     with pytest.raises(LimitExceeded):
         open_archive(data, "a.whl", Limits(max_entries=10))
+
+
+def _tar(files: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("suffix", "compress"),
+    [
+        ("tar.gz", gzip.compress),
+        ("tar.bz2", __import__("bz2").compress),
+        ("tar.xz", __import__("lzma").compress),
+    ],
+)
+def test_concatenated_members_are_all_read(suffix, compress) -> None:
+    """A second compressed member must not hide files from inspection."""
+    # The first member holds tar entries with no end-of-archive marker, so
+    # tarfile (and pip) keep reading into the second member.
+    info = tarfile.TarInfo("pkg-1/setup.py")
+    info.size = 4
+    first = info.tobuf() + b"pass".ljust(512, b"\0")
+    second = _tar({"pkg-1/evil.py": b"import os"})
+    with tarfile.open(fileobj=io.BytesIO(compress(first) + compress(second))) as tf:
+        assert len(tf.getnames()) == 2  # what an installer sees
+    data = compress(first) + compress(second)
+    names = [e.path for e in open_archive(data, f"a.{suffix}", Limits()).entries()]
+    assert names == ["pkg-1/evil.py", "pkg-1/setup.py"]
+
+
+def test_trailing_garbage_after_stream_rejected() -> None:
+    data = gzip.compress(_tar({"pkg-1/a.py": b"x"})) + b"not a gzip member"
+    with pytest.raises(ArchiveError):
+        open_archive(data, "a.tar.gz", Limits())
+
+
+def test_zero_padding_after_stream_allowed() -> None:
+    data = gzip.compress(_tar({"pkg-1/a.py": b"x"})) + b"\0" * 512
+    assert [e.path for e in open_archive(data, "a.tar.gz", Limits()).entries()] == ["pkg-1/a.py"]
+
+
+def test_truncated_stream_rejected() -> None:
+    data = gzip.compress(_tar({"pkg-1/a.py": b"x" * 5000}))
+    with pytest.raises(ArchiveError):
+        open_archive(data[: len(data) // 2], "a.tar.gz", Limits())
+
+
+def test_corrupt_zip_entry_is_archive_error() -> None:
+    body = bytes(range(256)) * 64
+    data = bytearray(wheel({"a.py": body}))
+    start = data.index(b"a.py") + 4  # local header name, then the deflate body
+    data[start : start + 40] = b"\xff" * 40
+    reader = open_archive(bytes(data), "a.whl", Limits())
+    with pytest.raises(ArchiveError):
+        reader.read("a.py")
+
+
+def test_sparse_tar_member_rejected() -> None:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.GNU_FORMAT) as tf:
+        info = tarfile.TarInfo("pkg-1/big.py")
+        info.type = tarfile.GNUTYPE_SPARSE
+        info.size = 0
+        tf.addfile(info)
+    with pytest.raises(ArchiveError):
+        open_archive(buf.getvalue(), "a.tar.gz", Limits())
+
+
+def test_zip_entry_count_checked_before_parsing() -> None:
+    data = wheel({f"f{i}": "" for i in range(50)})
+    with pytest.raises(LimitExceeded):
+        open_archive(data, "a.whl", Limits(max_entries=10))
+    from garnet_guard.safe_archive import _zip_entry_count
+
+    assert _zip_entry_count(data) == 50
