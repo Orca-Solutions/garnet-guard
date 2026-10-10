@@ -35,6 +35,7 @@ Do not: rotate it, outline it, add a gradient or drop shadow, recolour the tell 
 
 - `lockup/lockup-horizontal.svg` is the primary signature. Mark at left, `garnet` in ink, `guard` in garnet. The window is transparent, so it works on paper and white.
 - `lockup-horizontal-reverse.svg` for dark backgrounds, `lockup-horizontal-mono.svg` for one-colour print.
+- `lockup-horizontal-plate.svg` is the horizontal lockup on a paper plate with rounded corners. Use it wherever the background is unknown or can switch under the image (the GitHub README header, embeds in other people's pages). The plate is paper, so on a white page it is almost invisible; on a dark page it reads as a card.
 - `lockup-stacked.svg` for square spaces, with the descriptor *release-diff guard* underneath.
 - `wordmark-only.svg` where the mark already appears nearby (a page header next to the favicon).
 
@@ -119,4 +120,4 @@ The words come from the marketing plan, not from this kit. The kit only carries 
 
 ## Files for the repo
 
-When the repo is seeded, copy `` to `docs/brand/` and reference `docs/brand/lockup/lockup-horizontal.svg` from the README. Set `social/social-preview.svg` (exported to PNG) as the repository social preview and `avatar/avatar-512.svg` (as PNG) as the org avatar. The Apache-2.0 licence covers the code; add a line to NOTICE that the name and mark are trademarks of the project, which is standard for Apache projects and keeps forks from shipping under the same mark.
+When the repo is seeded, copy `` to `docs/brand/` and put the README header in a `<picture>` element that serves `lockup-horizontal-reverse.svg` to the dark theme with `lockup-horizontal-plate.svg` as the fallback (snippet and reasons in `guides/readme-header.md`). The transparent lockup is never the fallback: GitHub's theme switch does not always fire, and the ink `garnet` vanishes on dark. Set `social/social-preview.svg` (exported to PNG) as the repository social preview and `avatar/avatar-512.svg` (as PNG) as the org avatar. The Apache-2.0 licence covers the code; add a line to NOTICE that the name and mark are trademarks of the project, which is standard for Apache projects and keeps forks from shipping under the same mark.

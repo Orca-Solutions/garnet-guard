@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup/lockup-horizontal-reverse.svg">
-    <img src="docs/brand/lockup/lockup-horizontal.svg" alt="Garnet Guard" width="360">
+    <img src="docs/brand/lockup/lockup-horizontal-plate.svg" alt="Garnet Guard" width="380">
   </picture>
 </p>
 
