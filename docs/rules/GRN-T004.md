@@ -18,10 +18,13 @@ status: implemented
 
 The trusted version has a matching git tag in the project's source repository and the new
 version has none. A tag matches if it is named `X`, `vX`, `<name>-X` or `<name>-vX`, where
-`X` is the version and `<name>` is the package name.
+`<name>` is the package name. An exact name wins; otherwise `X` is compared as a PEP 440
+version, so tag `2026.01.04` matches release `2026.1.4`.
 
-The source repository comes from the attestation when there is one, otherwise from the
-project URLs in the package metadata. GitHub repositories only, for now.
+Garnet Guard looks for the tag in the repository named by the attestation first, then in
+the repository in the package's project URLs, and accepts a tag in either. Some projects
+publish from a separate release repository but tag the main one. When no tag is found, the
+finding lists every repository it searched. GitHub repositories only, for now.
 
 ## Why it matters
 
