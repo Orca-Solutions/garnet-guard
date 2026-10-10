@@ -656,3 +656,13 @@ W("explore/lockup-circle-badge.svg", lockup_badge_circle())
 W("explore/lockup-seed-full-stop.svg", lockup_seed_tittle())
 W("explore/lockup-with-one-liner.svg", lockup_vertical_rule())
 print("explore done")
+
+# ---------- plated lockup: reads on any background (README fallback) ----------
+def lockup_plate(pad_x=18, pad_y=10, rx=14, fill=PAPER, edge=None):
+    size = 56; mk = 0.9
+    wm, ww = wordmark(112 + pad_x, 76 + pad_y, size, INK, G7)
+    total = 112 + ww + 10 + 2*pad_x; h = 100 + 2*pad_y
+    stroke = f' stroke="{edge}" stroke-width="1"' if edge else ""
+    plate = f'<rect x="0.5" y="0.5" width="{total-1:.0f}" height="{h-1}" rx="{rx}" fill="{fill}"{stroke}/>'
+    return svg(round(total), h, plate + mark(G7, "none", G9, AMBER, tx=4+pad_x, ty=6+pad_y, s=mk) + wm, vb=f"0 0 {total:.0f} {h}")
+W("kit/lockup/lockup-horizontal-plate.svg", lockup_plate())
