@@ -272,6 +272,7 @@ def _inspect(
             pth_files=tuple(ins.pth_files),
             build_backend=ins.build_backend,
             setup_py_calls=ins.setup_py_calls,
+            entry_points=tuple(sorted(ins.entry_points)),
             unparsed=tuple(ins.unparsed),
             wheel_tag=wheel_tag,
         ),

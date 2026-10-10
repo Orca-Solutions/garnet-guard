@@ -120,7 +120,9 @@ _DOCS = (
         "new-import-time-exec",
         "diff",
         W,
-        "Code that runs at import time gained calls that run processes, load code, or use the network.",
+        "Code that runs at import time gained calls that run processes, load code, or use the network. "
+        "In test files (tests/, test_*.py, conftest.py) it reports at info, unless a non-test module "
+        "imports the file or an entry point names it.",
         "Module top-level code runs the moment anything imports the package, including your test suite "
         "and CI. lightning 2.6.2 started a credential stealer this way, from a thread launched in "
         "lightning/__init__.py.",

@@ -146,6 +146,72 @@ def test_moved_vendored_package_with_edits_compares_to_old_path() -> None:
     assert "GRN-C003" in rules(base, release("1.1", moved))
 
 
+# GRN-C003 in test files
+TEST_PAYLOAD = "import importlib\nMODS = [importlib.import_module(m) for m in ('a', 'b')]\n"
+
+
+def c003(base, cand):
+    return [f for f in run_checks(CHANGE, base, cand).findings if f.rule_id == "GRN-C003"]
+
+
+def test_test_file_reports_at_info() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    cand = release("1.1", {"demo/__init__.py": INIT, "demo/tests/test_api.py": TEST_PAYLOAD})
+    [f] = c003(base, cand)
+    assert f.severity == Severity.INFO and f.default_severity == Severity.WARN
+    assert "test module(s)" in f.title
+    assert run_checks(CHANGE, base, cand).verdict == Verdict.PASS
+
+
+def test_conftest_and_test_prefix_count_as_tests() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    for path in ("conftest.py", "demo/test_util.py"):
+        [f] = c003(base, release("1.1", {"demo/__init__.py": INIT, path: TEST_PAYLOAD}))
+        assert f.severity == Severity.INFO, path
+
+
+def test_test_file_imported_by_package_code_warns() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    for importer in (
+        "from .tests import _boot\n",
+        "import demo.tests._boot\n",
+        "from demo.tests import _boot\n",
+        "from . import tests\n",  # tests/__init__.py imports _boot
+    ):
+        cand = release(
+            "1.1",
+            {
+                "demo/__init__.py": INIT + importer,
+                "demo/tests/__init__.py": "from . import _boot\n",
+                "demo/tests/_boot.py": PAYLOAD,
+            },
+        )
+        [f] = c003(base, cand)
+        assert f.severity == Severity.WARN, importer
+
+
+def test_test_file_named_by_entry_point_warns() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    cand = release(
+        "1.1",
+        {
+            "demo/__init__.py": INIT,
+            "demo/tests/plugin.py": PAYLOAD,
+            "demo-1.1.dist-info/entry_points.txt": "[pytest11]\ndemo = demo.tests.plugin\n",
+        },
+    )
+    [f] = c003(base, cand)
+    assert f.severity == Severity.WARN
+
+
+def test_test_and_package_findings_are_separate() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    cand = release(
+        "1.1", {"demo/__init__.py": INIT + PAYLOAD, "demo/tests/test_api.py": TEST_PAYLOAD}
+    )
+    assert sorted(f.severity for f in c003(base, cand)) == [Severity.INFO, Severity.WARN]
+
+
 # GRN-T004 messages
 def test_tag_finding_names_each_repo() -> None:
     base = replace(

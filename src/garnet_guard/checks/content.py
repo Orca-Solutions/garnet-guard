@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from ..models import ArtifactFacts, Change, Evidence, ModuleIndex, RawFinding, ReleaseFacts
+from ..models import (
+    ArtifactFacts,
+    Change,
+    Evidence,
+    ModuleIndex,
+    RawFinding,
+    ReleaseFacts,
+    Severity,
+)
 
 MAX_EVIDENCE = 25
 
@@ -156,6 +164,38 @@ def _moved_from(path: str, baseline: tuple[ModuleIndex, ...]) -> set[str]:
     return {s.name for s in best.top_level_calls} if best is not None else set()
 
 
+def is_test_path(path: str) -> bool:
+    """tests/ folders, test_*.py and conftest.py (docs/rules/GRN-C003.md)."""
+    parts = path.split("/")
+    name = parts[-1]
+    return "tests" in parts[:-1] or name.startswith("test_") or name == "conftest.py"
+
+
+def _live_test_modules(art: ArtifactFacts) -> set[str]:
+    """Test modules that run outside the package's own tests.
+
+    A test module counts as live when a non-test module imports it, directly
+    or through other test modules, or an entry point names it (a ``pytest11``
+    plugin loads in every pytest run). Importing ``a.b.c`` also runs ``a``
+    and ``a.b``.
+    """
+    tests = {m.module: m for m in art.modules if is_test_path(m.path)}
+    frontier = [i for m in art.modules if m.module not in tests for i in m.imports]
+    frontier += list(art.entry_points)
+    reached: set[str] = set()
+    while frontier:
+        name = frontier.pop()
+        parts = name.split(".")
+        for n in range(1, len(parts) + 1):
+            prefix = ".".join(parts[:n])
+            if prefix in reached:
+                continue
+            reached.add(prefix)
+            if prefix in tests:
+                frontier.extend(tests[prefix].imports)
+    return reached & set(tests)
+
+
 def new_import_time_exec(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
@@ -167,8 +207,8 @@ def new_import_time_exec(
     old = {m.module: {s.name for s in m.top_level_calls} for m in b.modules}
     old_hashes = {f.sha256 for f in b.files}
     new_hash = {f.path: f.sha256 for f in c.files}
-    evidence: list[Evidence] = []
-    modules: set[str] = set()
+    live_tests = _live_test_modules(c)
+    found: dict[bool, tuple[list[Evidence], set[str]]] = {False: ([], set()), True: ([], set())}
     for m in c.modules:
         if m.module in old:
             before = old[m.module]
@@ -176,6 +216,8 @@ def new_import_time_exec(
             continue  # byte-identical to a baseline file: moved, not added
         else:
             before = _moved_from(m.path, b.modules)
+        test_only = is_test_path(m.path) and m.module not in live_tests
+        evidence, modules = found[test_only]
         for s in m.top_level_calls:
             if s.name in before:
                 continue
@@ -190,13 +232,32 @@ def new_import_time_exec(
                 )
             )
             modules.add(m.module)
-    if evidence:
+    for test_only, (evidence, modules) in found.items():
+        if not evidence:
+            continue
+        note: tuple[Evidence, ...]
         more = len(evidence) - MAX_EVIDENCE
         tail = (Evidence("note", f"and {more} more call site(s)"),) if more > 0 else ()
+        if test_only:
+            title = (
+                f"{cand.version} adds import-time calls to sensitive APIs in "
+                f"{len(modules)} test module(s) that no other module imports"
+            )
+            note = (
+                Evidence(
+                    "note",
+                    "test files run only when the package's own tests run, "
+                    "so this is reported at info",
+                ),
+            )
+        else:
+            title = f"{cand.version} adds import-time calls to sensitive APIs in {len(modules)} module(s)"
+            note = ()
         yield RawFinding(
             "GRN-C003",
-            f"{cand.version} adds import-time calls to sensitive APIs in {len(modules)} module(s)",
-            tuple(evidence[:MAX_EVIDENCE]) + tail + _tag_note(b, c),
+            title,
+            tuple(evidence[:MAX_EVIDENCE]) + tail + note + _tag_note(b, c),
+            lowered_to=Severity.INFO if test_only else None,
         )
 
 

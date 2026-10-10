@@ -84,6 +84,7 @@ class _Resolver:
     def __init__(self) -> None:
         self.aliases: dict[str, str] = {}
         self.imports: set[str] = set()
+        self.package: str | None = None  # this module's package, for relative imports
 
     def note_import(self, node: ast.Import | ast.ImportFrom) -> None:
         if isinstance(node, ast.Import):
@@ -96,11 +97,28 @@ class _Resolver:
                     self.aliases[top] = top
         else:
             if node.level:
-                return  # relative imports stay inside the package
+                # Relative imports don't alias outside names; record what they
+                # load so callers can tell which of the package's modules run.
+                base = self._relative_base(node.level)
+                if base is not None:
+                    mod = ".".join(p for p in (base, node.module or "") if p)
+                    self.imports.add(mod)
+                    self.imports.update(f"{mod}.{a.name}" for a in node.names if a.name != "*")
+                return
             mod = node.module or ""
             self.imports.add(mod)
             for a in node.names:
                 self.aliases[a.asname or a.name] = f"{mod}.{a.name}" if mod else a.name
+                if mod and a.name != "*":
+                    self.imports.add(f"{mod}.{a.name}")  # may be a submodule
+
+    def _relative_base(self, level: int) -> str | None:
+        if self.package is None:
+            return None
+        parts = self.package.split(".") if self.package else []
+        if level - 1 > len(parts):
+            return None
+        return ".".join(parts[: len(parts) - (level - 1)])
 
     def resolve(self, func: ast.expr) -> str | None:
         parts = _dotted(func)
@@ -160,18 +178,26 @@ def _local_refs(exprs: Iterable[ast.expr], functions: Mapping[str, ast.AST]) -> 
 
 
 def index_module(
-    source: bytes, *, path: str = "<module>", own: frozenset[str] = frozenset()
+    source: bytes,
+    *,
+    path: str = "<module>",
+    own: frozenset[str] = frozenset(),
+    module: str | None = None,
 ) -> tuple[tuple[CallSite, ...], tuple[str, ...]]:
     """Return (import-time call sites, imports). Raises SyntaxError/ValueError.
 
     ``own`` names the release's own top-level packages; calls into them are
     not sensitive even if the names collide (the ``requests`` package calling
-    its own ``requests.adapters``).
+    its own ``requests.adapters``). ``module`` is the dotted module name, used
+    to resolve relative imports into the imports list.
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # package source triggers SyntaxWarnings
         tree = ast.parse(source, filename=path)
     resolver = _Resolver()
+    if module is not None:
+        is_pkg = path.endswith("__init__.py")
+        resolver.package = module if is_pkg else module.rpartition(".")[0]
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             resolver.note_import(node)

@@ -57,12 +57,14 @@ class Evidence:
 
 @dataclass(frozen=True)
 class RawFinding:
-    """What a check returns: no severity, no suppression."""
+    """What a check returns: no suppression, and the rule's severity unless
+    ``lowered_to`` says otherwise (a check may lower it, never raise it)."""
 
     rule_id: str
     title: str
     evidence: tuple[Evidence, ...]
     release: str | None = None
+    lowered_to: Severity | None = None
 
 
 @dataclass(frozen=True)
@@ -174,6 +176,7 @@ class ArtifactFacts:
     setup_py_calls: tuple[CallSite, ...] = ()
     unparsed: tuple[str, ...] = ()  # .py files ast couldn't parse
     wheel_tag: str | None = None
+    entry_points: tuple[str, ...] = ()  # modules named by entry points
 
 
 @dataclass(frozen=True)
