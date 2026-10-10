@@ -46,3 +46,34 @@ def test_own_package_calls_not_sensitive() -> None:
         b"from requests.adapters import HTTPAdapter\nHTTPAdapter()\n", own=frozenset({"requests"})
     )
     assert calls == ()
+
+
+def test_returned_function_is_not_reached() -> None:
+    # pip 26.2's vendored platformdirs: picks a function at import, never calls it.
+    src = (
+        b"import ctypes\n"
+        b"def via_ctypes():\n    return ctypes.windll.LoadLibrary('shell32')\n"
+        b"def _pick():\n    return via_ctypes\n"
+        b"get_folder = _pick()\n"
+        b"TABLE = {'a': via_ctypes}\n"
+    )
+    calls, _ = index_module(src)
+    assert calls == ()
+
+
+def test_function_passed_to_a_call_or_decorator_is_reached() -> None:
+    src = (
+        b"import atexit, os, subprocess, threading\n"
+        b"def a():\n    os.system('a')\n"
+        b"def b():\n    subprocess.run(['b'])\n"
+        b"def deco(f):\n    os.system('deco')\n    return f\n"
+        b"threading.Thread(target=a).start()\n"
+        b"atexit.register(b)\n"
+        b"@deco\ndef c():\n    pass\n"
+    )
+    calls, _ = index_module(src)
+    assert {(c.name, c.via) for c in calls} == {
+        ("os.system", "a"),
+        ("subprocess.run", "b"),
+        ("os.system", "deco"),
+    }

@@ -79,10 +79,13 @@ def run_checks(change: Change, base: ReleaseFacts | None, cand: ReleaseFacts) ->
 
 def _finding(change: Change, raw: RawFinding) -> Finding:
     doc = DOCS[raw.rule_id]
+    severity = doc.default
+    if raw.lowered_to is not None and raw.lowered_to < doc.default:
+        severity = raw.lowered_to
     return Finding(
         rule_id=raw.rule_id,
         name=doc.name,
-        severity=doc.default,
+        severity=severity,
         default_severity=doc.default,
         change=change,
         title=raw.title,

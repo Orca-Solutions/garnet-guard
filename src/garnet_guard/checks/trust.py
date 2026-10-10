@@ -139,19 +139,33 @@ def no_matching_tag(
     if base is None or base.tag is None or not cand.tag_checked:
         return
     if cand.tag is None:
+        base_repo = base.tag.repo or base.source_repo
+        searched = cand.tag_repos or ((cand.source_repo,) if cand.source_repo else ())
+        where = " or ".join(f"github.com/{r}" for r in searched)
+        title = (
+            f"github.com/{base_repo} has a tag for {base.version} but none for {cand.version}"
+            if tuple(searched) == (base_repo,)
+            else f"{base.version} has a tag in github.com/{base_repo}, "
+            f"but {where} has none for {cand.version}"
+        )
         yield RawFinding(
             "GRN-T004",
-            f"github.com/{cand.source_repo} has a tag for {base.version} but none for {cand.version}",
+            title,
             (
                 Evidence(
                     "tag",
                     f"{base.version} → tag {base.tag.name} at {base.tag.sha}",
-                    url=f"https://github.com/{base.source_repo}/tree/{base.tag.name}",
+                    url=f"https://github.com/{base_repo}/tree/{base.tag.name}",
                 ),
-                Evidence(
-                    "tag",
-                    f"{cand.version}: no tag named {cand.version}, v{cand.version}, {cand.package}-{cand.version} or {cand.package}-v{cand.version}",
-                    url=f"https://github.com/{cand.source_repo}/tags",
+                *(
+                    Evidence(
+                        "tag",
+                        f"{cand.version}: no tag named {cand.version}, v{cand.version}, "
+                        f"{cand.package}-{cand.version} or {cand.package}-v{cand.version} "
+                        f"in github.com/{r}",
+                        url=f"https://github.com/{r}/tags",
+                    )
+                    for r in searched
                 ),
             ),
         )

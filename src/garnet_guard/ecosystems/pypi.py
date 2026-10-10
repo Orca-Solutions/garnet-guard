@@ -187,19 +187,33 @@ def release_facts(
         artifacts.append(art)
 
     # The attested repository beats project URLs, which anyone can edit.
+    url_repo = source_repo
     for p in provenance.values():
         if p is not None and p.verified and (p.repository or "").startswith("github.com/"):
             source_repo = (p.repository or "")[len("github.com/") :]
             break
 
+    # Look for the tag in the attested repository, then the project URL's:
+    # projects that publish from a separate release repository (scipy) tag
+    # the main one.
+    tag_repos = tuple(dict.fromkeys(r for r in (source_repo, url_repo) if r))
     tag = None
     tag_checked = False
-    if source_repo:
+    tag_errors: list[FactError] = []
+    for repo in tag_repos:
         try:
-            tag = github.match_tag(ctx.tags.tags(source_repo), name, version)
-            tag_checked = True
+            tag = github.match_tag(ctx.tags.tags(repo), name, version, repo)
         except NetError as err:
-            errors.append(FactError("GRN-E001", f"tag lookup: {err}", ("GRN-T004",)))
+            tag_errors.append(FactError("GRN-E001", f"tag lookup: {err}", ("GRN-T004",)))
+            continue
+        if tag is not None:
+            break
+    if tag is not None:
+        tag_checked = True
+    elif tag_repos and not tag_errors:
+        tag_checked = True
+    else:
+        errors.extend(tag_errors)
 
     mal: tuple[str, ...] = ()
     advisories_checked = False
@@ -219,6 +233,7 @@ def release_facts(
         source_repo=source_repo,
         tag=tag,
         tag_checked=tag_checked,
+        tag_repos=tag_repos,
         advisories=mal,
         advisories_checked=advisories_checked,
         errors=tuple(errors),
@@ -257,6 +272,7 @@ def _inspect(
             pth_files=tuple(ins.pth_files),
             build_backend=ins.build_backend,
             setup_py_calls=ins.setup_py_calls,
+            entry_points=tuple(sorted(ins.entry_points)),
             unparsed=tuple(ins.unparsed),
             wheel_tag=wheel_tag,
         ),
