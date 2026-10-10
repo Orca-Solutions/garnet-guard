@@ -1,0 +1,56 @@
+=== incident lightning-2.6.2: Uploaded with a stolen token; a thread started in lightning/__init__.py launches a Bun-based credential stealer at import.
+lightning 2.6.1 → 2.6.2: WARN
+  WARN  GRN-C003 new-import-time-exec: 2.6.2 adds import-time calls to sensitive APIs in 1 module(s)
+           - lightning/__init__.py:14 calls subprocess.Popen (in _run_runtime(), reached at import)
+  WARN  GRN-T004 no-matching-tag: github.com/Lightning-AI/pytorch-lightning has a tag for 2.6.1 but none for 2.6.2
+           - 2.6.1 → tag 2.6.1 at 655a3a91828694b9bfc241177f474741e483aeaa <https://github.com/Lightning-AI/lightning/tree/2.6.1>
+           - 2.6.2: no tag named 2.6.2, v2.6.2, lightning-2.6.2 or lightning-v2.6.2 <https://github.com/Lightning-AI/pytorch-lightning/tags>
+
+verdict: warn
+
+=== incident lightning-2.6.3: Second upload of the same payload minutes later, with no git tag or workflow run.
+lightning 2.6.1 → 2.6.3: WARN
+  WARN  GRN-C003 new-import-time-exec: 2.6.3 adds import-time calls to sensitive APIs in 1 module(s)
+           - lightning/__init__.py:14 calls subprocess.Popen (in _run_runtime(), reached at import)
+  WARN  GRN-T004 no-matching-tag: github.com/Lightning-AI/pytorch-lightning has a tag for 2.6.1 but none for 2.6.3
+           - 2.6.1 → tag 2.6.1 at 655a3a91828694b9bfc241177f474741e483aeaa <https://github.com/Lightning-AI/lightning/tree/2.6.1>
+           - 2.6.3: no tag named 2.6.3, v2.6.3, lightning-2.6.3 or lightning-v2.6.3 <https://github.com/Lightning-AI/pytorch-lightning/tags>
+
+verdict: warn
+
+=== incident elementary-data-0.23.3: Published by the project's own CI after a GitHub Actions script injection; a new elementary.pth runs a base64 payload at every Python start.
+elementary-data 0.23.2 → 0.23.3: WARN
+  WARN  GRN-C001 new-pth-file: 0.23.3 adds code that runs at every Python startup (.pth)
+           - new elementary.pth (246,691 bytes, 1 executable line(s)): import os, subprocess, tempfile, base64; x = os.path.join(tempfile.gettempdir(), ".trinny-security-update"); result = "ignore" if os.path.exists(x) else exec(b…
+  WARN  GRN-T004 no-matching-tag: github.com/elementary-data/elementary has a tag for 0.23.2 but none for 0.23.3
+           - 0.23.2 → tag v0.23.2 at c642a369fbe1d1be2ae9eb5e981b8863ece21bed <https://github.com/elementary-data/elementary/tree/v0.23.2>
+           - 0.23.3: no tag named 0.23.3, v0.23.3, elementary-data-0.23.3 or elementary-data-v0.23.3 <https://github.com/elementary-data/elementary/tags>
+
+verdict: warn
+
+--- clean lightning 2.6.4 → 2.6.5: pass  
+--- clean lightning 2.6.5 → 2.6.6: pass  
+--- clean elementary-data 0.23.2 → 0.23.4: pass  
+--- clean requests 2.32.4 → 2.32.5: pass  
+--- clean urllib3 2.4.0 → 2.5.0: pass  
+--- clean certifi 2025.7.14 → 2025.8.3: pass  
+--- clean idna 3.9 → 3.10: pass  
+--- clean attrs 25.3.0 → 25.4.0: pass  
+--- clean packaging 25.0 → 26.0: pass  
+--- clean jinja2 3.1.5 → 3.1.6: pass  
+--- clean click 8.2.1 → 8.3.0: pass  
+--- clean pydantic 2.11.7 → 2.12.0: pass  
+--- clean httpx 0.28.0 → 0.28.1: pass  
+--- clean setuptools 80.8.0 → 80.9.0: pass  
+--- clean django 5.2.6 → 5.2.7: pass  
+--- clean numpy 2.3.3 → 2.3.4: pass  
+--- clean boto3 1.40.40 → 1.40.41: pass  
+--- clean rich 14.1.0 → 14.2.0: pass  
+--- clean sigstore 4.0.0 → 4.1.0: pass  
+--- clean pypi-attestations 0.0.28 → 0.0.29: pass  
+
+SUMMARY
+  incident lightning-2.6.2: CAUGHT by GRN-C003, GRN-T004
+  incident lightning-2.6.3: CAUGHT by GRN-C003, GRN-T004
+  incident elementary-data-0.23.3: CAUGHT by GRN-C001, GRN-T004
+  clean updates with a warn from a detection rule: 0/20
