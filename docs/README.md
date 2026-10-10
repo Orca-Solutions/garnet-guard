@@ -10,3 +10,4 @@
 - [handoffs/](handoffs/): dated implementation, review and merge handoffs.
 - [brand/](brand/): the brand kit, including voice rules for user-facing text.
 - [DEVOPS.md](DEVOPS.md): deployment agreement. Garnet Guard is a CLI, an Action and a PyPI package with no server; hosting sections are N/A until the hosted app passes Gate A.
+- [RELEASING.md](RELEASING.md): how a release is cut and published, and the one-time PyPI and GitHub settings it depends on.
