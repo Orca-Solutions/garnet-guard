@@ -1,0 +1,57 @@
+# Real compromises replayed by `python -m backtest`.
+#
+# The malicious versions are no longer listed on PyPI, but the files are still
+# served by files.pythonhosted.org. URLs and SHA-256 come from the PyPI JSON
+# snapshot in DataDog's malicious-software-packages-dataset; Garnet checks
+# every download against the hash before reading it. Nothing is executed.
+
+[[incident]]
+id = "lightning-2.6.2"
+package = "lightning"
+baseline = "2.6.1"
+candidate = "2.6.2"
+source_repo = "Lightning-AI/pytorch-lightning"
+osv = "MAL-2026-3201"
+summary = "Uploaded with a stolen token; a thread started in lightning/__init__.py launches a Bun-based credential stealer at import."
+[[incident.files]]
+filename = "lightning-2.6.2-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/2c/8f/6e252f0068a675f0b6d6b62c785a84178ce5cb1231107c3f80b743e70f7f/lightning-2.6.2-py3-none-any.whl"
+sha256 = "3071422c3294e7b61cb490c57c48c8dea569bacf12e57a078293b6547d7586d3"
+packagetype = "bdist_wheel"
+uploaded_at = "2026-04-30T12:45:20+00:00"
+
+[[incident]]
+id = "lightning-2.6.3"
+package = "lightning"
+baseline = "2.6.1"
+candidate = "2.6.3"
+source_repo = "Lightning-AI/pytorch-lightning"
+osv = "MAL-2026-3201"
+summary = "Second upload of the same payload minutes later, with no git tag or workflow run."
+[[incident.files]]
+filename = "lightning-2.6.3-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/82/fa/c2997e897285e3a1f008df9b5202ffab7af740db44a3ffa2c2496083fe2f/lightning-2.6.3-py3-none-any.whl"
+sha256 = "56070a9d8de0c0ffb1ec5c309953cf4679432df5a78df9aeb020fbb73d2be9fb"
+packagetype = "bdist_wheel"
+uploaded_at = "2026-04-30T12:52:46+00:00"
+
+[[incident]]
+id = "elementary-data-0.23.3"
+package = "elementary-data"
+baseline = "0.23.2"
+candidate = "0.23.3"
+source_repo = "elementary-data/elementary"
+osv = "MAL-2026-3083"
+summary = "Published by the project's own CI after a GitHub Actions script injection; a new elementary.pth runs a base64 payload at every Python start."
+[[incident.files]]
+filename = "elementary_data-0.23.3-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/47/00/b0fc1c83e7e15a76cf9b19e458da3ace52fda1009496349487a4f3312037/elementary_data-0.23.3-py3-none-any.whl"
+sha256 = "d0f7e407596e5ed73c91f00f00398269109e182231904cfb60367094119cf141"
+packagetype = "bdist_wheel"
+uploaded_at = "2026-04-24T22:20:47+00:00"
+[[incident.files]]
+filename = "elementary_data-0.23.3.tar.gz"
+url = "https://files.pythonhosted.org/packages/22/11/e4da100e382242b5e00e60f9da48fe9927b31c8fa4ea331162c137321feb/elementary_data-0.23.3.tar.gz"
+sha256 = "e06db3fdea8102f3954875b733a1f770e5c7e06bca110742e0bac6580216d90a"
+packagetype = "sdist"
+uploaded_at = "2026-04-24T22:20:49+00:00"
