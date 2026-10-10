@@ -22,4 +22,7 @@ Tags come from GitHub's public git ref advertisement (`github.com/<repo>.git/inf
 
 ## Consequences
 
+`sigstore` fetches its TUF trust root itself, from `tuf-repo-cdn.sigstore.dev`, outside `net.py`. Those hosts are not in the `net.py` allowlist because Garnet's own code never calls them.
+
+
 The install stays small. Attestation verification falls back to the trust root that ships with `sigstore` when the Sigstore TUF repository can't be reached, and the result is the same unless Sigstore has rotated keys since that release.
