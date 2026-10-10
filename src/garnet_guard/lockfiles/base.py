@@ -24,6 +24,20 @@ class LockfileError(Exception):
     """The lockfile can't be read or its format isn't supported."""
 
 
+_TOML_POSITION = re.compile(r"\(at line (\d+), column (\d+)\)")
+
+
+def toml_error(err: ValueError) -> LockfileError:
+    """A TOML error that names only the position.
+
+    tomllib messages can quote keys from the file, and the report may be
+    posted publicly, so the file's own text is left out.
+    """
+    m = _TOML_POSITION.search(str(err))
+    where = f" at line {m[1]}, column {m[2]}" if m else ""
+    return LockfileError(f"invalid TOML{where}")
+
+
 @dataclass(frozen=True)
 class Pin:
     """One package entry in a lockfile.

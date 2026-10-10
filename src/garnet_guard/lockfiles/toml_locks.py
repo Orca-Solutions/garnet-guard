@@ -6,7 +6,7 @@ import re
 import tomllib
 from typing import Any
 
-from .base import PYPI_INDEXES, LockfileError, Pin, normalize
+from .base import PYPI_INDEXES, Pin, normalize, toml_error
 
 
 def block_lines(text: str, header: str) -> list[int]:
@@ -36,7 +36,7 @@ def _load(text: str) -> dict[str, Any]:
     try:
         return tomllib.loads(text)
     except tomllib.TOMLDecodeError as err:
-        raise LockfileError(f"invalid TOML: {err}") from err
+        raise toml_error(err) from err
 
 
 def parse_uv(text: str) -> list[Pin]:

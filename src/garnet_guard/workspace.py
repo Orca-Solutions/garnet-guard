@@ -6,6 +6,7 @@ never runs anything from a package.
 
 from __future__ import annotations
 
+import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,18 +25,52 @@ class Unchecked:
     detail: str
 
 
+def _present(path: Path) -> bool:
+    # Symlinks are listed too, so the caller refuses them instead of skipping.
+    return path.is_file() or path.is_symlink()
+
+
 def discover(root: Path) -> list[Path]:
-    """Lockfiles in ``root`` (and ``requirements/``), in a stable order."""
+    """Lockfiles in ``root`` (and ``requirements/``), in a stable order.
+
+    Symlinked entries are returned, not followed; check them with
+    :func:`plain_file` before reading.
+    """
     found: list[Path] = []
     for name in _DIRECT:
-        if (root / name).is_file():
+        if _present(root / name):
             found.append(root / name)
-    found += sorted(p for p in root.glob("pylock.*.toml") if p.is_file())
-    found += sorted(p for p in root.glob("requirements*.txt") if p.is_file())
+    found += sorted(p for p in root.glob("pylock.*.toml") if _present(p))
+    found += sorted(p for p in root.glob("requirements*.txt") if _present(p))
     req_dir = root / "requirements"
     if req_dir.is_dir():
-        found += sorted(p for p in req_dir.glob("*.txt") if p.is_file())
+        found += sorted(p for p in req_dir.glob("*.txt") if _present(p))
     return found
+
+
+def plain_file(path: Path, root: Path) -> bool:
+    """True if ``path`` is a regular file reached without following a symlink.
+
+    A pull request can replace a lockfile, or the ``requirements/`` folder,
+    with a symlink to a file on the CI runner; reading it would put that
+    file's contents in a public report. Every component below ``root`` is
+    checked, and the file itself always is.
+    """
+    full = path if path.is_absolute() else root / path
+    try:
+        parts = full.relative_to(root).parts
+    except ValueError:
+        parts = ()
+    current = root
+    for part in parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            return False
+    try:
+        mode = full.lstat().st_mode
+    except OSError:
+        return False
+    return stat.S_ISREG(mode)
 
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:

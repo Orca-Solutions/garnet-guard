@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from garnet_guard.lockfiles import LockfileError, Pin, detect, diff_pins, parse
-from garnet_guard.workspace import changes_for, discover, git_show
+from garnet_guard.workspace import changes_for, discover, git_show, plain_file
 
 UV = b"""version = 1
 requires-python = ">=3.11"
@@ -172,3 +172,30 @@ def test_discover_and_git_show(tmp_path: Path) -> None:
         git_show("no-such-ref", tmp_path / "uv.lock", cwd=tmp_path)
     with pytest.raises(LockfileError):
         git_show("--output=/tmp/x", tmp_path / "uv.lock", cwd=tmp_path)
+
+
+def test_symlinked_lockfiles_are_listed_but_not_plain(tmp_path: Path) -> None:
+    secret = tmp_path / "outside" / "secret.txt"
+    secret.parent.mkdir()
+    secret.write_text("TOKEN=hunter2\n")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").symlink_to(secret)
+    (repo / "requirements").symlink_to(secret.parent, target_is_directory=True)
+    (repo / "uv.lock").write_bytes(UV)
+    found = discover(repo)
+    assert [p.relative_to(repo).as_posix() for p in found] == [
+        "uv.lock",
+        "requirements.txt",
+        "requirements/secret.txt",
+    ]
+    assert [plain_file(p, repo) for p in found] == [True, False, False]
+    assert not plain_file(Path("requirements/secret.txt"), repo)
+    assert not plain_file(Path("missing.txt"), repo)
+
+
+def test_toml_errors_do_not_quote_the_file() -> None:
+    with pytest.raises(LockfileError) as err:
+        parse("uv.lock", b"version = 1\n[hunter2]\n[hunter2]\n")
+    assert "hunter2" not in str(err.value)
+    assert "line 3" in str(err.value)

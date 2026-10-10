@@ -72,3 +72,18 @@ def test_check_usage_errors(tmp_path, monkeypatch) -> None:
     (tmp_path / "a.txt").write_text("x==1\n")
     assert main(["check", "--base", "a.txt", "--head", "a.txt", "--format", "sarif"]) == 3
     assert main(["check", "--base", "a.txt", "--head", "a.txt", "--policy", "p.toml"]) == 3
+
+
+def test_check_refuses_symlinked_lockfile(tmp_path, monkeypatch, capsys) -> None:
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOKEN=hunter2\n")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "base.txt").write_text("")
+    (repo / "requirements.txt").symlink_to(secret)
+    monkeypatch.chdir(repo)
+    assert main(["check", "--base", "base.txt", "--format", "json"]) == 3
+    assert main(["check", "--base", "base.txt", "--head", "requirements.txt"]) == 3
+    captured = capsys.readouterr()
+    assert "hunter2" not in captured.out + captured.err
+    assert "symlink" in captured.err

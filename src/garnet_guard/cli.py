@@ -16,7 +16,7 @@ from .facts.pyindex import SENSITIVE_SET_VERSION, sensitive_set
 from .lockfiles import LockfileError
 from .models import Change, Severity
 from .report import to_json, to_text
-from .workspace import Unchecked, changes_for, dedupe, discover, git_show
+from .workspace import Unchecked, changes_for, dedupe, discover, git_show, plain_file
 
 _FAIL_ON = {"warn": Severity.WARN, "block": Severity.BLOCK, "never": Severity.OFF}
 
@@ -115,7 +115,9 @@ def _check(args: argparse.Namespace) -> int:
     changes: list[Change] = []
     unchecked: list[Unchecked] = []
     for head in heads:
-        if not head.is_file():
+        if not plain_file(head, cwd):
+            if head.is_symlink() or head.exists():
+                raise UsageError(f"refusing {head}: lockfiles must be regular files, not symlinks")
             raise UsageError(f"no such lockfile: {head}")
         base = Path(args.base).read_bytes() if args.base else git_show(args.git_base, head, cwd=cwd)
         name = os.path.relpath(head, cwd) if head.is_absolute() else head.as_posix()

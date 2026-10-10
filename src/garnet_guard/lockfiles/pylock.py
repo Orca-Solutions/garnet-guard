@@ -5,7 +5,7 @@ from __future__ import annotations
 import tomllib
 from typing import Any
 
-from .base import PYPI_FILE_HOST, PYPI_INDEXES, LockfileError, Pin, normalize
+from .base import PYPI_FILE_HOST, PYPI_INDEXES, Pin, normalize, toml_error
 from .toml_locks import block_lines
 
 
@@ -38,7 +38,7 @@ def parse(text: str) -> list[Pin]:
     try:
         doc = tomllib.loads(text)
     except tomllib.TOMLDecodeError as err:
-        raise LockfileError(f"invalid TOML: {err}") from err
+        raise toml_error(err) from err
     lines = block_lines(text, "[[packages]]")
     pins = []
     for i, pkg in enumerate(doc.get("packages", [])):
