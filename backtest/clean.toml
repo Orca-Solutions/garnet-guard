@@ -1,0 +1,25 @@
+# Clean updates: legitimate consecutive releases. Any warn here is a false
+# positive (or a real finding worth a look). The month-2 corpus replaces this
+# with the last ~20 releases of the top ~500 PyPI packages.
+pairs = [
+  ["lightning", "2.6.4", "2.6.5"],
+  ["lightning", "2.6.5", "2.6.6"],
+  ["elementary-data", "0.23.2", "0.23.4"],
+  ["requests", "2.32.4", "2.32.5"],
+  ["urllib3", "2.4.0", "2.5.0"],
+  ["certifi", "2025.7.14", "2025.8.3"],
+  ["idna", "3.9", "3.10"],
+  ["attrs", "25.3.0", "25.4.0"],
+  ["packaging", "25.0", "26.0"],
+  ["jinja2", "3.1.5", "3.1.6"],
+  ["click", "8.2.1", "8.3.0"],
+  ["pydantic", "2.11.7", "2.12.0"],
+  ["httpx", "0.28.0", "0.28.1"],
+  ["setuptools", "80.8.0", "80.9.0"],
+  ["django", "5.2.6", "5.2.7"],
+  ["numpy", "2.3.3", "2.3.4"],
+  ["boto3", "1.40.40", "1.40.41"],
+  ["rich", "14.1.0", "14.2.0"],
+  ["sigstore", "4.0.0", "4.1.0"],
+  ["pypi-attestations", "0.0.28", "0.0.29"],
+]

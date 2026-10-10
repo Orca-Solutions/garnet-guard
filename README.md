@@ -60,6 +60,20 @@ Garnet Guard: 1 of 3 updates needs a look
 
 **Locally and in agent hooks (planned).** `garnet check` compares two lockfiles, and a pre-install hook stops Claude Code or Codex from quietly adding a risky dependency.
 
+## Try it today (0.1 preview)
+
+`garnet diff` compares two releases of one PyPI package:
+
+```sh
+uv sync
+uv run garnet diff requests 2.32.4 2.32.5
+uv run garnet diff pypi:lightning 2.6.4 2.6.5 --format json
+uv run garnet explain GRN-C003
+uv run python -m backtest        # replay the 2026 incidents and the clean corpus
+```
+
+The exit code is 0 below `--fail-on` (default `block`), 1 for warn, 2 for block and 3 if Garnet Guard itself failed.
+
 ## Ecosystems
 
 Python first (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt). npm (package-lock, pnpm-lock, yarn.lock) follows.
