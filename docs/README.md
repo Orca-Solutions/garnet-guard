@@ -4,6 +4,7 @@
 - [../WORKING_RECORD.md](../WORKING_RECORD.md): current state, tasks, verification and review dispositions.
 - [SPEC-v1.md](SPEC-v1.md): the normative 1.0 specification. Read before changing behavior users see.
 - [API.md](API.md): code design, layers, import rules and the public Python API. Read before changing code structure.
+- [rules/](rules/README.md): one page per rule ID: what it checks, why it matters, an example finding, and how to resolve or allowlist it. Findings and the PR comment link here.
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) and [../THREAT_MODEL.md](../THREAT_MODEL.md): overview and security model. Read the threat model before touching anything that reads package contents or runs in CI.
 - [decisions/](decisions/): architecture decision records, accepted and superseded.
 - [handoffs/](handoffs/): dated implementation, review and merge handoffs.
