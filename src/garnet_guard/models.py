@@ -88,6 +88,7 @@ class Finding:
     explanation: str
     remediation: str
     release: str | None = None
+    docs_url: str | None = None
 
 
 @dataclass(frozen=True)

@@ -6,6 +6,14 @@ from ..models import RuleDoc, Severity
 
 W, B = Severity.WARN, Severity.BLOCK
 
+# One place for rule links, so moving to a real docs domain is a single change.
+RULE_DOCS_BASE = "https://github.com/orca-solutions/garnet-guard/blob/main/docs/rules/"
+
+
+def rule_url(rule_id: str) -> str:
+    return f"{RULE_DOCS_BASE}{rule_id}.md"
+
+
 _DOCS = (
     RuleDoc(
         "GRN-T001",

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from . import __version__
 from .checks import ALL_CHECKS, DOCS
+from .checks.docs import rule_url
 from .ecosystems import github, pypi
 from .models import (
     Change,
@@ -89,6 +90,7 @@ def _finding(change: Change, raw: RawFinding) -> Finding:
         explanation=doc.explanation,
         remediation=doc.remediation,
         release=raw.release,
+        docs_url=rule_url(raw.rule_id),
     )
 
 

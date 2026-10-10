@@ -9,6 +9,7 @@ from collections.abc import Sequence
 
 from . import __version__
 from .checks import DOCS
+from .checks.docs import rule_url
 from .engine import Options, compare, report
 from .facts.pyindex import SENSITIVE_SET_VERSION, sensitive_set
 from .models import Severity
@@ -93,6 +94,7 @@ def _explain(rule_id: str) -> int:
     print(doc.summary + "\n")
     print("Why it matters: " + doc.explanation + "\n")
     print("What to do: " + doc.remediation)
+    print("More: " + rule_url(doc.rule_id))
     if doc.rule_id in ("GRN-C002", "GRN-C003"):
         print(f"\nSensitive calls (set {SENSITIVE_SET_VERSION}):")
         for s in sensitive_set():
