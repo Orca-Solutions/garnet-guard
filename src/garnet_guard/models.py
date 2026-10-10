@@ -180,6 +180,7 @@ class ArtifactFacts:
 class TagInfo:
     name: str
     sha: str | None
+    repo: str | None = None  # owner/repo the tag was found in
 
 
 @dataclass(frozen=True)
@@ -202,6 +203,7 @@ class ReleaseFacts:
     source_repo: str | None = None
     tag: TagInfo | None = None
     tag_checked: bool = False
+    tag_repos: tuple[str, ...] = ()  # every repo searched for the tag
     advisories: tuple[str, ...] = ()
     advisories_checked: bool = False
     errors: tuple[FactError, ...] = ()

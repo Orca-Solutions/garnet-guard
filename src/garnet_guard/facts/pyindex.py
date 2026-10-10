@@ -4,8 +4,9 @@ Parses source with ``ast`` only. Nothing is imported or executed.
 
 "Top level" means statements that run when the module is imported: module
 statements, class bodies, decorators and default arguments, plus the bodies
-of functions in the same module that top-level code calls or hands to
-something else (``threading.Thread(target=f)``, ``atexit.register(f)``).
+of functions in the same module that top-level code calls, decorates with,
+or passes to a call (``threading.Thread(target=f)``, ``atexit.register(f)``).
+A function that is only returned or stored is not followed.
 Code under ``if __name__ == "__main__":`` is skipped.
 """
 
@@ -13,7 +14,7 @@ from __future__ import annotations
 
 import ast
 import warnings
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 
 from ..models import CallSite
 
@@ -129,6 +130,7 @@ def _walk_exec(nodes: Iterable[ast.AST]) -> Iterator[ast.AST]:
     while stack:
         node = stack.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield node  # for its decorators; the body runs only when called
             stack.extend(node.decorator_list)
             stack.extend(d for d in node.args.defaults)
             stack.extend(d for d in node.args.kw_defaults if d is not None)
@@ -139,6 +141,22 @@ def _walk_exec(nodes: Iterable[ast.AST]) -> Iterator[ast.AST]:
             continue
         yield node
         stack.extend(ast.iter_child_nodes(node))
+
+
+def _local_refs(exprs: Iterable[ast.expr], functions: Mapping[str, ast.AST]) -> list[str]:
+    """Local functions that a call or decorator runs or is handed.
+
+    Only a call's target, its direct arguments (``Thread(target=f)``,
+    ``atexit.register(f)``) and decorators count. A function that is merely
+    returned or stored is not reached.
+    """
+    out = []
+    for e in exprs:
+        if isinstance(e, ast.Starred):
+            e = e.value
+        if isinstance(e, ast.Name) and e.id in functions:
+            out.append(e.id)
+    return out
 
 
 def index_module(
@@ -173,8 +191,11 @@ def index_module(
                 name = resolver.resolve(node.func)
                 if name is not None and name.split(".")[0] not in own and is_sensitive(name, node):
                     calls.append(CallSite(name=name, line=node.lineno, via=via))
-            if isinstance(node, ast.Name) and node.id in functions:
-                reached.append(node.id)
+                reached += _local_refs(
+                    [node.func, *node.args, *(k.value for k in node.keywords)], functions
+                )
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                reached += _local_refs(node.decorator_list, functions)
         for fname in reached:
             if fname not in seen_funcs:
                 seen_funcs.add(fname)

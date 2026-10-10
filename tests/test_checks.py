@@ -1,7 +1,7 @@
 from dataclasses import replace
 
 from garnet_guard.engine import run_checks
-from garnet_guard.models import Change, FactError, Severity, Verdict
+from garnet_guard.models import Change, FactError, Severity, TagInfo, Verdict
 from tests.builders import prov, release
 
 CHANGE = Change("pypi", "demo", "1.0", "1.1")
@@ -119,6 +119,49 @@ def test_subprocess_inside_uncalled_function_is_quiet() -> None:
     assert "GRN-C003" not in rules(
         release("1.0", {"demo/__init__.py": INIT}), release("1.1", {"demo/__init__.py": src})
     )
+
+
+def test_moved_unchanged_module_is_quiet() -> None:
+    vendored = "import os\nos.system('true')\n"
+    base = release("1.0", {"demo/__init__.py": INIT, "demo/_lib/compat.py": vendored})
+    cand = release("1.1", {"demo/__init__.py": INIT, "demo/_external/compat.py": vendored})
+    assert "GRN-C003" not in rules(base, cand)
+
+
+def test_moved_and_changed_module_fires() -> None:
+    vendored = "import os\nos.system('true')\n"
+    base = release("1.0", {"demo/__init__.py": INIT, "demo/_lib/compat.py": vendored})
+    cand = release(
+        "1.1", {"demo/__init__.py": INIT, "demo/_external/compat.py": vendored + "X = 1\n"}
+    )
+    assert "GRN-C003" in rules(base, cand)
+
+
+def test_moved_vendored_package_with_edits_compares_to_old_path() -> None:
+    old = "import os\nos.system('true')\n"
+    base = release("1.0", {"demo/__init__.py": INIT, "demo/_lib/compat/numpy/__init__.py": old})
+    moved = {"demo/__init__.py": INIT, "demo/_external/compat/numpy/__init__.py": old + "X = 1\n"}
+    assert "GRN-C003" not in rules(base, release("1.1", moved))
+    moved["demo/_external/compat/numpy/__init__.py"] = old + "exec('1')\n"
+    assert "GRN-C003" in rules(base, release("1.1", moved))
+
+
+# GRN-T004 messages
+def test_tag_finding_names_each_repo() -> None:
+    base = replace(
+        release("1.0"), source_repo="scipy/scipy", tag=TagInfo("v1.0", "abc", "scipy/scipy")
+    )
+    cand = replace(
+        release("1.1", tag=False),
+        source_repo="scipy/scipy-release",
+        tag_repos=("scipy/scipy-release", "scipy/scipy"),
+    )
+    [f] = [f for f in run_checks(CHANGE, base, cand).findings if f.rule_id == "GRN-T004"]
+    assert f.title == (
+        "1.0 has a tag in github.com/scipy/scipy, "
+        "but github.com/scipy/scipy-release or github.com/scipy/scipy has none for 1.1"
+    )
+    assert f.evidence[0].url == "https://github.com/scipy/scipy/tree/v1.0"
 
 
 # errors

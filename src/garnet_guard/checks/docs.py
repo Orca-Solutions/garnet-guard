@@ -58,7 +58,9 @@ _DOCS = (
         "The trusted version had a matching git tag in the source repository; the new version has none.",
         "Projects that tag releases normally tag every release. A version on the registry with no tag "
         "was probably not built from the repository's history, which is typical of a token-based upload. "
-        "Accepted tag forms are X, vX, <name>-X and <name>-vX.",
+        "Accepted tag forms are X, vX, <name>-X and <name>-vX, with X compared as a version "
+        "(tag 2026.01.04 matches 2026.1.4). Both the attested repository and the project's "
+        "source URL are searched.",
         "Check the repository's tags and releases page. A missing tag can be an oversight, so confirm "
         "with the maintainers before merging.",
     ),

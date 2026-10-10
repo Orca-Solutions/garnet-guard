@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 
+from packaging.version import InvalidVersion, Version
+
 from ..models import TagInfo
 from ..net import Http, NetError
 
@@ -73,12 +75,42 @@ class TagLookup:
         return self._cache[repo]
 
 
-def match_tag(tags: dict[str, str], package: str, version: str) -> TagInfo | None:
-    """SPEC GRN-T004: accept X, vX, <name>-X and <name>-vX."""
-    names = [version, f"v{version}"]
-    for n in {package, package.replace("-", "_"), package.replace("_", "-")}:
-        names += [f"{n}-{version}", f"{n}-v{version}"]
-    for name in names:
-        if name in tags:
-            return TagInfo(name=name, sha=tags[name])
+def _prefixes(package: str) -> list[str]:
+    out = [""]
+    for n in sorted({package, package.replace("-", "_"), package.replace("_", "-")}):
+        out.append(f"{n}-")
+    return out
+
+
+def _as_version(text: str) -> Version | None:
+    try:
+        return Version(text)
+    except InvalidVersion:
+        return None
+
+
+def match_tag(
+    tags: dict[str, str], package: str, version: str, repo: str | None = None
+) -> TagInfo | None:
+    """SPEC GRN-T004: accept X, vX, <name>-X and <name>-vX.
+
+    An exact name wins. Otherwise X is compared as a PEP 440 version, so
+    tag ``2026.01.04`` matches release ``2026.1.4``.
+    """
+    prefixes = _prefixes(package)
+    for p in prefixes:
+        for name in (f"{p}{version}", f"{p}v{version}"):
+            if name in tags:
+                return TagInfo(name=name, sha=tags[name], repo=repo)
+    wanted = _as_version(version)
+    if wanted is None:
+        return None
+    for name in sorted(tags):
+        for p in prefixes:
+            if not name.startswith(p):
+                continue
+            rest = name[len(p) :]
+            rest = rest[1:] if rest[:1] in ("v", "V") else rest
+            if rest and rest[0].isdigit() and _as_version(rest) == wanted:
+                return TagInfo(name=name, sha=tags[name], repo=repo)
     return None

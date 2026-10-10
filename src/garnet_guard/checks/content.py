@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from ..models import ArtifactFacts, Change, Evidence, RawFinding, ReleaseFacts
+from ..models import ArtifactFacts, Change, Evidence, ModuleIndex, RawFinding, ReleaseFacts
 
 MAX_EVIDENCE = 25
 
@@ -135,6 +135,27 @@ def new_build_hook(
         )
 
 
+def _moved_from(path: str, baseline: tuple[ModuleIndex, ...]) -> set[str]:
+    """Sensitive calls of the baseline module this new path was moved from.
+
+    Vendored code often moves between folders (scipy 1.18.0 moved
+    ``_lib/array_api_compat`` to ``_external/array_api_compat``). A baseline
+    module sharing the longest path tail, at least ``<dir>/<file>``, counts as
+    the same module, so only calls it didn't already make are new.
+    """
+    parts = path.split("/")
+    best: ModuleIndex | None = None
+    best_len = 1
+    for m in baseline:
+        other = m.path.split("/")
+        n = 0
+        while n < min(len(parts), len(other)) and parts[-1 - n] == other[-1 - n]:
+            n += 1
+        if n > best_len or (n == best_len and best is not None and m.path < best.path):
+            best, best_len = m, n
+    return {s.name for s in best.top_level_calls} if best is not None else set()
+
+
 def new_import_time_exec(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
@@ -144,10 +165,17 @@ def new_import_time_exec(
     if b is None or c is None:
         return
     old = {m.module: {s.name for s in m.top_level_calls} for m in b.modules}
+    old_hashes = {f.sha256 for f in b.files}
+    new_hash = {f.path: f.sha256 for f in c.files}
     evidence: list[Evidence] = []
     modules: set[str] = set()
     for m in c.modules:
-        before = old.get(m.module, set())
+        if m.module in old:
+            before = old[m.module]
+        elif new_hash.get(m.path) in old_hashes:
+            continue  # byte-identical to a baseline file: moved, not added
+        else:
+            before = _moved_from(m.path, b.modules)
         for s in m.top_level_calls:
             if s.name in before:
                 continue
