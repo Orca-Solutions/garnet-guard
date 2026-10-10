@@ -14,3 +14,5 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
   - couldn't-check: GRN-E001 to E003
 - `garnet explain <RULE-ID>`, text and JSON reports, and exit codes per SPEC §8.
 - `python -m backtest` replays real incidents and a clean corpus.
+- The GitHub Action (`action.yml`) checks a pull request's lockfile changes and posts or updates one comment. It includes a `workflow_run` comment job for forks (`action/comment`) and example workflows in `action/examples/`. See docs/action.md.
+- `garnet diff --format markdown`, and `python -m garnet_guard.markdown`, which renders the PR comment from a JSON report.
