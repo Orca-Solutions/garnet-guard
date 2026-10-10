@@ -10,7 +10,7 @@ status: implemented
 
 | | |
 |---|---|
-| Default severity | `warn` |
+| Default severity | `warn` (`info` in test files) |
 | Kind | diff rule: fires only when the trusted version had the property and the new version lost it, or the new version gained a risky property the trusted version lacked. |
 | Status | Implemented in 0.1 |
 
@@ -21,11 +21,12 @@ Code that runs when a module is imported gains a call in the
 calls, including code reached from `__init__.py`. Calls are resolved through imports and simple
 aliasing by reading the source with `ast`; nothing is executed.
 
-Test files (anything under a `tests/` directory, `test_*.py` and `conftest.py`) are
-reported at `info` instead of `warn`: test suites often start processes or open sockets at
-module level, and installing a package doesn't run them. If a non-test module in the
-package imports a test file, findings in that file stay at `warn`, because then the code
-runs whenever the package is imported.
+In test files (`tests/`, `test_*.py`, `conftest.py`) it reports at `info`, unless a non-test
+module imports the file (directly or through other test modules) or an entry point names it.
+Test files usually run only with the package's own test suite, which often starts processes
+or opens sockets at module level. An imported test file runs whenever the package is
+imported, and one named by an entry point, such as a `pytest11` plugin, loads in every
+pytest run, so those stay at `warn`.
 
 ## Why it matters
 
