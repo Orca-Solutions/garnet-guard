@@ -14,3 +14,4 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
   - couldn't-check: GRN-E001 to E003
 - `garnet explain <RULE-ID>`, text and JSON reports, and exit codes per SPEC §8.
 - `python -m backtest` replays real incidents and a clean corpus.
+- A docs page for every rule ID in `docs/rules/`, with an example finding and how to resolve or allowlist it.
