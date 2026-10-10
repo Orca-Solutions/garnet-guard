@@ -21,6 +21,12 @@ Code that runs when a module is imported gains a call in the
 calls, including code reached from `__init__.py`. Calls are resolved through imports and simple
 aliasing by reading the source with `ast`; nothing is executed.
 
+Test files (anything under a `tests/` directory, `test_*.py` and `conftest.py`) are
+reported at `info` instead of `warn`: test suites often start processes or open sockets at
+module level, and installing a package doesn't run them. If a non-test module in the
+package imports a test file, findings in that file stay at `warn`, because then the code
+runs whenever the package is imported.
+
 ## Why it matters
 
 Top-level module code runs the moment anything imports the package, including your test
