@@ -2,7 +2,7 @@
 
 The Action runs `garnet check` on every pull request that changes a lockfile and posts one comment with the result. The comment is designed for Dependabot and Renovate pull requests, but it works on any pull request. It follows SPEC §10.2 and §9.4.
 
-> Status: preview. The Action needs `garnet check` (lockfile diffing), which is still being built. Until a release is tagged, the examples below carry a `<release-commit-sha>` placeholder.
+> Status: preview. Until a release is tagged, the examples below carry a `<release-commit-sha>` placeholder. A `policy` input arrives when `garnet check` reads policy files; it will read the policy from the pull request's base commit, so a pull request can't relax its own policy.
 
 ## Quick start
 
@@ -36,7 +36,6 @@ Dependabot pull requests get a read-only token by default. The `permissions` blo
 | Input | Default | Meaning |
 |---|---|---|
 | `lockfiles` | `auto` | `auto` checks every lockfile Garnet Guard recognizes. Otherwise, give a newline-separated list of paths relative to the repository root. |
-| `policy` | `garnet.toml` | Policy file. It is read from the pull request's **base commit**, so a pull request can't relax its own policy. If the base commit has no such file, the defaults apply. |
 | `comment` | `true` | Post or update one pull request comment. |
 | `footer` | `true` | End the comment with one line of links to Garnet Guard's docs. Set it to `false` to remove that line. The footer links only to documentation. |
 | `fail-on` | `block` | Fail the step at this verdict or worse: `warn`, `block` or `never`. |
@@ -56,13 +55,13 @@ SARIF upload (`sarif:` in SPEC §10.2) arrives with the SARIF reporter.
 
 1. It refuses any event other than `pull_request`. Under `pull_request_target`, it stops with an error and changes nothing.
 2. It fetches the base commit if the checkout doesn't have it.
-3. It reads the policy from the base commit. If the pull request changes the policy file, a notice says the check used the base version.
-4. It runs `garnet check --git-base <base-sha>` from the Action's own locked environment (`uv sync --frozen`). uv's configuration discovery is turned off (`--no-config`), so a `uv.toml` or `[tool.uv]` table in the pull request can't change how Garnet Guard is installed.
+3. It refuses lockfiles that are symbolic links, since one could point at a file on the runner.
+4. It runs `garnet check --git-base <base-sha>` from the Action's own locked environment (`uv sync --frozen`). uv's configuration discovery is turned off (`--no-config`), so a `uv.toml` or `[tool.uv]` table in the pull request can't change how Garnet Guard is installed. Python runs with `PYTHONSAFEPATH=1` and the renderer with `-I`, so a module in the pull request can't shadow Garnet Guard's.
 5. It renders the comment from the JSON report and adds it to the job summary.
 6. It posts the comment, or updates the earlier one. The earlier comment is found by its `<!-- garnet:report -->` marker and its author (`github-actions[bot]`), so a comment someone else wrote with the same marker is never edited. A pull request with no dependency changes gets no new comment, but an earlier comment is updated.
 7. It fails the step according to `fail-on`.
 
-If Garnet Guard itself fails, the comment says it **couldn't check** the pull request and links to the run log, and the step fails (exit code 3). A failure is never reported as a pass.
+If Garnet Guard itself fails, or a report is missing or invalid, the comment says it **couldn't check** the pull request and links to the run log, and the step fails (exit code 3). A failure is never reported as a pass.
 
 ## Pull requests from forks
 
@@ -77,7 +76,9 @@ The comment job never checks out or runs pull request code. It treats the artifa
 - It renders the comment itself, so it never posts Markdown from the artifact. The renderer validates rule IDs and verdicts and escapes every string, so the report can't add links, mentions or HTML.
 - It finds the pull request from the `workflow_run` event, by head repository and branch, and requires the pull request's head commit to be the commit that was checked. A stale run therefore posts nothing.
 
-A fork's own workflow decides what its report says. Treat a comment on a fork pull request as information from that fork, not as an independent check.
+A fork's own workflow decides what its report says, so comments on fork pull requests end with a line saying the report came from the pull request's own workflow run. Treat such a comment as information from that fork, not as an independent check.
+
+The same holds for any pull request that edits the workflow file itself, for example to set `fail-on: never`: the `pull_request` event runs the pull request's version of the workflow. Review workflow changes in dependency pull requests like any other code.
 
 ## Permissions
 

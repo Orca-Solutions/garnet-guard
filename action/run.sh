@@ -2,8 +2,8 @@
 # Runs garnet check for the Garnet Guard Action and renders the PR comment.
 #
 # Inputs arrive as GARNET_* environment variables (see action.yml). This script
-# never runs code from the pull request: it reads lockfiles and the policy as
-# data, reads the policy from the base commit, and runs Garnet Guard from the
+# never runs code from the pull request: it reads lockfiles as data, refuses
+# lockfiles that are symbolic links, and runs Garnet Guard from the
 # Action's own directory with uv configuration discovery turned off.
 #
 # Writes these step outputs: verdict, exit-code, report-path, comment-path,
@@ -16,6 +16,8 @@ out="${RUNNER_TEMP:?}/garnet-guard"
 mkdir -p "$out"
 report="$out/report.json"
 comment="$out/comment.md"
+# Never pick up a report from an earlier run in the same job.
+rm -f "$report" "$comment"
 ws="${GITHUB_WORKSPACE:?}"
 run_url="${GITHUB_SERVER_URL:?}/${GITHUB_REPOSITORY:?}/actions/runs/${GITHUB_RUN_ID:?}"
 favicon="https://raw.githubusercontent.com/orca-solutions/garnet-guard/main/docs/brand/favicon/favicon-16.svg"
@@ -81,36 +83,28 @@ git -C "$ws" rev-parse --is-inside-work-tree > /dev/null 2>&1 \
 if ! git -C "$ws" cat-file -e "$base^{commit}" 2> /dev/null; then
   if ! git -C "$ws" fetch --quiet --no-tags --depth=1 origin "$base" 2> /dev/null; then
     # The checkout may not have kept credentials (persist-credentials: false).
+    # The header goes through the environment, not argv, so it isn't visible
+    # in the runner's process list.
     auth="$(printf 'x-access-token:%s' "${GARNET_GITHUB_TOKEN:?}" | base64 -w0)"
     echo "::add-mask::$auth"
-    git -C "$ws" -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic $auth" \
-      fetch --quiet --no-tags --depth=1 origin "$base" \
+    GIT_CONFIG_COUNT=1 \
+      GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" \
+      GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+      git -C "$ws" fetch --quiet --no-tags --depth=1 origin "$base" \
       || couldnt_check "Couldn't fetch the base commit $base."
   fi
 fi
 
-# --- Policy, read from the base commit -------------------------------------
-
-policy="$out/policy.toml"
-policy_path="${GARNET_POLICY:-garnet.toml}"
-safe_path "$policy_path" || couldnt_check "policy must be a path inside the repository."
-if git -C "$ws" cat-file -e "$base:$policy_path" 2> /dev/null; then
-  git -C "$ws" show "$base:$policy_path" > "$policy"
-  echo "Using the policy $policy_path from the base commit."
-else
-  # Pass an explicit default policy so garnet doesn't pick up one the pull
-  # request adds.
-  printf '[garnet]\nversion = 1\n' > "$policy"
-  echo "The base commit has no $policy_path; using the default policy."
-fi
-if ! git -C "$ws" diff --quiet "$base" -- "$policy_path" 2> /dev/null; then
-  echo "::notice title=Garnet Guard::This pull request changes $policy_path. The check uses the base commit's version."
-fi
+# --- Policy -----------------------------------------------------------------
+# garnet check doesn't read a policy in this preview, so there is no policy
+# input yet. When it does, read the policy from the base commit and always pass
+# --policy, so a pull request can't relax its own policy.
 
 # --- Run garnet check ------------------------------------------------------
 
-args=(check --git-base "$base" --policy "$policy" --format json --output "$report"
+args=(check --git-base "$base" --format json --output "$report"
       --fail-on "$fail_on" --github-token-env GARNET_GITHUB_TOKEN)
+heads=()
 if [[ "${GARNET_LOCKFILES:-auto}" != "auto" ]]; then
   while IFS= read -r line; do
     line="${line#"${line%%[![:space:]]*}"}"
@@ -118,12 +112,30 @@ if [[ "${GARNET_LOCKFILES:-auto}" != "auto" ]]; then
     [[ -z "$line" ]] && continue
     safe_path "$line" || couldnt_check "lockfiles must be paths inside the repository."
     args+=(--head "$line")
+    heads+=("$ws/$line")
   done <<< "$GARNET_LOCKFILES"
+else
+  # The files garnet check discovers on its own.
+  shopt -s nullglob
+  heads=("$ws/uv.lock" "$ws/poetry.lock" "$ws/pylock.toml" "$ws"/pylock.*.toml
+         "$ws"/requirements*.txt "$ws/requirements" "$ws"/requirements/*.txt)
+  shopt -u nullglob
 fi
+
+# A lockfile in the pull request that is a symbolic link could point at a file
+# on the runner, and an error message could then quote it in the comment.
+for f in "${heads[@]}"; do
+  if [[ -L "$f" ]]; then
+    couldnt_check "${f#"$ws/"} is a symbolic link. Garnet Guard reads only regular lockfiles."
+  fi
+done
 
 # Garnet runs from the Action's own locked environment. --no-config stops uv
 # reading uv.toml or [tool.uv] from the pull request's checkout.
 export UV_PROJECT_ENVIRONMENT="$GARNET_ACTION_PATH/.venv"
+# Python never puts the working directory (the pull request checkout) on
+# sys.path, so a module in the pull request can't shadow Garnet Guard's.
+export PYTHONSAFEPATH=1
 export UV_PYTHON="${UV_PYTHON:-3.12}"
 uvx=(uv --no-config)
 "${uvx[@]}" sync --quiet --frozen --no-dev --project "$GARNET_ACTION_PATH" \
@@ -144,9 +156,9 @@ verdict="$(jq -r '.verdict // empty' "$report")"
 case "$verdict" in pass|warn|block) ;; *) couldnt_check "The report has no verdict." ;; esac
 changes="$(jq '.changes | length' "$report")"
 
-render=("${garnet[@]}" python -m garnet_guard.markdown "$report" --output "$comment")
+render=("${garnet[@]}" python -I -m garnet_guard.markdown "$report" --output "$comment")
 [[ "${GARNET_FOOTER:-true}" == "false" ]] && render+=(--no-footer)
-"${render[@]}" || couldnt_check "Couldn't render the comment."
+(cd "$out" && "${render[@]}") || couldnt_check "Couldn't render the comment."
 cat "$comment" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
 output verdict "$verdict"

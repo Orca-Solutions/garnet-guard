@@ -7,7 +7,6 @@ import re
 from dataclasses import asdict
 from typing import Any
 
-from . import markdown
 from .engine import Report
 from .models import Finding, Severity
 
@@ -95,8 +94,3 @@ def to_json(report: Report) -> str:
         "changes": changes,
     }
     return json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
-
-
-def to_markdown(report: Report, *, footer: bool = True, max_chars: int = markdown.MAX_CHARS) -> str:
-    """The pull request comment (SPEC §9.4), rendered from the JSON report."""
-    return markdown.render(json.loads(to_json(report)), footer=footer, max_chars=max_chars)

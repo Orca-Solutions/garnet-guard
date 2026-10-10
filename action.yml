@@ -14,12 +14,6 @@ inputs:
       "auto" to check every lockfile Garnet Guard recognizes, or a newline-separated
       list of lockfile paths relative to the repository root.
     default: auto
-  policy:
-    description: >-
-      Policy file path. It is read from the pull request's base commit, so a pull
-      request can't relax its own policy. If the base commit has no such file,
-      the defaults apply.
-    default: garnet.toml
   comment:
     description: Post or update one pull request comment with the report.
     default: "true"
@@ -62,7 +56,6 @@ runs:
       env:
         GARNET_ACTION_PATH: ${{ github.action_path }}
         GARNET_LOCKFILES: ${{ inputs.lockfiles }}
-        GARNET_POLICY: ${{ inputs.policy }}
         GARNET_FOOTER: ${{ inputs.footer }}
         GARNET_FAIL_ON: ${{ inputs.fail-on }}
         GARNET_GITHUB_TOKEN: ${{ inputs.github-token }}
