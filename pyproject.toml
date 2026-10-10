@@ -1,0 +1,108 @@
+[project]
+name = "garnet-guard"
+version = "0.1.0.dev0"
+description = "Release-diff guard: flags trust and content changes between two releases of a dependency"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Garnet contributors" }]
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28.1",
+    "packaging>=26.3",
+    "pypi-attestations>=0.0.30",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "respx>=0.23.1",
+    "ruff>=0.17.0",
+]
+
+[project.scripts]
+garnet = "garnet_guard.cli:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["docs", "*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["S101", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S"]
+"backtest/**" = ["S"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+
+[[tool.mypy.overrides]]
+module = ["pypi_attestations.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+markers = ["network: tests that use the network (run with -m network)"]
+addopts = "-m 'not network'"
+testpaths = ["tests"]
+
+[tool.importlinter]
+root_package = "garnet_guard"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "models imports nothing from Garnet"
+type = "forbidden"
+source_modules = ["garnet_guard.models"]
+forbidden_modules = [
+    "garnet_guard.checks",
+    "garnet_guard.facts",
+    "garnet_guard.ecosystems",
+    "garnet_guard.engine",
+    "garnet_guard.net",
+    "garnet_guard.safe_archive",
+    "garnet_guard.report",
+    "garnet_guard.cli",
+]
+
+[[tool.importlinter.contracts]]
+name = "checks are pure: no network, ecosystems or archives"
+type = "forbidden"
+source_modules = ["garnet_guard.checks"]
+forbidden_modules = [
+    "garnet_guard.net",
+    "garnet_guard.ecosystems",
+    "garnet_guard.safe_archive",
+    "garnet_guard.facts",
+    "garnet_guard.engine",
+    "httpx",
+]
+
+[[tool.importlinter.contracts]]
+name = "facts never touch the network"
+type = "forbidden"
+source_modules = ["garnet_guard.facts"]
+forbidden_modules = ["garnet_guard.net", "garnet_guard.ecosystems", "httpx"]
+
+[[tool.importlinter.contracts]]
+name = "only net.py imports the HTTP client"
+type = "forbidden"
+source_modules = [
+    "garnet_guard.checks",
+    "garnet_guard.facts",
+    "garnet_guard.ecosystems",
+    "garnet_guard.engine",
+    "garnet_guard.report",
+    "garnet_guard.cli",
+    "garnet_guard.safe_archive",
+]
+forbidden_modules = ["httpx"]
+allow_indirect_imports = true
