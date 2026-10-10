@@ -91,9 +91,7 @@ def split_front_matter(text: str) -> tuple[dict[str, object], str]:
 
 def rewrite_md_links(rendered: str) -> str:
     """Point links between rule docs at their published URLs."""
-    rendered = re.sub(
-        r'href="(?:\./)?(GRN-[A-Z]\d{3})\.md(#[^"]*)?"', r'href="\1\2"', rendered
-    )
+    rendered = re.sub(r'href="(?:\./)?(GRN-[A-Z]\d{3})\.md(#[^"]*)?"', r'href="\1\2"', rendered)
     return re.sub(r'href="(?:\./)?README\.md(#[^"]*)?"', r'href="./\1"', rendered)
 
 
@@ -107,14 +105,10 @@ def render_rules(rules_dir: Path, out: Path, md: MarkdownIt) -> set[str]:
         meta, body = split_front_matter(src.read_text(encoding="utf-8"))
         rule_id = str(meta.get("id", src.stem))
         if rule_id != src.stem or not RULE_ID.fullmatch(rule_id):
-            raise SystemExit(
-                f"{src}: front matter id {rule_id!r} doesn't match the file name"
-            )
+            raise SystemExit(f"{src}: front matter id {rule_id!r} doesn't match the file name")
         name = str(meta.get("name", ""))
         chips = [
-            str(meta[k])
-            for k in ("kind", "default_severity", "status")
-            if meta.get(k) is not None
+            str(meta[k]) for k in ("kind", "default_severity", "status") if meta.get(k) is not None
         ]
         meta_html = (
             '      <p class="rule-meta">'
@@ -125,9 +119,7 @@ def render_rules(rules_dir: Path, out: Path, md: MarkdownIt) -> set[str]:
         )
         page = PAGE.format(
             title=html.escape(f"{rule_id} {name}".strip()),
-            description=html.escape(
-                f"What Garnet Guard rule {rule_id} means and what to do."
-            ),
+            description=html.escape(f"What Garnet Guard rule {rule_id} means and what to do."),
             root="../",
             crumbs='<a href="./">Rules</a> / ' + html.escape(rule_id),
             meta=meta_html,
@@ -164,9 +156,7 @@ def fix_landing_rule_links(out: Path, built: set[str], has_index: bool) -> list[
             return f'href="#rule-{rule_id}"'
         return 'href="rules/"' if has_index else 'href="#how"'
 
-    path.write_text(
-        re.sub(r'href="rules/(GRN-[A-Z]\d{3})"', repl, text), encoding="utf-8"
-    )
+    path.write_text(re.sub(r'href="rules/(GRN-[A-Z]\d{3})"', repl, text), encoding="utf-8")
     return sorted(set(missing))
 
 
@@ -205,17 +195,13 @@ def main() -> int:
 
     md = MarkdownIt("commonmark", {"html": False}).enable("table")
     built = render_rules(args.rules, out, md)
-    missing = fix_landing_rule_links(
-        out, built, (out / "rules" / "index.html").is_file()
-    )
+    missing = fix_landing_rule_links(out, built, (out / "rules" / "index.html").is_file())
     base = args.base_url.rstrip("/")
     for page in out.rglob("*.html"):
         rel = page.relative_to(out).as_posix()
         if base:
             path = (
-                ""
-                if rel == "index.html"
-                else rel.removesuffix("index.html").removesuffix(".html")
+                "" if rel == "index.html" else rel.removesuffix("index.html").removesuffix(".html")
             )
             add_canonical(page, f"{base}/{path}")
         else:
