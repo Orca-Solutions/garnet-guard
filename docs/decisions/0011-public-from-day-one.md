@@ -9,7 +9,7 @@ A security tool earns trust by being auditable. An early public repo costs nothi
 
 ## Decision
 
-The repository is public from creation. The README states the pre-alpha status plainly, and the launch in month 3 is the first time Garnet is promoted.
+The repository is public from creation. The README states the pre-alpha status plainly, and the launch in mid-December 2026 (launch week from Tue Dec 8) is the first time Garnet is promoted.
 
 ## Consequences
 
