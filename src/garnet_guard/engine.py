@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from . import __version__
 from .checks import ALL_CHECKS, DOCS
@@ -132,6 +134,77 @@ def compare(
     return run_checks(change, facts.get(baseline) if baseline else None, facts[candidate])
 
 
+def evaluate(changes: list[Change], *, options: Options | None = None) -> list[ChangeResult]:
+    """Check many changes with one HTTP client, fetching each release once."""
+    opts = options or Options()
+    for c in changes:
+        if c.ecosystem != "pypi":
+            raise ValueError(f"unsupported ecosystem: {c.ecosystem!r} (0.1 supports pypi)")
+    if not changes:
+        return []
+    with Http(github_token=opts.github_token) as http:
+        ctx = pypi.FetchContext(http=http, limits=opts.limits, tags=github.TagLookup(http))
+        cache: dict[tuple[str, str, bool], Future[ReleaseFacts]] = {}
+        lock = threading.Lock()
+        with ThreadPoolExecutor(max_workers=8) as pool:
+
+            def facts(package: str, version: str, advisories: bool) -> Future[ReleaseFacts]:
+                key = (package, version, advisories)
+                with lock:
+                    if key not in cache:
+                        cache[key] = pool.submit(
+                            pypi.release_facts,
+                            package,
+                            version,
+                            ctx,
+                            replay=opts.replay.get(version),
+                            advisories=advisories,
+                        )
+                    return cache[key]
+
+            pending = []
+            for c in changes:
+                cand = facts(c.package, c.candidate, opts.check_known_bad)
+                base = facts(c.package, c.baseline, False) if c.baseline else None
+                pending.append((c, base, cand))
+            return [
+                run_checks(c, base.result() if base else None, cand.result())
+                for c, base, cand in pending
+            ]
+
+
+def unchecked_result(change: Change, rule_id: str, detail: str) -> ChangeResult:
+    """A change Garnet didn't evaluate (GRN-E004 / GRN-E005): reported, never passed."""
+    where = f"{change.lockfile}:{change.line}" if change.lockfile and change.line else None
+    raw = RawFinding(
+        rule_id,
+        f"{change.package} was not checked: {detail}",
+        (Evidence("file", detail, path=change.lockfile, line=change.line),) if where else (),
+    )
+    finding = _finding(change, raw)
+    return ChangeResult(change, Verdict.from_severity(finding.severity), (finding,))
+
+
+def diff_lockfiles(
+    base: Path | bytes | None, head: Path | bytes, *, name: str | None = None
+) -> list[Change]:
+    """Checkable changes between two lockfiles of the same format (SPEC §3.2)."""
+    from .workspace import changes_for
+
+    head_name = name or (head.name if isinstance(head, Path) else "uv.lock")
+    head_data = head.read_bytes() if isinstance(head, Path) else head
+    base_data = base.read_bytes() if isinstance(base, Path) else base
+    return changes_for(head_name, head_data, base_data)[0]
+
+
 def report(results: list[ChangeResult]) -> Report:
     worst = max((f.severity for r in results for f in r.findings), default=Severity.OFF)
-    return Report(__version__, Verdict.from_severity(worst), tuple(results))
+    ordered = sorted(
+        results,
+        key=lambda r: (
+            -max((int(f.severity) for f in r.findings), default=0),
+            r.change.package,
+            r.change.candidate,
+        ),
+    )
+    return Report(__version__, Verdict.from_severity(worst), tuple(ordered))
