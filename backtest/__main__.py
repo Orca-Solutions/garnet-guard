@@ -2,6 +2,8 @@
 
     uv run python -m backtest              # incidents and clean corpus
     uv run python -m backtest incidents    # incidents only
+    uv run python -m backtest select       # pick the clean corpus (top 100 x last 11 releases)
+    uv run python -m backtest corpus [DIR] # run the clean corpus; see backtest/corpus.py
 
 Known-bad lookups (GRN-K001) are off: the question is what Garnet catches
 before any feed lists a release. Results go to backtest/results.json.
@@ -97,6 +99,10 @@ def run_clean() -> list[dict[str, object]]:
 
 def main(argv: list[str]) -> int:
     which = argv[0] if argv else "all"
+    if which in ("select", "corpus"):
+        from . import corpus
+
+        return corpus.select(argv[1:]) if which == "select" else corpus.corpus(argv[1:])
     out: dict[str, object] = {}
     ok = True
     if which in ("all", "incidents"):
