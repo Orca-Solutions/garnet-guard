@@ -1,4 +1,4 @@
-// Replay tabs. Without JavaScript every panel stays visible.
+// Replay tabs. Without JavaScript every panel stays visible (the no-js class).
 (function () {
   document.documentElement.classList.remove('no-js');
   var tablist = document.querySelector('[role="tablist"]');
@@ -10,7 +10,8 @@
       var on = t === tab;
       t.setAttribute('aria-selected', on ? 'true' : 'false');
       t.tabIndex = on ? 0 : -1;
-      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+      var panel = document.getElementById(t.getAttribute('aria-controls'));
+      if (panel) panel.classList.toggle('is-active', on);
     });
     if (focus) tab.focus();
   }
@@ -27,13 +28,12 @@
     });
   });
 
-  // Open the panel a link points at, e.g. #replay-elementary.
+  // Open the panel a link points at, e.g. #replay-elem.
   function fromHash() {
     var id = location.hash.slice(1);
     var tab = tabs.filter(function (t) { return t.getAttribute('aria-controls') === id; })[0];
     if (tab) select(tab, false);
   }
   window.addEventListener('hashchange', fromHash);
-  select(tabs[0], false);
   fromHash();
 })();
