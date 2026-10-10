@@ -39,6 +39,8 @@ class Change:
     package: str
     baseline: str | None
     candidate: str
+    lockfile: str | None = None  # where the candidate is pinned (for SARIF and comments)
+    line: int | None = None
 
 
 EvidenceKind = Literal["file", "attestation", "tag", "advisory", "url", "note"]
