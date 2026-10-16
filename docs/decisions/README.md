@@ -15,8 +15,9 @@ Each significant decision gets a short record: context, decision, consequences. 
 | [0009](0009-trust-history-boundary.md) | Per-package registry history free; cross-org observed history hosted | Accepted |
 | [0010](0010-funding-gates.md) | Go/no-go gates for the hosted app in months 4 and 6 | Accepted |
 | [0011](0011-public-from-day-one.md) | Build in public from day one | Accepted |
-| [0012](0012-pricing-shape.md) | Four hosted tiers sized by active developers; Business in size bands; public repos never charged | Accepted (prices are a working draft) |
+| [0012](0012-pricing-shape.md) | Four hosted tiers sized by active developers; Business in size bands; public repos never charged | Accepted (tier shape); prices superseded by 0015 |
 | [0013](0013-brand-identity.md) | Brand identity: pomegranate mark, palette, tagline, trademarks | Accepted |
 | [0014](0014-runtime-dependencies-0-1.md) | Runtime dependencies for 0.1; tags via the git ref advertisement | Proposed |
+| [0015](0015-core-and-premium-pricing.md) | Business priced per developer above 25; Core tiers plus a Premium governance-and-audit add-on | Accepted (prices are placeholders) |
 
 The [v1.0 specification](../SPEC-v1.md) and [code design](../API.md) sit beside these records.

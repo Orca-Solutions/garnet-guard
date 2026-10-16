@@ -92,7 +92,7 @@ The theme is seeing more than two releases and more kinds of change, while keepi
 - **Shareable policy.** `extends` a policy file from another path or repository, so a team can reuse one policy across its own repos without the Garnet Guard App.
 - **More CI.** Documented recipes for GitLab CI, Buildkite and pre-commit; a container image.
 - **pylock.toml attestations.** Write the attestation table when tools still don't.
-- **Garnet Guard App** (hosted, separate, paid, only if Gate B passed): org-wide policy, cross-org observed history, alerts, audit log, SSO. See [OPEN_CORE.md](OPEN_CORE.md).
+- **Garnet Guard App** (hosted, separate, paid, only if Gate B passed): org-wide policy, exceptions, cross-org observed history, alerts and an audit trail, with SSO, audit export and compliance reports in an optional Premium add-on. See [OPEN_CORE.md](OPEN_CORE.md).
 
 ## v3: breadth and upstream (year 2)
 
