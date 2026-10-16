@@ -1,6 +1,6 @@
 # 0012. Pricing shape for the hosted app
 
-- Status: Accepted (tier shape); prices are a working draft
+- Status: Accepted (tier shape); price table superseded by 0015
 - Date: 2026-10-10
 
 ## Context
