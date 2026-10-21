@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup/lockup-horizontal-reverse.svg">
-    <img src="docs/brand/lockup/lockup-horizontal.svg" alt="Garnet Guard" width="360">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/orca-solutions/gg-landing/main/brand/lockup/lockup-horizontal-reverse.svg">
+    <img src="https://raw.githubusercontent.com/orca-solutions/gg-landing/main/brand/lockup/lockup-horizontal.svg" alt="Garnet Guard" width="360">
   </picture>
 </p>
 
@@ -17,7 +17,7 @@
 </p>
 
 <!-- Badges, once the first release exists (the "checked by" badge goes live when Garnet Guard checks its own dependency PRs, SPEC §11):
-[![Dependencies checked by Garnet Guard](docs/brand/badge/checked-by-garnet-guard.svg)](https://github.com/orca-solutions/garnet-guard)
+[![Dependencies checked by Garnet Guard](https://raw.githubusercontent.com/orca-solutions/gg-landing/main/brand/badge/checked-by-garnet-guard.svg)](https://github.com/orca-solutions/garnet-guard)
 [![PyPI](https://img.shields.io/pypi/v/garnet-guard)](https://pypi.org/project/garnet-guard/)
 -->
 
@@ -53,8 +53,8 @@ Garnet never runs the code it inspects. It downloads both releases and reads the
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/pr-comment/pr-comment-dark.svg">
-    <img src="docs/brand/pr-comment/pr-comment-light.svg" alt="Sample Garnet Guard PR comment: 1 of 3 updates needs a look. examplelib 2.6.1 to 2.6.2 lost its provenance attestation, has no git tag v2.6.2, and adds import-time subprocess code. requests and idna have nothing worth a look." width="720">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/orca-solutions/gg-landing/main/brand/pr-comment/pr-comment-dark.svg">
+    <img src="https://raw.githubusercontent.com/orca-solutions/gg-landing/main/brand/pr-comment/pr-comment-light.svg" alt="Sample Garnet Guard PR comment: 1 of 3 updates needs a look. examplelib 2.6.1 to 2.6.2 lost its provenance attestation, has no git tag v2.6.2, and adds import-time subprocess code. requests and idna have nothing worth a look." width="720">
   </picture>
 </p>
 
