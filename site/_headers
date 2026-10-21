@@ -1,0 +1,9 @@
+# Cloudflare Pages response headers (GitHub Pages ignores this file). The CSP
+# matches the meta tag in every page; the headers below have no meta form.
+/*
+  Content-Security-Policy: default-src 'self'; img-src 'self'; style-src 'self'; font-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+/assets/*
+  Cache-Control: public, max-age=604800

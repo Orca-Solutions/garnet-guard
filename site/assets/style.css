@@ -249,3 +249,5 @@ p { margin: 0 0 1em; }
 .posts li { border-top: 1px solid var(--line); padding-top: 16px; color: var(--muted); }
 .posts a { font-weight: 600; font-size: 1.1rem; }
 .posts time { font: .82rem var(--font-mono); margin-left: 8px; }
+.doc h2 { margin-top: 1.6em; }
+.doc table + h2, .doc pre + h2 { margin-top: 1.4em; }

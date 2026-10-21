@@ -44,7 +44,8 @@ from markdown_it import MarkdownIt
 
 SITE = Path(__file__).resolve().parent
 REPO = SITE.parent
-STATIC = ("index.html", "assets", "replays")
+STATIC = ("index.html", "assets", "replays", "_headers")
+REPO_DOCS = "https://github.com/orca-solutions/garnet-guard/blob/main/docs/"
 RULE_ID = re.compile(r"GRN-[A-Z]\d{3}")
 POST_NAME = re.compile(r"(\d{4}-\d{2}-\d{2})-[a-z0-9]+(?:-[a-z0-9]+)*")
 FRONT_MATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
@@ -122,9 +123,12 @@ def chrome(index_html: str) -> tuple[str, str]:
 
 
 def rewrite_md_links(rendered: str) -> str:
-    """Point links between rule docs at their published URLs."""
+    """Point links between rule docs at their published URLs, and other repo docs at GitHub."""
     rendered = re.sub(r'href="(?:\./)?(GRN-[A-Z]\d{3})\.md(#[^"]*)?"', r'href="\1\2"', rendered)
-    return re.sub(r'href="(?:\./)?README\.md(#[^"]*)?"', r'href="./\1"', rendered)
+    rendered = re.sub(r'href="(?:\./)?README\.md(#[^"]*)?"', r'href="./\1"', rendered)
+    return re.sub(
+        r'href="\.\./([A-Za-z0-9_./-]+\.md)(#[^"]*)?"', rf'href="{REPO_DOCS}\1\2"', rendered
+    )
 
 
 def page(

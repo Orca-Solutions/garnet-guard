@@ -74,10 +74,10 @@
       <h2 id="numbers-h" class="visually-hidden">Replay results</h2>
       <dl class="stats">
         <div><dt>Replayed 2026 compromises flagged</dt><dd><span class="big">3 of 3</span><span class="unit">from content and tags alone</span></dd></div>
-        <div><dt>Clean updates that warned</dt><dd><span class="big">0 of 20</span><span class="unit">false positives in the clean set</span></dd></div>
+        <div><dt>Routine updates that warned</dt><dd><span class="big">17 of 974</span><span class="unit">1.7% across the top 100 PyPI packages; 5 were wrong</span></dd></div>
         <div><dt>Package code executed</dt><dd><span class="big">None</span><span class="unit">Garnet reads releases as bytes</span></dd></div>
       </dl>
-      <p class="fine">Replayed on 2026-10-10 with <code>uv run python -m backtest</code>. Twenty clean updates is a small set; the larger clean-corpus backtest is due by December 1, 2026, and its numbers will replace these, misses included. <a href="replays/2026-10-10.txt">Full replay output</a>.</p>
+      <p class="fine">Replayed on 2026-10-10 with <code>uv run python -m backtest</code>. The routine set is the last 11 releases of each of the top 100 PyPI packages. Of the 17 warnings, 13 pointed at a real change that turned out benign and 5 were wrong; every one is read and written up in <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results/triage.json">the triage file</a>. The 20 clean updates around the incidents all passed. <a href="replays/2026-10-10.txt">Full incident replay output</a>.</p>
     </div>
   </section>
 
@@ -197,7 +197,7 @@ verdict: <span class="t-warn">warn</span></code></pre></div>
       </div>
       <div class="run">
         <a class="btn btn-primary" href="#tryit" aria-disabled="true">Check the new one</a>
-        <p class="fine">Loads the engine (about 10 MB) only when you click. Trust rules need GitHub and Sigstore, which a page like this cannot reach, so they report as “couldn't check here”, never as pass.</p>
+        <p class="fine">Loads the engine (about 6 MB) only when you click. Trust rules need GitHub and Sigstore, which a page like this cannot reach, so they report as “couldn't check here”, never as pass.</p>
       </div>
       <div class="term sim"><div class="term-bar"><svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Garnet Guard"><g transform="translate(0,0) scale(1.0)"><circle cx="50.00" cy="58.00" r="34.00" fill="#F7F3EE" /><polygon points="37.00,31.00 40.00,17.00 45.00,26.00 50.00,13.00 55.00,26.00 60.00,17.00 63.00,31.00" fill="#F7F3EE" /><polygon points="50.00,38.50 72.00,76.50 28.00,76.50" fill="#1B1F24" /><polygon points="50.00,50.90 54.85,53.70 54.85,59.30 50.00,62.10 45.15,59.30 45.15,53.70" fill="#F7F3EE" /><polygon points="42.50,62.90 47.35,65.70 47.35,71.30 42.50,74.10 37.65,71.30 37.65,65.70" fill="#F7F3EE" /><polygon points="57.50,62.90 62.35,65.70 62.35,71.30 57.50,74.10 52.65,71.30 52.65,65.70" fill="#E0A100" /></g></svg> garnet diff requests 2.32.4 2.32.5 <span class="t-mute">(in your browser)</span></div><pre tabindex="0"><code><span class="t-b">requests 2.32.4 → 2.32.5: <span class="t-pass">pass</span></span>
   <span class="t-pass">ok</span>    GRN-C001 new-pth-file: no new .pth files
