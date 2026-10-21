@@ -80,6 +80,8 @@ def to_json(report: Report) -> str:
                 "package": r.change.package,
                 "baseline": r.change.baseline,
                 "candidate": r.change.candidate,
+                "lockfile": r.change.lockfile,
+                "line": r.change.line,
                 "verdict": r.verdict.value,
                 "findings": findings,
             }
