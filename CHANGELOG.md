@@ -14,3 +14,5 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
   - couldn't-check: GRN-E001 to E003
 - `garnet explain <RULE-ID>`, text and JSON reports, and exit codes per SPEC §8.
 - `python -m backtest` replays real incidents and a clean corpus.
+- A docs page for every rule ID in `docs/rules/`, with an example finding and how to resolve or allowlist it.
+- CI on every pull request (ruff, mypy, import contracts, tests on Python 3.11 to 3.14, build), the OpenSSF Scorecard workflow, Dependabot for the repository itself, and a tag-triggered release that publishes to PyPI with Trusted Publishing and PEP 740 attestations. See docs/RELEASING.md.

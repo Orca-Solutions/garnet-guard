@@ -14,7 +14,7 @@ def rule_url(rule_id: str) -> str:
     return f"{RULE_DOCS_BASE}{rule_id}.md"
 
 
-_DOCS = (
+_DOCS: tuple[RuleDoc, ...] = (
     RuleDoc(
         "GRN-T001",
         "lost-provenance",
@@ -164,6 +164,29 @@ _DOCS = (
         "A safety limit (size, entries, compression ratio, parse size or time) was hit.",
         "Limits stop archive bombs and runaway parsing. Content past the limit was not checked.",
         "Inspect the release by hand, or raise the limit only if you trust the source.",
+    ),
+)
+
+_DOCS += (
+    RuleDoc(
+        "GRN-E004",
+        "unpinned-requirement",
+        "absolute",
+        Severity.INFO,
+        "A requirements line isn't pinned with ==, so Garnet can't tell which release you'll get.",
+        "Without an exact version there is no release to compare. The installer picks one at install "
+        "time, and Garnet never sees it.",
+        "Pin it (`name==version`), or use a lockfile such as uv.lock or pylock.toml.",
+    ),
+    RuleDoc(
+        "GRN-E005",
+        "unsupported-source",
+        "absolute",
+        Severity.INFO,
+        "A dependency comes from a source Garnet doesn't check: git, a local path, a direct URL or a private index.",
+        "Garnet compares releases published on PyPI. Code from other sources wasn't checked, and it "
+        "isn't passed either.",
+        "Review the change to that dependency by hand.",
     ),
 )
 
