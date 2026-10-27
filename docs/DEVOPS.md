@@ -8,7 +8,7 @@ Status: minimal. Revisit if the hosted app passes Gate A (ROADMAP.md, month 4).
 | App development owner | Jason (maintainer) |
 | What ships | A Python package on PyPI (`garnet-guard`), a CLI (`garnet`) and a GitHub Action. There is no server and no persistent store. |
 | Release trigger | A `v*` tag pushed by the maintainer from `main`, published by PyPI Trusted Publishing with PEP 740 attestations from the `pypi` environment (SPEC §11). See [RELEASING.md](RELEASING.md). |
-| Docs site | Static. Hosting is undecided between Cloudflare Pages and GitHub Pages; decide before ROADMAP month 3. |
+| Docs site | Static, built from the private `orca-solutions/gg-landing` repository (`site/`), which also holds the brand kit; `docs/brand/` here keeps copies of the files this repository uses. Cloudflare Pages, at garnetguard.orcasolutions.dev; the maintainer connects the repo and the domain. |
 | Secrets | None at runtime. The Action uses the workflow's `GITHUB_TOKEN`. Publishing uses Trusted Publishing, with no stored token. |
 | Telemetry | None (ADR-0008). |
 
