@@ -1,0 +1,199 @@
+# A tour of the Garnet Guard code
+
+This page explains how the code in `src/garnet_guard/` fits together, as it is in the 0.1
+preview. It is written for someone new to the project: a contributor about to make a first
+change, or a reviewer who wants to check that the code keeps the promises in the README.
+You don't need to read Python fluently to follow it.
+
+For the design Garnet Guard is growing into, see [ARCHITECTURE.md](../ARCHITECTURE.md) and
+[API.md](API.md). For exact behavior, [SPEC-v1.md](SPEC-v1.md) is the reference. Where this
+page and the code disagree, the code is right and this page needs a fix.
+
+## What the program does
+
+When a dependency update moves a package from a version your project already runs (the
+**baseline**) to a new one (the **candidate**), Garnet Guard downloads both releases,
+reads them without running them, and compares them. It reports three kinds of change:
+
+- **Trust**: the candidate was published differently. It lost its signed attestation, came
+  from a different repository or workflow, or has no git tag.
+- **Content**: the candidate contains code that runs on its own, which the baseline didn't
+  have: a new `.pth` file, new build-time code, or new calls to `subprocess`, `exec` or the
+  network that run as soon as a module is imported.
+- **Known bad**: a public malware database lists the candidate.
+
+When it can't find something out (a download failed, a file couldn't be parsed, a limit was
+hit), it says so in the report. A check that didn't run is never counted as a pass.
+
+## Five stages
+
+Every run goes through the same five stages, whichever command started it.
+
+```text
+ 1. Find what changed       workspace.py, lockfiles/        → a list of Change records
+ 2. Gather the facts        engine.py, ecosystems/          → ReleaseFacts for each version
+        (network)             net.py: the only network code
+ 3. Read the files          facts/                          → what each artifact contains
+        (archives)            safe_archive.py: the only archive code
+ 4. Judge                   checks/                         → findings (no network, no files)
+ 5. Write it up             engine.py, report.py, markdown.py → text, JSON, the PR comment
+```
+
+1. **Find what changed.** `garnet check` reads the trusted lockfile and the updated one
+   (`workspace.py` finds them, `lockfiles/` parses them) and lists every package whose
+   version changed. Each one becomes a `Change`: package, baseline version, candidate
+   version, and the lockfile line. Entries Garnet can't check (not pinned to one version,
+   or installed from git, a path or a private index) become GRN-E004 or GRN-E005 findings
+   here, so they show up in the report instead of disappearing. `garnet diff` skips this
+   stage: you name the package and both versions yourself.
+2. **Gather the facts.** `engine.py` asks `ecosystems/pypi.py` for a `ReleaseFacts` record
+   for each version. That module fetches PyPI's metadata, the attestation for every file,
+   the sdist and one wheel, the project's git tags (`ecosystems/github.py`) and malware
+   advisories (`ecosystems/osv.py`), and verifies attestations
+   (`ecosystems/provenance.py`). A failure in any step is recorded on the facts as an
+   error naming the rules it kept from running.
+3. **Read the files.** `facts/inventory.py` lists every file in an archive with its size,
+   hash and kind. `facts/pyindex.py` parses each Python file with `ast` (Python's own
+   parser, which reads code as a tree without running it) and records the sensitive calls
+   that run at import time.
+4. **Judge.** `checks/` holds one function per rule. Each takes the baseline facts and the
+   candidate facts and returns findings. Checks do no network or file access at all, so a
+   test can hand them made-up facts and know exactly what should come back.
+5. **Write it up.** `engine.py` gives each finding its rule's default severity, sorts the
+   findings so the same input always gives the same report, and works out the verdict.
+   `report.py` writes terminal text or JSON, and `markdown.py` writes the pull request
+   comment for the GitHub Action.
+
+The CLI, the Action and the backtest all call the same engine functions: `compare()` for
+one package and `evaluate()` for many, both in `engine.py`. That is why the backtest's
+results describe what users will see.
+
+## Where each part lives
+
+| Module | What it does |
+|---|---|
+| [`cli.py`](../src/garnet_guard/cli.py) | The `garnet` command: parses arguments, runs the engine, prints the report, returns the exit code. |
+| [`workspace.py`](../src/garnet_guard/workspace.py) | Finds lockfiles, reads the base version from git, refuses symlinked lockfiles, and turns lockfile differences into `Change` records. |
+| [`lockfiles/`](../src/garnet_guard/lockfiles/) | One parser per lockfile format (`uv.lock`, `poetry.lock`, `pylock.toml`, `requirements*.txt`) and the code that compares two lists of pins. |
+| [`engine.py`](../src/garnet_guard/engine.py) | Runs the stages in order: fetch facts in parallel, run every check, turn errors into findings, sort, decide the verdict. |
+| [`ecosystems/`](../src/garnet_guard/ecosystems/) | Everything fetched about a release: PyPI metadata and files, attestations, git tags, OSV advisories. |
+| [`net.py`](../src/garnet_guard/net.py) | The only code that uses the network. HTTPS only, a short list of allowed hosts, size caps, timeouts and retries. |
+| [`safe_archive.py`](../src/garnet_guard/safe_archive.py) | The only code that opens zip and tar archives. Reads them in memory, never extracts to disk, and rejects dangerous entries. |
+| [`facts/`](../src/garnet_guard/facts/) | Describes what an archive contains, and what its Python code does at import time, without running it. |
+| [`models.py`](../src/garnet_guard/models.py) | The records passed between stages: `Change`, `ReleaseFacts`, `Finding` and the rest. All frozen, so no stage can change what an earlier one recorded. |
+| [`checks/`](../src/garnet_guard/checks/) | One small function per rule (`trust.py`, `content.py`, and K001 in `__init__.py`), plus `docs.py` with the text `garnet explain` prints. |
+| [`report.py`](../src/garnet_guard/report.py) | Text and JSON output. Escapes package-supplied text before it reaches a terminal. |
+| [`markdown.py`](../src/garnet_guard/markdown.py) | The pull request comment. Treats the whole report as untrusted and escapes every string so a package can't add links, mentions or HTML. |
+
+Outside `src/`:
+
+| Folder | What's there |
+|---|---|
+| [`action/`](../action/) and [`action.yml`](../action.yml) | The GitHub Action: shell scripts that run `garnet check` and post the comment. See [action.md](action.md). |
+| [`tests/`](../tests/) | Unit tests. `tests/builders.py` builds tiny wheels, sdists and facts in memory, so tests never use the network. |
+| [`backtest/`](../backtest/) | Replays of real compromised releases (`incidents.toml`) and a corpus of ordinary updates, to measure what Garnet catches and how often it's wrong. Run with `uv run python -m backtest`. |
+| [`docs/rules/`](rules/README.md) | One page per rule. Findings link to these pages. |
+
+## The boundaries are enforced
+
+The stages are kept apart by the code, not only by convention. `uv run lint-imports` reads
+the contracts in [`pyproject.toml`](../pyproject.toml) and CI fails if one breaks:
+
+- `models.py` imports nothing else from Garnet.
+- `checks/` can't import the network code, the fetchers or the archive reader.
+- `facts/` can't import the network code.
+- Only `net.py` imports the HTTP library.
+
+The project's hard rules (in [AGENTS.md](../AGENTS.md)) map onto the code like this:
+
+| Hard rule | Where it's kept |
+|---|---|
+| Never run package code | `facts/pyindex.py` parses with `ast`. The only `subprocess` call in `src/` is `workspace.py` running `git show` on your own repository. |
+| All archive access through `safe_archive.py` | `zipfile` and `tarfile` are imported only there. |
+| Checks are pure | Enforced by `lint-imports`, above. |
+| "Couldn't check" is never "pass" | Fetch and parse failures become GRN-E001 to GRN-E003 findings; unreadable lockfiles and internal errors exit with code 3. |
+| Escape package-supplied strings | `report.escape()` for the terminal, `markdown.text()` and `markdown.code()` for the PR comment. |
+
+## The rules
+
+Each finding has a rule ID. The letter says the family: **T** trust, **C** content, **K**
+known bad, **E** couldn't check. IDs are permanent: a rule is never renumbered and an ID is
+never reused. [docs/rules/README.md](rules/README.md) lists every rule and says which are
+built.
+
+Most rules are **diff rules**: they fire only when the candidate is worse than the baseline.
+A project that never signed its releases isn't flagged for not signing this one, which is
+what keeps Garnet quiet on ordinary updates. **Absolute rules** look at the candidate alone.
+
+Every rule function in `checks/` has the same shape. Read one with three questions in mind:
+
+1. **When does it stay silent?** Usually when there's no baseline, or the baseline didn't
+   have the property either.
+2. **When does it fire?** The condition, and the evidence it attaches.
+3. **What does it do when it doesn't know?** It reports GRN-E001 or relies on an error
+   recorded while fetching, rather than returning nothing.
+
+For example, `lost_provenance` in [`checks/trust.py`](../src/garnet_guard/checks/trust.py)
+(GRN-T001) is silent unless every baseline file had a verified attestation, fires when a
+candidate file has none, and reports GRN-E001 when the candidate's attestations couldn't be
+fetched.
+
+A check never sets a finding's severity. It returns a `RawFinding`, and the engine adds the
+rule's default severity from `checks/docs.py`. A check may lower that severity (GRN-C003
+reports at `info` for test files nothing imports) but never raise it.
+
+## Following one run
+
+`uv run garnet diff requests 2.32.4 2.32.5` goes through the code like this:
+
+1. `cli.main` parses the arguments and calls `_diff`, which calls `engine.compare`.
+2. `compare` calls `fetch_facts`, which runs `pypi.release_facts` for both versions at once.
+3. For each version, `release_facts` fetches `pypi.org/pypi/requests/<version>/json`,
+   then the provenance of every file. It downloads the sdist and the selected wheel,
+   checks each against PyPI's SHA-256, and hands the bytes to `inspect_artifact`. It then
+   looks up the git tag and, for the candidate, the OSV advisories.
+4. `inspect_artifact` opens the archive through `safe_archive.open_archive`, reads every
+   file, and runs `pyindex.index_module` on each Python file.
+5. Back in the engine, `run_checks` calls every function in `checks.ALL_CHECKS` with the
+   two `ReleaseFacts`, adds a finding for each recorded error, and sorts the result.
+6. `report` collects the result, `report.to_text` prints it, and `Report.exit_code`
+   decides the exit code from `--fail-on`.
+
+`garnet check` adds stage 1 in front (`workspace.changes_for`) and calls `engine.evaluate`,
+which fetches each release once even if several lockfiles mention it.
+
+## Running it yourself
+
+From a checkout, with [uv](https://docs.astral.sh/uv/) installed:
+
+```sh
+uv sync                                   # install
+uv run garnet --help                      # every command and option, and the exit codes
+uv run garnet explain GRN-C003            # what a rule checks, and its list of sensitive calls
+uv run garnet diff requests 2.32.4 2.32.5 # compare two releases
+uv run garnet check --git-base main       # compare this folder's lockfiles with main's
+uv run python -m backtest                 # replay the incidents and the clean updates
+uv run pytest                             # the unit tests (no network)
+```
+
+A good first read is [`tests/test_safe_archive.py`](../tests/test_safe_archive.py): it
+builds hostile archives (path traversal, symlinks, compression bombs) and checks that each
+one is refused.
+
+## Glossary
+
+| Term | Meaning |
+|---|---|
+| Attestation (PEP 740) | A signed statement stored on PyPI that a file was built by a named repository and workflow. Garnet verifies it with Sigstore. |
+| Baseline | The version your project already runs. Everything is compared with it. |
+| Candidate | The version the update moves to. |
+| Diff rule, absolute rule | A diff rule fires only if the candidate is worse than the baseline; an absolute rule looks at the candidate alone. |
+| Finding | One thing a rule reported, with evidence a reviewer can check: a file and line, a tag, an attestation or a link. |
+| Hash (SHA-256) | A fingerprint of a file. Change one byte and the hash changes. |
+| Import time | The moment Python loads a module. Code at the top level of a module runs then, before any of its functions are called. |
+| Lockfile | A project's exact list of packages and versions, such as `uv.lock`. |
+| `.pth` file | A small file Python reads at every startup. A line in it that starts with `import` runs automatically. |
+| sdist, wheel | A package's source archive, and its ready-to-install archive. Garnet reads the sdist and one wheel. |
+| Severity, verdict | `block`, `warn` or `info` on each finding. The verdict is the worst severity in the report; `info` counts as a pass. |
+| Trusted Publishing | PyPI's way of letting a specific CI workflow upload releases without a long-lived password. |
+| OSV | A public database of vulnerabilities and malware, at [osv.dev](https://osv.dev). |
