@@ -28,6 +28,8 @@ from .net import Http
 
 @dataclass(frozen=True)
 class Options:
+    """How to fetch: credentials, limits and the switches the backtest uses."""
+
     github_token: str | None = None
     limits: Limits = field(default_factory=Limits)
     # Registry data for releases the registry no longer lists (incident replay).
@@ -39,11 +41,18 @@ class Options:
 
 @dataclass(frozen=True)
 class Report:
+    """The results for every change checked in one run, worst first."""
+
     garnet_version: str
     verdict: Verdict
     results: tuple[ChangeResult, ...]
 
     def exit_code(self, fail_on: Severity) -> int:
+        """0 below ``fail_on``, else 1 for warn and 2 for block (SPEC §8).
+
+        ``info`` never fails a run. Exit code 3 (Garnet itself failed) is the
+        CLI's to return.
+        """
         worst = max((f.severity for r in self.results for f in r.findings), default=Severity.OFF)
         if fail_on == Severity.OFF or worst < fail_on or worst < Severity.WARN:
             return 0
@@ -102,6 +111,7 @@ def _finding(change: Change, raw: RawFinding) -> Finding:
 def fetch_facts(
     package: str, versions: list[str], options: Options, *, candidate: str
 ) -> dict[str, ReleaseFacts]:
+    """Fetch facts for several versions of one package in parallel."""
     with Http(github_token=options.github_token) as http:
         ctx = pypi.FetchContext(http=http, limits=options.limits, tags=github.TagLookup(http))
         with ThreadPoolExecutor(max_workers=max(1, len(versions))) as pool:
@@ -127,6 +137,11 @@ def compare(
     *,
     options: Options | None = None,
 ) -> ChangeResult:
+    """Compare two releases of one package (``garnet diff``).
+
+    Fetches both releases, so it needs the network. Problems fetching or
+    reading them come back as GRN-E findings, not exceptions.
+    """
     if ecosystem != "pypi":
         raise ValueError(f"unsupported ecosystem: {ecosystem!r} (0.1 supports pypi)")
     opts = options or Options()
@@ -201,6 +216,7 @@ def diff_lockfiles(
 
 
 def report(results: list[ChangeResult]) -> Report:
+    """Collect results into a ``Report``, worst change first, with the overall verdict."""
     worst = max((f.severity for r in results for f in r.findings), default=Severity.OFF)
     ordered = sorted(
         results,

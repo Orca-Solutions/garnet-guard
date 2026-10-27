@@ -20,14 +20,39 @@ from .workspace import Unchecked, changes_for, dedupe, discover, git_show, plain
 
 _FAIL_ON = {"warn": Severity.WARN, "block": Severity.BLOCK, "never": Severity.OFF}
 
+_EXIT_CODES = """\
+exit codes:
+  0  nothing at or above --fail-on (by default, warnings exit 0)
+  1  warn findings, with --fail-on warn
+  2  block findings, with --fail-on warn or block
+  3  Garnet couldn't finish: bad arguments, an unreadable lockfile or an internal
+     error. This is never a pass.
+
+Each finding links to its rule's page; `garnet explain RULE` prints a summary.
+"""
+
+_FAIL_ON_HELP = "exit non-zero at this verdict or worse (default: block)"
+_GITHUB_ENV_HELP = "environment variable that holds a GitHub token (default: GITHUB_TOKEN)"
+
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="garnet", description="Release-diff guard for dependency updates."
+        prog="garnet",
+        description="Release-diff guard for dependency updates.",
+        epilog=_EXIT_CODES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = p.add_subparsers(dest="command", required=True)
 
-    c = sub.add_parser("check", help="check every dependency change between two lockfiles")
+    c = sub.add_parser(
+        "check",
+        help="check every dependency change between two lockfiles",
+        description="Compare a trusted lockfile with an updated one and check every package\n"
+        "version that changed. Reads uv.lock, poetry.lock, pylock.toml and pinned\n"
+        "requirements files.",
+        epilog=_EXIT_CODES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     c.add_argument("--base", metavar="PATH", help="the lockfile you trust")
     c.add_argument(
         "--head",
@@ -36,33 +61,65 @@ def _parser() -> argparse.ArgumentParser:
         help="the updated lockfile; repeat for several (default: lockfiles found here)",
     )
     c.add_argument("--git-base", metavar="REF", help="read each base lockfile from this git ref")
-    c.add_argument("--format", choices=("text", "json", "sarif", "markdown"), default="text")
-    c.add_argument("--output", help="write the report to this file instead of stdout")
-    c.add_argument("--policy", metavar="PATH")
-    c.add_argument("--fail-on", choices=tuple(_FAIL_ON), default="block")
-    c.add_argument("--offline", action="store_true")
-    c.add_argument("--cache-dir", metavar="PATH")
-    c.add_argument("--github-token-env", default="GITHUB_TOKEN", metavar="NAME")
+    c.add_argument(
+        "--format",
+        choices=("text", "json", "sarif", "markdown"),
+        default="text",
+        help="report format (default: text; sarif isn't supported in this preview yet)",
+    )
+    c.add_argument(
+        "--output", metavar="PATH", help="write the report to this file instead of stdout"
+    )
+    c.add_argument(
+        "--policy", metavar="PATH", help="policy file (not supported in this preview yet)"
+    )
+    c.add_argument("--fail-on", choices=tuple(_FAIL_ON), default="block", help=_FAIL_ON_HELP)
+    c.add_argument(
+        "--offline",
+        action="store_true",
+        help="use cached data only (not supported in this preview yet)",
+    )
+    c.add_argument(
+        "--cache-dir",
+        metavar="PATH",
+        help="where to cache downloads (not supported in this preview yet)",
+    )
+    c.add_argument(
+        "--github-token-env", default="GITHUB_TOKEN", metavar="NAME", help=_GITHUB_ENV_HELP
+    )
 
-    d = sub.add_parser("diff", help="compare two releases of one package")
+    d = sub.add_parser(
+        "diff",
+        help="compare two releases of one package",
+        description="Compare a release you trust with the one you are updating to.",
+        epilog=_EXIT_CODES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     d.add_argument(
         "package", help="package name, optionally prefixed with the ecosystem (pypi:requests)"
     )
     d.add_argument("old", help="the version you trust")
     d.add_argument("new", help="the version you are updating to")
-    d.add_argument("--format", choices=("text", "json"), default="text")
-    d.add_argument("--output", help="write the report to this file instead of stdout")
-    d.add_argument("--fail-on", choices=tuple(_FAIL_ON), default="block")
-    d.add_argument("--github-token-env", default="GITHUB_TOKEN", metavar="NAME")
+    d.add_argument(
+        "--format", choices=("text", "json"), default="text", help="report format (default: text)"
+    )
+    d.add_argument(
+        "--output", metavar="PATH", help="write the report to this file instead of stdout"
+    )
+    d.add_argument("--fail-on", choices=tuple(_FAIL_ON), default="block", help=_FAIL_ON_HELP)
+    d.add_argument(
+        "--github-token-env", default="GITHUB_TOKEN", metavar="NAME", help=_GITHUB_ENV_HELP
+    )
 
     e = sub.add_parser("explain", help="describe a rule")
-    e.add_argument("rule_id")
+    e.add_argument("rule_id", metavar="RULE", help="a rule ID, such as GRN-C003")
 
     sub.add_parser("version", help="print the version")
     return p
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run ``garnet`` and return its exit code. Any failure of Garnet itself is 3."""
     try:
         args = _parser().parse_args(argv)
     except SystemExit as exc:
@@ -87,7 +144,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 class UsageError(Exception):
-    pass
+    """Bad arguments, or a feature this preview doesn't have yet."""
 
 
 def _not_yet(flag: str) -> UsageError:
@@ -95,6 +152,7 @@ def _not_yet(flag: str) -> UsageError:
 
 
 def _check(args: argparse.Namespace) -> int:
+    """``garnet check``: every dependency change between two lockfiles."""
     if args.policy:
         raise _not_yet("--policy")
     if args.offline or args.cache_dir:
@@ -154,6 +212,7 @@ def _markdown(rep: Report) -> str:
 
 
 def _diff(args: argparse.Namespace) -> int:
+    """``garnet diff``: two releases of one package."""
     eco, _, name = args.package.rpartition(":")
     eco = eco or "pypi"
     if eco != "pypi":
@@ -176,6 +235,7 @@ def _diff(args: argparse.Namespace) -> int:
 
 
 def _explain(rule_id: str) -> int:
+    """``garnet explain``: print a rule's docs."""
     doc = DOCS.get(rule_id.upper())
     if doc is None:
         print(

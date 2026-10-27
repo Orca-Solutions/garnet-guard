@@ -10,6 +10,7 @@ from .toml_locks import block_lines
 
 
 def _on_pypi(pkg: dict[str, Any]) -> tuple[bool, str]:
+    """(True, "") for a package from PyPI, else (False, why not)."""
     if "vcs" in pkg:
         return False, "vcs source"
     if "directory" in pkg:
@@ -35,6 +36,7 @@ def _on_pypi(pkg: dict[str, Any]) -> tuple[bool, str]:
 
 
 def parse(text: str) -> list[Pin]:
+    """Pins from a pylock.toml. Packages from anywhere but PyPI are ``unsupported``."""
     try:
         doc = tomllib.loads(text)
     except tomllib.TOMLDecodeError as err:

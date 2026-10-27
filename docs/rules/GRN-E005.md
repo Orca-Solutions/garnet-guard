@@ -3,7 +3,7 @@ id: GRN-E005
 name: unsupported-source
 kind: absolute
 default_severity: info
-status: planned
+status: implemented
 ---
 
 # GRN-E005 unsupported-source
@@ -12,7 +12,7 @@ status: planned
 |---|---|
 | Default severity | `info` |
 | Kind | absolute rule: fires on the new version alone, whatever the trusted version looked like. |
-| Status | Specified for 1.0, not yet implemented |
+| Status | Implemented in 0.1 (`garnet check`) |
 
 ## What it checks
 
@@ -26,12 +26,18 @@ else isn't compared at all, and the report says so rather than leaving it out.
 
 ## Example finding
 
-Illustrative. The rule is specified but not yet implemented.
+Illustrative; not from a real project. This is 0.1's output when a uv.lock entry starts
+coming from a git repository.
 
 ```text
-uv.lock: INFO
-  INFO  GRN-E005 unsupported-source: examplelib comes from git+https://github.com/example/examplelib@3f2a1c9, which isn't checked
+examplelib (new) → 2.6.2: PASS
+  info  GRN-E005 unsupported-source: examplelib was not checked: git source
+           - git source
 ```
+
+The reason after "was not checked" names the source, for example `git source`,
+`direct URL or path`, `editable install` or `private index`. The JSON report also gives
+the file and line in the evidence.
 
 ## How to resolve it
 
@@ -49,8 +55,8 @@ in policy:
 ```
 
 Suppressed findings still appear in JSON and SARIF output, marked with the ignore that
-matched. The policy format is in [SPEC §7](../SPEC-v1.md#7-policy); 0.1's `garnet diff`
-doesn't read policy files yet.
+matched. The policy format is in [SPEC §7](../SPEC-v1.md#7-policy); 0.1 doesn't read
+policy files yet.
 
 ## See also
 

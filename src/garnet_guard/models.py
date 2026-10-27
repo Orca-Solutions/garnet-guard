@@ -9,6 +9,8 @@ from typing import Literal
 
 
 class Severity(IntEnum):
+    """How much a finding counts. Ordered, so ``max()`` gives the worst."""
+
     OFF = 0
     INFO = 1
     WARN = 2
@@ -16,10 +18,13 @@ class Severity(IntEnum):
 
     @property
     def label(self) -> str:
+        """The lowercase name used in reports and policy: "warn", "block"."""
         return self.name.lower()
 
 
 class Verdict(StrEnum):
+    """The outcome for a change or a whole report. ``info`` findings still pass."""
+
     PASS = "pass"  # noqa: S105
     WARN = "warn"
     BLOCK = "block"
@@ -35,6 +40,12 @@ class Verdict(StrEnum):
 
 @dataclass(frozen=True)
 class Change:
+    """One dependency update: ``package`` moves from ``baseline`` to ``candidate``.
+
+    ``baseline`` is None for a newly added package, which gets only the
+    absolute rules.
+    """
+
     ecosystem: str
     package: str
     baseline: str | None
@@ -48,6 +59,9 @@ EvidenceKind = Literal["file", "attestation", "tag", "advisory", "url", "note"]
 
 @dataclass(frozen=True)
 class Evidence:
+    """One thing a reviewer can check for themselves: a file and line, a tag,
+    an attestation, an advisory or a URL."""
+
     kind: EvidenceKind
     summary: str
     path: str | None = None
@@ -71,6 +85,8 @@ class RawFinding:
 
 @dataclass(frozen=True)
 class RuleDoc:
+    """A rule's name, default severity and the text ``garnet explain`` prints."""
+
     rule_id: str
     name: str
     kind: Literal["diff", "absolute"]
@@ -82,6 +98,8 @@ class RuleDoc:
 
 @dataclass(frozen=True)
 class Finding:
+    """A ``RawFinding`` after the engine has added its rule's docs and severity."""
+
     rule_id: str
     name: str
     severity: Severity
@@ -97,6 +115,8 @@ class Finding:
 
 @dataclass(frozen=True)
 class ChangeResult:
+    """Every finding for one change, worst first, and the verdict they add up to."""
+
     change: Change
     verdict: Verdict
     findings: tuple[Finding, ...]
@@ -104,6 +124,8 @@ class ChangeResult:
 
 @dataclass(frozen=True)
 class Limits:
+    """Caps on hostile input (SPEC §4.4). Hitting one is GRN-E003, never a pass."""
+
     max_artifact_bytes: int = 200 * 1024 * 1024
     max_total_uncompressed: int = 1024 * 1024 * 1024
     max_entries: int = 100_000
@@ -117,6 +139,11 @@ class Limits:
 
 @dataclass(frozen=True)
 class FileProvenance:
+    """What the PEP 740 attestation for one file says, and whether it verified.
+
+    ``present`` is False when PyPI has no attestation for the file.
+    """
+
     filename: str
     present: bool
     verified: bool
@@ -135,6 +162,8 @@ FileKind = Literal["py", "pth", "native", "script", "data", "other"]
 
 @dataclass(frozen=True)
 class FileEntry:
+    """One file inside an artifact, with ``path`` relative to the package root."""
+
     path: str
     size: int
     sha256: str
@@ -143,6 +172,8 @@ class FileEntry:
 
 @dataclass(frozen=True)
 class CallSite:
+    """A sensitive call (``subprocess.Popen``) that runs at import time."""
+
     name: str
     line: int
     via: str | None = None  # local function the call was reached through
@@ -150,6 +181,8 @@ class CallSite:
 
 @dataclass(frozen=True)
 class ModuleIndex:
+    """What one Python module does when it is imported, read with ``ast``."""
+
     module: str
     path: str
     top_level_calls: tuple[CallSite, ...]
@@ -158,12 +191,20 @@ class ModuleIndex:
 
 @dataclass(frozen=True)
 class PthFile:
+    """A ``.pth`` file and the lines in it that Python runs at every startup."""
+
     path: str
     exec_lines: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class ArtifactFacts:
+    """One file of a release (a wheel or an sdist).
+
+    Trust facts are filled in for every artifact. Content facts (``files``
+    onward) only for the ones selected for inspection, the sdist and one wheel.
+    """
+
     filename: str
     sha256: str
     packagetype: str  # "sdist" | "bdist_wheel" | other registry values
@@ -183,6 +224,8 @@ class ArtifactFacts:
 
 @dataclass(frozen=True)
 class TagInfo:
+    """The git tag matched to a release version (GRN-T004)."""
+
     name: str
     sha: str | None
     repo: str | None = None  # owner/repo the tag was found in
@@ -200,6 +243,12 @@ class FactError:
 
 @dataclass(frozen=True)
 class ReleaseFacts:
+    """Everything Garnet learned about one release. Checks read only this.
+
+    The ``*_checked`` flags tell "looked and found nothing" apart from "didn't
+    look". Anything Garnet couldn't learn is in ``errors``.
+    """
+
     ecosystem: str
     package: str
     version: str
@@ -216,4 +265,5 @@ class ReleaseFacts:
 
     @property
     def content(self) -> tuple[ArtifactFacts, ...]:
+        """The artifacts whose contents were inspected."""
         return tuple(a for a in self.artifacts if a.inspected)

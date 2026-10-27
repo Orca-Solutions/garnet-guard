@@ -20,6 +20,8 @@ _DIRECT = ("uv.lock", "poetry.lock", "pylock.toml")
 
 @dataclass(frozen=True)
 class Unchecked:
+    """A lockfile entry Garnet can't check, reported instead of skipped."""
+
     change: Change
     rule_id: str  # GRN-E004 or GRN-E005
     detail: str
@@ -98,6 +100,10 @@ def git_show(ref: str, path: Path, *, cwd: Path) -> bytes | None:
 def changes_for(
     head_name: str, head: bytes, base: bytes | None
 ) -> tuple[list[Change], list[Unchecked]]:
+    """The changes to check in one lockfile, and the new entries Garnet can't check.
+
+    ``base`` is None when the lockfile is new, so every entry is a change.
+    """
     head_pins = parse(head_name, head)
     base_pins: list[Pin] = parse(head_name, base) if base is not None else []
     changes = [

@@ -22,6 +22,8 @@ CONTENT_RULES = ("GRN-C001", "GRN-C002", "GRN-C003")
 
 @dataclass(frozen=True)
 class RegistryFile:
+    """One file of a release as PyPI's JSON API lists it."""
+
     filename: str
     url: str
     sha256: str
@@ -40,12 +42,15 @@ class ReplayRelease:
 
 @dataclass
 class FetchContext:
+    """What every fetch shares: the HTTP client, the limits and the tag cache."""
+
     http: Http
     limits: Limits
     tags: github.TagLookup
 
 
 def normalize(package: str) -> str:
+    """PEP 503 name normalization (``Foo_Bar`` becomes ``foo-bar``)."""
     return canonicalize_name(package)
 
 
@@ -62,6 +67,7 @@ _REPO_KEYS = ("source", "source code", "repository", "code", "github", "homepage
 
 
 def _source_repo_from_urls(info: dict[str, Any]) -> str | None:
+    """The GitHub repository named in the project URLs, best-labelled key first."""
     urls = info.get("project_urls") or {}
     if not isinstance(urls, dict):
         urls = {}
@@ -119,6 +125,14 @@ def release_facts(
     replay: ReplayRelease | None = None,
     advisories: bool = True,
 ) -> ReleaseFacts:
+    """Fetch and inspect one PyPI release.
+
+    In order: registry metadata (JSON API), provenance for every file
+    (Integrity API), the contents of the sdist and one wheel, the git tag, and
+    OSV advisories when ``advisories`` is true. A network failure in any step
+    becomes a ``FactError`` naming the rules it kept from running. ``replay``
+    supplies registry data for a release PyPI no longer lists.
+    """
     name = normalize(package)
     errors: list[FactError] = []
     notes: list[str] = []
@@ -244,6 +258,11 @@ def release_facts(
 def _inspect(
     ctx: FetchContext, f: RegistryFile, art: ArtifactFacts
 ) -> tuple[ArtifactFacts, list[FactError]]:
+    """Download one artifact, check its hash, then read its contents.
+
+    A file whose hash doesn't match the registry's is not read; GRN-T008
+    reports it.
+    """
     try:
         resp = ctx.http.get(f.url, max_bytes=ctx.limits.max_artifact_bytes)
     except NetError as err:
@@ -281,6 +300,7 @@ def _inspect(
 
 
 def _unfetchable(name: str, version: str, why: str) -> ReleaseFacts:
+    """Facts for a release Garnet couldn't fetch at all: one GRN-E001 naming every rule."""
     return ReleaseFacts(
         ecosystem="pypi",
         package=name,

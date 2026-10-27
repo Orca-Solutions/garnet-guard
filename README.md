@@ -25,7 +25,7 @@
 
 *Trust the last release. Check the next.*
 
-> Status: pre-alpha. Nothing is published to PyPI yet. `garnet diff` works from a checkout today (see [Try it today](#try-it-today-01-preview)); the rest of this README describes the first release.
+> Status: pre-alpha. Nothing is published to PyPI yet. `garnet diff` and `garnet check` work from a checkout today (see [Try it today](#try-it-today-01-preview)); the rest of this README describes the first release.
 
 ## Why
 
@@ -62,7 +62,9 @@ Garnet never runs the code it inspects. It downloads both releases and reads the
 
 Setup, permissions and the fork-safe two-workflow pattern are in [docs/action.md](docs/action.md). The Action is a preview.
 
-**Locally and in agent hooks (planned).** `garnet check` compares two lockfiles, and a pre-install hook stops Claude Code or Codex from quietly adding a risky dependency.
+**Locally.** `garnet check` compares two lockfiles, for example your branch against `main`, and checks every package that changed.
+
+**In agent hooks (planned).** A pre-install hook stops Claude Code or Codex from quietly adding a risky dependency.
 
 ## Replays of real attacks
 
@@ -84,15 +86,19 @@ Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightn
 
 ## Try it today (0.1 preview)
 
-`garnet diff` compares two releases of one PyPI package:
+`garnet diff` compares two releases of one PyPI package, and `garnet check` compares two lockfiles:
 
 ```sh
 uv sync
 uv run garnet diff requests 2.32.4 2.32.5
 uv run garnet diff pypi:lightning 2.6.4 2.6.5 --format json
+uv run garnet check --git-base main   # every lockfile here, against the same files on main
+uv run garnet check --base old/uv.lock --head uv.lock
 uv run garnet explain GRN-C003
 uv run python -m backtest        # replay the 2026 incidents and the clean corpus
 ```
+
+`garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files. Lines it can't check (not pinned with `==`, or from git, a path or a private index) are listed as [GRN-E004](docs/rules/GRN-E004.md) or [GRN-E005](docs/rules/GRN-E005.md), never skipped. `garnet --help` lists every option.
 
 The exit code is 0 below `--fail-on` (default `block`), 1 for warn, 2 for block and 3 if Garnet Guard itself failed.
 
@@ -105,6 +111,8 @@ Python first (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt). npm (
 - [Vision](VISION.md) and [founding principles](PRINCIPLES.md)
 - [v1.0 specification](docs/SPEC-v1.md) and [code design and API](docs/API.md)
 - [Architecture](ARCHITECTURE.md): how the engine works.
+- [Code tour](docs/CODE_TOUR.md): a plain-language guide to the code as it is today, for new contributors and reviewers.
+- [Rules](docs/rules/README.md): one page per rule ID.
 - [Threat model](THREAT_MODEL.md): what Garnet catches, what it can't, and how Garnet protects itself.
 - [Roadmap](ROADMAP.md)
 - [Open core](OPEN_CORE.md): what's free forever, and what the paid Garnet Guard App adds.
