@@ -1,12 +1,12 @@
 # Garnet Guard roadmap
 
-Months count from the repository going live. Version numbers are targets, not promises. Funding sequencing and go/no-go gates come from [plans/monetization.md](../plans/monetization.md); outreach steps from [plans/outreach.md](../plans/outreach.md). Grants, the fiscal host and the LLC are planned in [plans/funding.md](../plans/funding.md). The PyCon US 2027 talk adds two dated milestones (Nov 15 and Dec 1, 2026) and a Dec 15 proposal submission; see [plans/pycon-2027.md](../plans/pycon-2027.md). Those dates assume the repo goes live in mid-October 2026 and slip with it. The normative 1.0 behavior is in [docs/SPEC-v1.md](docs/SPEC-v1.md).
+Months count from the repository going live. Version numbers are targets, not promises. Funding sequencing and go/no-go gates come from [plans/monetization.md](../plans/monetization.md); outreach steps from [plans/outreach.md](../plans/outreach.md). Grants, the fiscal host and the LLC are planned in [plans/funding.md](../plans/funding.md). The PyCon US 2027 talk adds two dated milestones (Nov 15 and Dec 1, 2026) and a Dec 15 proposal submission, and the public launch is set for the week of Dec 8, 2026 (DECISIONS 40), just before that submission; see [plans/pycon-2027.md](../plans/pycon-2027.md). Those dates assume the repo goes live in mid-October 2026 and slip with it. The normative 1.0 behavior is in [docs/SPEC-v1.md](docs/SPEC-v1.md).
 
 | Release | When | Theme |
 |---|---|---|
 | 0.1 | end of month 1 | Engine and PyPI checks, CLI |
-| 0.2 | month 2 | GitHub Action, policy, npm, backtest |
-| 0.3 | month 3 | Public launch: wrapper, agent hooks, docs |
+| 0.2 | end of month 2 (launch week from Tue Dec 8, 2026) | Public launch: GitHub Action, policy, docs, replay write-up |
+| 0.3 | month 3 (January 2027) | Second beat: install wrapper, agent hooks, full backtest |
 | **1.0** | months 4–6 | Stable interfaces, acceptance criteria met |
 | **2.x** | months 6–12 | History and depth: richer baselines, new signals, plugins |
 | **3.x** | year 2 | Breadth and upstream: more ecosystems, native adoption |
@@ -37,34 +37,36 @@ Months count from the repository going live. Version numbers are targets, not pr
 
 **Exit:** both incidents produce a `warn` from rules that would have fired before any feed listed them; unit tests have no network access.
 
-## Month 2 → 0.2: PR surface, policy, npm, backtest
+## Month 2 → 0.2: launch (week of Tue Dec 8, 2026)
+
+Launch means the replay write-up plus a working GitHub Action. The bar doesn't move: the replays are caught and the clean-corpus warn rate is met, using the Dec 1 reduced backtest as the launch number. If the bar isn't met, the launch slips, not the bar.
 
 - [ ] GitHub Action with a sticky PR comment and optional SARIF upload
 - [ ] Verify Dependabot token behavior; ship single-job and two-workflow examples
 - [ ] Policy file with expiring ignores (SPEC §7)
-- [ ] Rules GRN-T006, C004–C006
-- [ ] npm adapter: package-lock, pnpm-lock, yarn.lock; npm provenance; lifecycle-script and `bin` diffs
-- [ ] Full backtest over the last ~20 releases of the top ~500 PyPI packages, extending the Dec 1 reduced run; publish warn rate per rule and set the 1.0 target
 - [ ] Dogfood on Garnet's own repo and 5–10 friendly repos (outreach Draft B)
 - [ ] Opt-in interest list link in the README (not telemetry)
-
-**Exit:** the clean-corpus warn rate is low enough that a typical repo rarely sees a warning; the Action runs on real Dependabot and Renovate PRs.
-
-## Month 3 → 0.3: launch
-
-- [ ] Install wrapper: `garnet pip install …`, `garnet uv add|sync|lock`, `garnet npm install …`
-- [ ] Pre-install hooks for Claude Code and Codex (SPEC §10.4)
 - [ ] Docs site: quickstart, one page per rule, policy guide, comparison page
 - [ ] GitHub Marketplace listing for the Action
-- [ ] Launch write-up "We replayed the 2025–26 supply-chain attacks against Garnet", then Show HN, Python Discourse, r/Python, newsletters (see plans/marketing.md)
-- [ ] Apply to the GitHub Secure Open Source Fund when a cohort opens
-- [ ] Apply to Open Source Collective as fiscal host (needs an org-owned repo, which `orca-solutions` satisfies, and ideally a second admin)
+- [ ] Launch write-up "We replayed the 2025–26 supply-chain attacks against Garnet Guard", then Show HN, Python Discourse, r/Python, Mastodon and Bluesky, newsletters (marketing owns the launch; see plans/marketing.md)
+- [ ] In launch week: apply to the GitHub Secure Open Source Fund (if a cohort is open) and to Open Source Collective as fiscal host (needs an org-owned repo, which `orca-solutions` satisfies, and a second admin by early December)
+- [ ] *Stretch, not a launch requirement:* npm adapter (package-lock, pnpm-lock, yarn.lock; npm provenance; lifecycle-script and `bin` diffs)
 
-**Exit:** the month-3 success criteria in [VISION.md](VISION.md).
+**Exit:** the launch success criteria in [VISION.md](VISION.md); the Action runs on real Dependabot and Renovate PRs.
 
 ## PyCon US 2027 proposal
 
-- [ ] Jason submits the talk proposal by Dec 15, 2026 (the CFP is expected to close around Dec 18; inferred)
+- [ ] Jason submits the talk proposal by Dec 15, 2026 (the CFP is expected to close around Dec 18; inferred). It links the launch write-up and cites launch numbers.
+
+## Month 3 → 0.3: second beat (January 2027)
+
+- [ ] Install wrapper: `garnet pip install …`, `garnet uv add|sync|lock`, `garnet npm install …`
+- [ ] Pre-install hooks for Claude Code and Codex (SPEC §10.4), announced as the second beat
+- [ ] Rules GRN-T006, C004–C006
+- [ ] npm adapter, if it didn't make the launch
+- [ ] Full backtest over the last ~20 releases of the top ~500 PyPI packages (January–February), extending the Dec 1 reduced run, plus the npm corpus; publish warn rate per rule and set the 1.0 target. These numbers feed the PyCon talk.
+
+**Exit:** the wrapper and hooks ship; the full backtest is published.
 
 ## Months 4–6 → 1.0: stabilize
 
