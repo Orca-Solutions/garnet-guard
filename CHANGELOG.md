@@ -17,4 +17,4 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 - A docs page for every rule ID in `docs/rules/`, with an example finding and how to resolve or allowlist it.
 - CI on every pull request (ruff, mypy, import contracts, tests on Python 3.11 to 3.14, build), the OpenSSF Scorecard workflow, Dependabot for the repository itself, and a tag-triggered release that publishes to PyPI with Trusted Publishing and PEP 740 attestations. See docs/RELEASING.md.
 - The GitHub Action (`action.yml`) checks a pull request's lockfile changes and posts or updates one comment. It includes a `workflow_run` comment job for forks (`action/comment`) and example workflows in `action/examples/`. See docs/action.md.
-- `garnet diff --format markdown`, and `python -m garnet_guard.markdown`, which renders the PR comment from a JSON report.
+- `garnet check --format markdown` and `python -m garnet_guard.markdown` render the PR comment (SPEC §9.4) from a report.

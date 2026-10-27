@@ -56,13 +56,12 @@ for i in "${{!args[@]}}"; do
     out=""
     for j in "${{!args[@]}}"; do
       [[ "${{args[$j]}}" == --output ]] && out="${{args[$((j+1))]}}"
-      [[ "${{args[$j]}}" == --policy ]] && cp "${{args[$((j+1))]}}" "$STUB_DIR/policy-seen.toml"
     done
     [[ -n "$STUB_REPORT" ]] && cp "$STUB_REPORT" "$out"
     exit "${{STUB_EXIT:-1}}"
   fi
   if [[ "${{args[$i]}}" == python ]]; then
-    cd "{ROOT}" && exec "{sys.executable}" "${{args[@]:$((i+1))}}"
+    exec "{sys.executable}" "${{args[@]:$((i+1))}}"
   fi
 done
 exit 0
@@ -92,15 +91,16 @@ def env(tmp_path: Path) -> dict[str, str]:
     (repo / "uv.lock").write_text(
         'version = 1\n[[package]]\nname = "examplelib"\nversion = "2.6.1"\n'
     )
-    (repo / "garnet.toml").write_text('[garnet]\nversion = 1\nfail_on = "warn"\n')
     _git(repo, "add", ".")
     _git(repo, "commit", "-q", "-m", "base")
     base = _git(repo, "rev-parse", "HEAD")
     (repo / "uv.lock").write_text(
         'version = 1\n[[package]]\nname = "examplelib"\nversion = "2.6.2"\n'
     )
-    # The pull request tries to relax its own policy.
-    (repo / "garnet.toml").write_text('[garnet]\nversion = 1\nfail_on = "never"\n')
+    # The pull request ships a module that would shadow Garnet Guard's if
+    # Python ever put the checkout on sys.path.
+    (repo / "garnet_guard").mkdir()
+    (repo / "garnet_guard" / "__init__.py").write_text("raise SystemExit('ran PR code')\n")
     _git(repo, "commit", "-q", "-am", "head")
 
     stubs = tmp_path / "bin"
@@ -147,7 +147,7 @@ def _outputs(env: dict[str, str]) -> dict[str, str]:
     return dict(line.split("=", 1) for line in lines)
 
 
-def test_check_renders_comment_from_base_policy(env: dict[str, str]) -> None:
+def test_check_renders_comment(env: dict[str, str]) -> None:
     proc = _run("action/run.sh", env)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     out = _outputs(env)
@@ -160,13 +160,44 @@ def test_check_renders_comment_from_base_policy(env: dict[str, str]) -> None:
 
     calls = Path(env["STUB_LOG"]).read_text()
     assert "--no-config sync --quiet --frozen --no-dev" in calls
-    assert f"check --git-base {env['BASE_SHA']} --policy" in calls
+    assert f"check --git-base {env['BASE_SHA']} --format json" in calls
+    assert "python -I -m garnet_guard.markdown" in calls
     assert "--github-token-env GARNET_GITHUB_TOKEN" in calls
     assert "--head" not in calls
     assert "t0ken" not in calls
-    # The policy came from the base commit, not the pull request.
-    assert 'fail_on = "warn"' in (Path(env["STUB_DIR"]) / "policy-seen.toml").read_text()
-    assert "changes garnet.toml" in proc.stdout
+    assert "ran PR code" not in proc.stdout + proc.stderr
+
+
+def test_renderer_never_imports_from_the_working_directory(env: dict[str, str]) -> None:
+    out_dir = Path(env["RUNNER_TEMP"]) / "garnet-guard"
+    (out_dir / "garnet_guard").mkdir(parents=True)
+    (out_dir / "garnet_guard" / "__init__.py").write_text("raise SystemExit('ran PR code')\n")
+    proc = _run("action/run.sh", env)
+    assert "ran PR code" not in proc.stdout + proc.stderr
+    assert _outputs(env)["exit-code"] == "1"
+
+
+def test_stale_report_is_never_reused(env: dict[str, str]) -> None:
+    assert _run("action/run.sh", env).returncode == 0
+    Path(env["GITHUB_OUTPUT"]).unlink()
+    env |= {"STUB_EXIT": "0", "STUB_REPORT": ""}
+    assert _run("action/run.sh", env).returncode == 0
+    assert _outputs(env)["exit-code"] == "3"
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_symlinked_lockfile_is_refused(env: dict[str, str], explicit: bool) -> None:
+    ws = Path(env["GITHUB_WORKSPACE"])
+    (ws / "requirements.txt").symlink_to("/etc/hostname")
+    if explicit:
+        env |= {"GARNET_LOCKFILES": "requirements.txt"}
+    assert _run("action/run.sh", env).returncode == 0
+    out = _outputs(env)
+    assert out["exit-code"] == "3"
+    assert (
+        "uv.log" not in os.listdir(env["STUB_DIR"])
+        or "garnet check" not in Path(env["STUB_LOG"]).read_text()
+    )
 
 
 def test_explicit_lockfiles_and_no_footer(env: dict[str, str]) -> None:
@@ -302,4 +333,12 @@ def test_comment_job_renders_report_or_says_it_couldnt_check(
     assert proc.returncode == 0, proc.stderr
     out = _outputs(e)
     assert out["no-changes"] == "false"
-    assert "1 of 1 update needs a look" in Path(out["comment-path"]).read_text()
+    comment = Path(out["comment-path"]).read_text()
+    assert "1 of 1 update needs a look" in comment
+    assert "its fork controls" in comment  # head repository isn't o/r
+
+    (artifact / "report.json").write_text('{"changes": [{"verdict": "evil"}]}')
+    Path(e["GITHUB_OUTPUT"]).unlink()
+    proc = _run("action/comment/render.sh", e)
+    assert proc.returncode == 0, proc.stderr
+    assert "couldn't check" in Path(_outputs(e)["comment-path"]).read_text()

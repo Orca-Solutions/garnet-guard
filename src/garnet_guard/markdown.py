@@ -6,7 +6,8 @@ artifact. That artifact may come from a fork's workflow run, so every value in
 the document is treated as untrusted: rule IDs and verdicts are validated, and
 every other string is escaped so it can't create markup, links or mentions.
 
-This module imports nothing from Garnet.
+``render`` is pure and works on plain data. ``to_markdown`` is the entry point
+``garnet check --format markdown`` calls with a ``Report``.
 """
 
 from __future__ import annotations
@@ -41,10 +42,22 @@ _MD_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+\-.!|~:])")
 _ZWSP = "\u200b"
 # Text GitHub turns into links or notifications even when Markdown-escaped:
 # URLs, www. autolinks, @mentions, #123 and GH-123 references, commit SHAs.
-_AUTOLINK = re.compile(
-    r"(?i)(?<=:)(?=//)|(?<=@)(?=\w)|(?<=#)(?=\d)|(?<=gh-)(?=\d)|(?<=www)(?=\.)"
-    r"|(?<=\b[0-9a-f])(?=[0-9a-f]{6,39}\b)(?=[a-f]*\d)"
-)
+_AUTOLINK = re.compile(r"(?i)(?<=:)(?=//)|(?<=@)(?=\w)|(?<=#)(?=\d)|(?<=gh-)(?=\d)|(?<=www)(?=\.)")
+# Hex runs that could be read as commit SHAs (7 or more characters, at least
+# one digit). They are split every 6 characters so no piece is long enough.
+_HEX_RUN = re.compile(r"(?i)\b(?=[a-f]*\d)[0-9a-f]{7,}\b")
+
+
+def _break_hex(m: re.Match[str]) -> str:
+    run = m.group(0)
+    return _ZWSP.join(run[i : i + 6] for i in range(0, len(run), 6))
+
+
+def to_markdown(report: Any, *, footer: bool = True, max_chars: int = MAX_CHARS) -> str:
+    """The PR comment for an ``engine.Report``, rendered through its JSON form."""
+    from .report import to_json
+
+    return render(json.loads(to_json(report)), footer=footer, max_chars=max_chars)
 
 
 class ReportFormatError(ValueError):
@@ -65,7 +78,7 @@ def text(value: object) -> str:
     The result renders as the literal text: no emphasis, HTML, links, autolinks,
     @mentions, issue references or commit references.
     """
-    s = _AUTOLINK.sub(_ZWSP, _plain(value))
+    s = _HEX_RUN.sub(_break_hex, _AUTOLINK.sub(_ZWSP, _plain(value)))
     s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return _MD_SPECIAL.sub(r"\\\1", s)
 

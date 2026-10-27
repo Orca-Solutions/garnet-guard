@@ -6,8 +6,9 @@ import pytest
 from garnet_guard import markdown as md
 from garnet_guard.cli import main
 from garnet_guard.engine import report, run_checks
+from garnet_guard.markdown import to_markdown
 from garnet_guard.models import Change
-from garnet_guard.report import to_json, to_markdown
+from garnet_guard.report import to_json
 from tests.builders import release
 
 
@@ -200,3 +201,10 @@ def test_cli_render_rejects_bad_input(tmp_path, capsys) -> None:
     assert md.main([str(bad)]) == 3
     assert "couldn't render" in capsys.readouterr().err
     assert main(["diff", "x", "1", "2", "--format", "nope"]) == 3
+
+
+def test_long_hex_runs_are_broken_into_short_pieces() -> None:
+    out = md.text("a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 and 1.2.3 and cafebabe")
+    pieces = re.findall(r"[0-9a-f]+", out.split(" and ")[0])
+    assert max(len(p) for p in pieces) <= 6
+    assert "cafebabe" in out  # no digit: not a commit-like run

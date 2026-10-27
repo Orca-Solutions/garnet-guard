@@ -74,23 +74,6 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "the PR comment renderer imports nothing from Garnet"
-type = "forbidden"
-source_modules = ["garnet_guard.markdown"]
-forbidden_modules = [
-    "garnet_guard.models",
-    "garnet_guard.checks",
-    "garnet_guard.facts",
-    "garnet_guard.ecosystems",
-    "garnet_guard.engine",
-    "garnet_guard.net",
-    "garnet_guard.safe_archive",
-    "garnet_guard.report",
-    "garnet_guard.cli",
-    "httpx",
-]
-
-[[tool.importlinter.contracts]]
 name = "checks are pure: no network, ecosystems or archives"
 type = "forbidden"
 source_modules = ["garnet_guard.checks"]
