@@ -1,0 +1,41 @@
+# Garnet Guard on dependency pull requests: one workflow.
+#
+# Copy to .github/workflows/garnet-guard.yml. This is enough for Dependabot
+# and Renovate pull requests opened from branches in this repository.
+# Pull requests from forks get a read-only token, so this job can't comment on
+# them; it still writes the report to the job summary. To comment on fork pull
+# requests too, use garnet-guard-fork.yml with garnet-guard-comment.yml instead.
+#
+# Pin the Action to a full commit SHA from a Garnet Guard release, not a tag.
+name: Garnet Guard
+
+on:
+  pull_request:
+    paths:
+      - "**/uv.lock"
+      - "**/poetry.lock"
+      - "**/pylock.toml"
+      - "**/pylock.*.toml"
+      - "**/requirements*.txt"
+      - "garnet.toml"
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  garnet-guard:
+    name: Check dependency changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read        # read the lockfiles and the base commit
+      pull-requests: write  # post or update the comment
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: orca-solutions/garnet-guard@<release-commit-sha> # v0.1.0
+        with:
+          fail-on: block

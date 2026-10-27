@@ -1,0 +1,85 @@
+# Garnet Guard GitHub Action. Usage, permissions and the fork-safe two-workflow
+# pattern are in docs/action.md. Inputs reach the scripts only through
+# environment variables, never through ${{ }} inside a script.
+name: Garnet Guard
+description: A second reviewer for every dependency update. Checks each changed package against the release you trusted.
+author: Garnet contributors
+branding:
+  icon: search
+  color: red
+
+inputs:
+  lockfiles:
+    description: >-
+      "auto" to check every lockfile Garnet Guard recognizes, or a newline-separated
+      list of lockfile paths relative to the repository root.
+    default: auto
+  comment:
+    description: Post or update one pull request comment with the report.
+    default: "true"
+  footer:
+    description: End the comment with a line linking to Garnet Guard's rule docs. Set to false to remove it.
+    default: "true"
+  fail-on:
+    description: Fail the step at this verdict or worse. One of warn, block, never.
+    default: block
+  github-token:
+    description: >-
+      Token for reading the base commit, looking up release tags and posting the
+      comment. The default is the workflow's GITHUB_TOKEN.
+    default: ${{ github.token }}
+
+outputs:
+  verdict:
+    description: The report verdict, pass, warn or block. Empty if Garnet Guard couldn't produce a report.
+    value: ${{ steps.check.outputs.verdict }}
+  report-path:
+    description: Path of the JSON report (SPEC §9.2). Upload it as the garnet-guard-report artifact for the workflow_run comment pattern.
+    value: ${{ steps.check.outputs.report-path }}
+  comment-path:
+    description: Path of the rendered pull request comment (Markdown).
+    value: ${{ steps.check.outputs.comment-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up uv
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        version: "0.11.32"
+        working-directory: ${{ github.action_path }}
+        enable-cache: "false"
+
+    - name: Check dependency changes
+      id: check
+      shell: bash
+      env:
+        GARNET_ACTION_PATH: ${{ github.action_path }}
+        GARNET_LOCKFILES: ${{ inputs.lockfiles }}
+        GARNET_FOOTER: ${{ inputs.footer }}
+        GARNET_FAIL_ON: ${{ inputs.fail-on }}
+        GARNET_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: bash "$GARNET_ACTION_PATH/action/run.sh"
+
+    - name: Post the pull request comment
+      if: ${{ always() && inputs.comment == 'true' && steps.check.outputs.comment-path != '' }}
+      shell: bash
+      env:
+        GARNET_ACTION_PATH: ${{ github.action_path }}
+        GARNET_COMMENT: ${{ steps.check.outputs.comment-path }}
+        GARNET_PR: ${{ steps.check.outputs.pr-number }}
+        GARNET_UPDATE_ONLY: ${{ steps.check.outputs.no-changes }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: bash "$GARNET_ACTION_PATH/action/post-comment.sh"
+
+    - name: Apply fail-on
+      if: ${{ always() }}
+      shell: bash
+      env:
+        GARNET_EXIT: ${{ steps.check.outputs.exit-code }}
+      run: |
+        case "$GARNET_EXIT" in
+          0) exit 0 ;;
+          1|2) echo "::error title=Garnet Guard::The report verdict is at or above fail-on. See the job summary."; exit "$GARNET_EXIT" ;;
+          *) echo "::error title=Garnet Guard::Garnet Guard couldn't check this pull request. See the log of the check step."; exit 3 ;;
+        esac
