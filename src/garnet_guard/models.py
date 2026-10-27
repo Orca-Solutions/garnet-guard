@@ -59,12 +59,14 @@ class Evidence:
 
 @dataclass(frozen=True)
 class RawFinding:
-    """What a check returns: no severity, no suppression."""
+    """What a check returns: no suppression, and the rule's severity unless
+    ``lowered_to`` says otherwise (a check may lower it, never raise it)."""
 
     rule_id: str
     title: str
     evidence: tuple[Evidence, ...]
     release: str | None = None
+    lowered_to: Severity | None = None
 
 
 @dataclass(frozen=True)
@@ -176,12 +178,14 @@ class ArtifactFacts:
     setup_py_calls: tuple[CallSite, ...] = ()
     unparsed: tuple[str, ...] = ()  # .py files ast couldn't parse
     wheel_tag: str | None = None
+    entry_points: tuple[str, ...] = ()  # modules named by entry points
 
 
 @dataclass(frozen=True)
 class TagInfo:
     name: str
     sha: str | None
+    repo: str | None = None  # owner/repo the tag was found in
 
 
 @dataclass(frozen=True)
@@ -204,6 +208,7 @@ class ReleaseFacts:
     source_repo: str | None = None
     tag: TagInfo | None = None
     tag_checked: bool = False
+    tag_repos: tuple[str, ...] = ()  # every repo searched for the tag
     advisories: tuple[str, ...] = ()
     advisories_checked: bool = False
     errors: tuple[FactError, ...] = ()

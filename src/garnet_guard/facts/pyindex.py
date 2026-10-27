@@ -4,8 +4,9 @@ Parses source with ``ast`` only. Nothing is imported or executed.
 
 "Top level" means statements that run when the module is imported: module
 statements, class bodies, decorators and default arguments, plus the bodies
-of functions in the same module that top-level code calls or hands to
-something else (``threading.Thread(target=f)``, ``atexit.register(f)``).
+of functions in the same module that top-level code calls, decorates with,
+or passes to a call (``threading.Thread(target=f)``, ``atexit.register(f)``).
+A function that is only returned or stored is not followed.
 Code under ``if __name__ == "__main__":`` is skipped.
 """
 
@@ -13,7 +14,7 @@ from __future__ import annotations
 
 import ast
 import warnings
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 
 from ..models import CallSite
 
@@ -83,6 +84,7 @@ class _Resolver:
     def __init__(self) -> None:
         self.aliases: dict[str, str] = {}
         self.imports: set[str] = set()
+        self.package: str | None = None  # this module's package, for relative imports
 
     def note_import(self, node: ast.Import | ast.ImportFrom) -> None:
         if isinstance(node, ast.Import):
@@ -95,11 +97,28 @@ class _Resolver:
                     self.aliases[top] = top
         else:
             if node.level:
-                return  # relative imports stay inside the package
+                # Relative imports don't alias outside names; record what they
+                # load so callers can tell which of the package's modules run.
+                base = self._relative_base(node.level)
+                if base is not None:
+                    mod = ".".join(p for p in (base, node.module or "") if p)
+                    self.imports.add(mod)
+                    self.imports.update(f"{mod}.{a.name}" for a in node.names if a.name != "*")
+                return
             mod = node.module or ""
             self.imports.add(mod)
             for a in node.names:
                 self.aliases[a.asname or a.name] = f"{mod}.{a.name}" if mod else a.name
+                if mod and a.name != "*":
+                    self.imports.add(f"{mod}.{a.name}")  # may be a submodule
+
+    def _relative_base(self, level: int) -> str | None:
+        if self.package is None:
+            return None
+        parts = self.package.split(".") if self.package else []
+        if level - 1 > len(parts):
+            return None
+        return ".".join(parts[: len(parts) - (level - 1)])
 
     def resolve(self, func: ast.expr) -> str | None:
         parts = _dotted(func)
@@ -129,6 +148,7 @@ def _walk_exec(nodes: Iterable[ast.AST]) -> Iterator[ast.AST]:
     while stack:
         node = stack.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            yield node  # for its decorators; the body runs only when called
             stack.extend(node.decorator_list)
             stack.extend(d for d in node.args.defaults)
             stack.extend(d for d in node.args.kw_defaults if d is not None)
@@ -141,19 +161,43 @@ def _walk_exec(nodes: Iterable[ast.AST]) -> Iterator[ast.AST]:
         stack.extend(ast.iter_child_nodes(node))
 
 
+def _local_refs(exprs: Iterable[ast.expr], functions: Mapping[str, ast.AST]) -> list[str]:
+    """Local functions that a call or decorator runs or is handed.
+
+    Only a call's target, its direct arguments (``Thread(target=f)``,
+    ``atexit.register(f)``) and decorators count. A function that is merely
+    returned or stored is not reached.
+    """
+    out = []
+    for e in exprs:
+        if isinstance(e, ast.Starred):
+            e = e.value
+        if isinstance(e, ast.Name) and e.id in functions:
+            out.append(e.id)
+    return out
+
+
 def index_module(
-    source: bytes, *, path: str = "<module>", own: frozenset[str] = frozenset()
+    source: bytes,
+    *,
+    path: str = "<module>",
+    own: frozenset[str] = frozenset(),
+    module: str | None = None,
 ) -> tuple[tuple[CallSite, ...], tuple[str, ...]]:
     """Return (import-time call sites, imports). Raises SyntaxError/ValueError.
 
     ``own`` names the release's own top-level packages; calls into them are
     not sensitive even if the names collide (the ``requests`` package calling
-    its own ``requests.adapters``).
+    its own ``requests.adapters``). ``module`` is the dotted module name, used
+    to resolve relative imports into the imports list.
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # package source triggers SyntaxWarnings
         tree = ast.parse(source, filename=path)
     resolver = _Resolver()
+    if module is not None:
+        is_pkg = path.endswith("__init__.py")
+        resolver.package = module if is_pkg else module.rpartition(".")[0]
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             resolver.note_import(node)
@@ -173,8 +217,11 @@ def index_module(
                 name = resolver.resolve(node.func)
                 if name is not None and name.split(".")[0] not in own and is_sensitive(name, node):
                     calls.append(CallSite(name=name, line=node.lineno, via=via))
-            if isinstance(node, ast.Name) and node.id in functions:
-                reached.append(node.id)
+                reached += _local_refs(
+                    [node.func, *node.args, *(k.value for k in node.keywords)], functions
+                )
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                reached += _local_refs(node.decorator_list, functions)
         for fname in reached:
             if fname not in seen_funcs:
                 seen_funcs.add(fname)
