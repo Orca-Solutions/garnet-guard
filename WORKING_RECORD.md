@@ -2,6 +2,12 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-27: GitHub Action re-landed on main
+
+**State.** PR #5 (the Action) was merged into `lockfiles/garnet-check` after PR #6 had already merged, so `action.yml`, `action/` and `garnet_guard.markdown` never reached `main`. This entry's PR replays #5's three commits onto `main` unchanged; the files match #5's final version. The Action runs `garnet check`, which is now on `main`.
+
+**Verification.** `uv run pytest` (110 tests), ruff, mypy (strict), `lint-imports`, shellcheck and zizmor (offline) pass. The Action itself has not run on GitHub yet.
+
 ## 2026-10-10: GitHub Action preview
 
 **State.** The Action and its comment are built on top of `garnet check` (PR #6):
