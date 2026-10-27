@@ -23,6 +23,7 @@ class Inspection:
     build_backend: str | None = None
     setup_py_calls: tuple[CallSite, ...] = ()
     unparsed: list[str] = field(default_factory=list)
+    entry_points: set[str] = field(default_factory=set)
     errors: list[FactError] = field(default_factory=list)
 
 
@@ -97,18 +98,22 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                         )
                     )
                     continue
+                mod_path = rel[4:] if sdist and rel.startswith("src/") else rel
+                mod = module_name(mod_path)
                 try:
-                    calls, imports = index_module(body, path=rel, own=own)
+                    calls, imports = index_module(body, path=rel, own=own, module=mod)
                 except (SyntaxError, ValueError, RecursionError):
                     result.unparsed.append(rel)
                     continue
                 if sdist and rel == "setup.py":
                     result.setup_py_calls = calls
                 else:
-                    mod_path = rel[4:] if sdist and rel.startswith("src/") else rel
-                    result.modules.append(ModuleIndex(module_name(mod_path), rel, calls, imports))
+                    result.modules.append(ModuleIndex(mod, rel, calls, imports))
             elif sdist and rel == "pyproject.toml":
                 result.build_backend = _build_backend(body)
+                result.entry_points |= _pyproject_entry_points(body)
+            elif not sdist and rel.endswith(".dist-info/entry_points.txt") and rel.count("/") == 1:
+                result.entry_points |= entry_point_modules(body)
     except LimitExceeded as err:
         result.errors.append(FactError("GRN-E003", f"{filename}: {err}", ("GRN-C001", "GRN-C003")))
     except ArchiveError as err:
@@ -134,3 +139,40 @@ def _build_backend(pyproject: bytes) -> str | None:
     if bs.get("backend-path"):
         return f"in-tree:{backend}"
     return backend
+
+
+def entry_point_modules(text: bytes) -> set[str]:
+    """Modules named by an entry_points.txt (``name = module:attr``).
+
+    Entry points such as ``pytest11`` load a module whenever another tool
+    runs, so those modules count as live code.
+    """
+    out = set()
+    for raw in text.decode("utf-8", "replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", ";", "[")) or "=" not in line:
+            continue
+        target = line.split("=", 1)[1].strip()
+        out.add(target.split(":", 1)[0].split("[", 1)[0].strip())
+    return {m for m in out if m}
+
+
+def _pyproject_entry_points(pyproject: bytes) -> set[str]:
+    try:
+        doc = tomllib.loads(pyproject.decode("utf-8", "replace"))
+    except tomllib.TOMLDecodeError:
+        return set()
+    project = doc.get("project")
+    if not isinstance(project, dict):
+        return set()
+    groups: list[object] = [project.get("scripts"), project.get("gui-scripts")]
+    eps = project.get("entry-points")
+    if isinstance(eps, dict):
+        groups += list(eps.values())
+    out = set()
+    for g in groups:
+        if isinstance(g, dict):
+            for target in g.values():
+                if isinstance(target, str):
+                    out.add(target.split(":", 1)[0].strip())
+    return {m for m in out if m}

@@ -15,12 +15,23 @@ Everything a single repository or a single developer needs:
 
 ## The Garnet Guard App (hosted, later)
 
-The Garnet Guard App is a hosted GitHub App for things that only make sense when someone runs a service across many repositories. The Free tier includes the basics (one org-wide policy, PR checks, email alerts); paid tiers add the rest:
+The Garnet Guard App is a hosted GitHub App for things that only make sense when someone runs a service across many repositories. The Free tier includes the basics (one org-wide policy, PR checks, email alerts, 30 days of history). Paid tiers add the rest in two parts: **Core**, the features every paid tier includes, and **Premium**, an add-on any tier can buy.
+
+Core, on Team and Business:
 
 - org-wide policy pushed to every repository, and policy per group of repos
-- dashboards, Slack, webhook and email alerts, audit logs, SSO
-- private registry and mirror support, managed caching
-- longer history retention
+- exceptions with an owner, a reason and an expiry date
+- alerts on versions you already merged that are flagged later, with the repos they're in
+- an org-wide view of which versions each repo trusts, and Slack, webhook and email alerts
+- a year of history, and an audit trail of policy changes and exceptions
+
+Premium, for governance and audit:
+
+- SSO through the company's identity provider
+- audit log export, to a SIEM or as a file for auditors
+- compliance reports on policy coverage, exceptions and time to fix
+
+Enterprise or a quoted project: private registry and mirror support, managed caching, and response-time promises.
 
 ### Two kinds of history
 
@@ -32,13 +43,14 @@ The Garnet Guard App is a hosted GitHub App for things that only make sense when
 | Tier | Who | Price |
 |---|---|---|
 | Free | Up to 10 developers | $0, with a limited set of hosted features |
-| Team | Up to 10 developers | ~$99/month, all Business features |
-| Business | 11 to 250 developers | Size bands: 11–25 $199, 26–50 $449, 51–100 $899, 101–250 $1,999 a month |
-| Enterprise | Over 250 developers | Call us |
+| Team | Up to 10 developers | ~$99/month, the same Core features as Business |
+| Business | 11 to 250 developers | $199/month up to 25 developers, plus $8/month for each developer above 25 (for example $399 at 50, $1,999 at 250) |
+| Enterprise | Over 250 developers, or custom needs | Call us. Premium included. |
+| Premium add-on | Any tier | $49/month up to 10 developers, $99/month up to 25, then $4/month for each developer above 25 |
 
-**Public repositories are never counted and never charged,** on any tier. "Developers" means active committers: someone counts only through commits to private repositories where the app is installed in the last 90 days, so there's no seat admin. Every tier, Free included, keeps the whole open-source engine, every rule, the CLI, the Action and the hooks; tiers limit only hosted conveniences.
+**Public repositories are never counted and never charged,** on any tier. "Developers" means active committers: someone counts only through commits to private repositories where the app is installed in the last 90 days, so there's no seat admin. The count is set at purchase or renewal, with no true-ups during the term. Every tier, Free included, keeps the whole open-source engine, every rule, the CLI, the Action and the hooks; tiers limit only hosted conveniences.
 
-*The tier shape is agreed; prices are a working draft, revised with pilot data.* The full tier table, features and reasoning are in [plans/monetization.md](../plans/monetization.md), along with sequencing and the go/no-go gates (ADR-0010). No paid work starts before Gate A in month 4.
+*The tier shape is agreed; prices are a working draft, revised with pilot data.* The full tier table, features and reasoning are in [plans/monetization.md](../plans/monetization.md), along with sequencing and the go/no-go gates (ADR-0010). The pricing decision is ADR-0015. No paid work starts before Gate A in month 4.
 
 ## Commitments
 

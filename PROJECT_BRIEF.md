@@ -5,7 +5,7 @@ The approved outcome, constraints and permissions for anyone working on Garnet G
 ## Outcome
 
 - **Mission:** no project takes a dependency update on faith. See [VISION.md](VISION.md).
-- **Month-3 success** (public launch, 0.x): the criteria in [VISION.md](VISION.md#what-success-looks-like) and the month-3 exit in [ROADMAP.md](ROADMAP.md).
+- **Launch success** (mid-December 2026, launch week from Tue Dec 8): the criteria in [VISION.md](VISION.md#what-success-looks-like) and the month-2 exit in [ROADMAP.md](ROADMAP.md).
 - **1.0:** the acceptance criteria in [docs/SPEC-v1.md](docs/SPEC-v1.md) §13.
 - **Dated milestones:** incident replays reproducible by Nov 15, 2026, and a reduced clean-corpus backtest by Dec 1, 2026 ([ROADMAP.md](ROADMAP.md), month 1).
 

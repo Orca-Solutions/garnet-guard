@@ -60,6 +60,8 @@ Garnet never runs the code it inspects. It downloads both releases and reads the
 
 <sub>A sample comment. The examplelib findings are illustrative; the replays below are real.</sub>
 
+Setup, permissions and the fork-safe two-workflow pattern are in [docs/action.md](docs/action.md). The Action is a preview.
+
 **Locally and in agent hooks (planned).** `garnet check` compares two lockfiles, and a pre-install hook stops Claude Code or Codex from quietly adding a risky dependency.
 
 ## Replays of real attacks

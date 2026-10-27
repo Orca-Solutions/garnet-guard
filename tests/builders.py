@@ -90,6 +90,7 @@ def release(
             modules=tuple(ins.modules),
             pth_files=tuple(ins.pth_files),
             unparsed=tuple(ins.unparsed),
+            entry_points=tuple(sorted(ins.entry_points)),
             wheel_tag="py3-none-any",
         )
     return ReleaseFacts(

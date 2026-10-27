@@ -2,6 +2,33 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-27: GitHub Action re-landed on main
+
+**State.** PR #5 (the Action) was merged into `lockfiles/garnet-check` after PR #6 had already merged, so `action.yml`, `action/` and `garnet_guard.markdown` never reached `main`. This entry's PR replays #5's three commits onto `main` unchanged; the files match #5's final version. The Action runs `garnet check`, which is now on `main`.
+
+**Verification.** `uv run pytest` (110 tests), ruff, mypy (strict), `lint-imports`, shellcheck and zizmor (offline) pass. The Action itself has not run on GitHub yet.
+
+## 2026-10-10: GitHub Action preview
+
+**State.** The Action and its comment are built on top of `garnet check` (PR #6):
+
+- `action.yml` at the repository root (Marketplace needs it there; API.md §9 shows `action/`), with scripts in `action/`.
+- `action/comment/`: the `workflow_run` comment job for forks.
+- `action/examples/`: the single workflow, plus the two-workflow pair for forks.
+- `garnet_guard.markdown`: the SPEC §9.4 comment, rendered from the JSON report.
+- `docs/action.md` (usage) and `docs/marketplace.md` (listing steps).
+
+**Verification.**
+- `uv run pytest`: unit tests pass with no network. `tests/test_action.py` runs the shell scripts against a local git repository, with `uv` and `gh` stubbed.
+- ruff, mypy (strict), `lint-imports`, shellcheck, actionlint and zizmor all pass. zizmor's only findings are the `<release-commit-sha>` placeholders in the examples.
+- The Action itself has not run on GitHub yet.
+- Independent review found six issues, all fixed: the renderer could import a module from the pull request checkout (`python -m` puts the working directory on `sys.path`); a bad report in the fork comment job left the old comment up; a stale report could be reused; long SHAs could still autolink; fork comments looked independent; the git auth header was on argv. A symlinked lockfile is now refused too.
+- No `policy` input: `garnet check` doesn't read policy files in this preview.
+
+**Open questions.**
+- The comment's passing-update column says "no findings" where the mock shows "provenance ✓ · tag ✓ · content ✓". A report doesn't record which checks ran clean, so the mock's wording would claim more than Garnet Guard knows.
+- Rule links point to `docs/rules/<ID>.md` in the repository, not garnet-guard.dev, until a domain is registered.
+
 ## 2026-10-10: CI and release pipeline
 
 **State.** `.github/workflows/` has CI (`ci.yml`), the OpenSSF Scorecard (`scorecard.yml`) and a tag-triggered release (`release.yml`) that publishes with Trusted Publishing and PEP 740 attestations, then verifies them from PyPI. Dependabot watches GitHub Actions and the uv lockfile with a 7-day cooldown. All actions are pinned by commit SHA and every job declares minimal permissions.

@@ -38,6 +38,6 @@ Garnet's founding principles are in [PRINCIPLES.md](PRINCIPLES.md). The short ve
 
 In one line: "this release looks different from the last one you trusted" becomes a check every project runs on every dependency update.
 
-- **Month 3 (public launch, 0.x):** Garnet catches every replayed 2025–26 incident it targets, stays quiet on the large majority of clean updates to top PyPI packages, runs on real repositories, and the launch write-up gets read.
+- **At launch (mid-December 2026, 0.2):** Garnet catches every replayed 2025–26 incident it targets, stays quiet on the large majority of clean updates to top PyPI packages, runs on real repositories, and the launch write-up gets read.
 - **Year 1 (1.0 shipped):** Garnet is a default recommendation for securing Dependabot/Renovate flows in Python, has outside maintainers, and has caught at least one real compromise before a feed listed it.
 - **Longer term:** the checks Garnet proves out become native in pip, uv and npm, and Garnet becomes the policy and history layer above them.

@@ -1,0 +1,48 @@
+# Garnet Guard for pull requests from forks: the check half of the two-workflow
+# pattern (SPEC §10.2). Copy to .github/workflows/garnet-guard.yml, together
+# with garnet-guard-comment.yml.
+#
+# This job runs with a read-only token and never comments. It uploads the JSON
+# report, and the comment workflow posts it from a run that has write access
+# but never checks out or runs pull request code.
+#
+# Pin the Action to a full commit SHA from a Garnet Guard release, not a tag.
+name: Garnet Guard
+
+on:
+  pull_request:
+    paths:
+      - "**/uv.lock"
+      - "**/poetry.lock"
+      - "**/pylock.toml"
+      - "**/pylock.*.toml"
+      - "**/requirements*.txt"
+      - "garnet.toml"
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  garnet-guard:
+    name: Check dependency changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: orca-solutions/garnet-guard@<release-commit-sha> # v0.1.0
+        id: garnet
+        with:
+          comment: false
+          fail-on: block
+      - if: ${{ always() && steps.garnet.outputs.report-path != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: garnet-guard-report
+          path: ${{ steps.garnet.outputs.report-path }}
+          retention-days: 7
