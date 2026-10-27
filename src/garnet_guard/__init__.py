@@ -16,6 +16,7 @@ from .models import (  # noqa: E402
 
 
 def explain(rule_id: str) -> object:
+    """The ``RuleDoc`` for a rule ID, as ``garnet explain`` prints it."""
     from .checks import DOCS
 
     return DOCS[rule_id.upper()]

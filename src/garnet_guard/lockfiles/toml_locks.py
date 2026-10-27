@@ -40,6 +40,7 @@ def _load(text: str) -> dict[str, Any]:
 
 
 def parse_uv(text: str) -> list[Pin]:
+    """Pins from a uv.lock. The project itself and workspace members are skipped."""
     doc = _load(text)
     packages = doc.get("package", [])
     lines = block_lines(text, "[[package]]")
@@ -67,6 +68,7 @@ def parse_uv(text: str) -> list[Pin]:
 
 
 def parse_poetry(text: str) -> list[Pin]:
+    """Pins from a poetry.lock. An entry with no ``source`` comes from PyPI."""
     doc = _load(text)
     packages = doc.get("package", [])
     lines = block_lines(text, "[[package]]")

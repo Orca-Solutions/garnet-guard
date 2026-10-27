@@ -61,11 +61,14 @@ def parse_ref_advertisement(data: bytes) -> dict[str, str]:
 
 
 class TagLookup:
+    """Tags per repository, fetched once per run and shared between releases."""
+
     def __init__(self, http: Http) -> None:
         self._http = http
         self._cache: dict[str, dict[str, str]] = {}
 
     def tags(self, repo: str) -> dict[str, str]:
+        """{tag name: commit sha} for ``owner/repo``. Raises ``NetError``."""
         if repo not in self._cache:
             url = f"https://github.com/{repo}.git/info/refs?service=git-upload-pack"
             resp = self._http.get(url, max_bytes=64 * 1024 * 1024)
@@ -76,6 +79,7 @@ class TagLookup:
 
 
 def _prefixes(package: str) -> list[str]:
+    """Tag prefixes to try: none, then ``<name>-`` in each spelling of the name."""
     out = [""]
     for n in sorted({package, package.replace("-", "_"), package.replace("_", "-")}):
         out.append(f"{n}-")

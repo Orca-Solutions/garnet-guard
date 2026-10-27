@@ -17,6 +17,8 @@ _SCRIPT_EXT = (".sh", ".bash", ".bat", ".cmd", ".ps1", ".js", ".mjs", ".cjs", ".
 
 @dataclass
 class Inspection:
+    """Content facts for one artifact, filled in by ``inspect_artifact``."""
+
     files: list[FileEntry] = field(default_factory=list)
     modules: list[ModuleIndex] = field(default_factory=list)
     pth_files: list[PthFile] = field(default_factory=list)
@@ -28,6 +30,7 @@ class Inspection:
 
 
 def _kind(path: str, head: bytes) -> FileKind:
+    """Classify a file by its extension and first bytes."""
     lower = path.lower()
     if lower.endswith(".py"):
         return "py"
@@ -61,6 +64,7 @@ def exec_lines(pth: bytes) -> tuple[str, ...]:
 
 
 def _own_packages(paths: list[str]) -> frozenset[str]:
+    """The release's own top-level packages, so calls into them aren't flagged."""
     own = set()
     for p in paths:
         if p.endswith(".py"):
@@ -70,6 +74,11 @@ def _own_packages(paths: list[str]) -> frozenset[str]:
 
 
 def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool) -> Inspection:
+    """Read every file in a wheel or sdist and record what it contains.
+
+    Python files are parsed, never run. Archive problems and limits become
+    ``FactError``s in the result.
+    """
     result = Inspection()
     try:
         reader = open_archive(data, filename, limits)
@@ -126,6 +135,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
 
 
 def _build_backend(pyproject: bytes) -> str | None:
+    """``build-system.build-backend``, prefixed ``in-tree:`` when the sdist ships it."""
     try:
         doc = tomllib.loads(pyproject.decode("utf-8", "replace"))
     except tomllib.TOMLDecodeError:
@@ -158,6 +168,7 @@ def entry_point_modules(text: bytes) -> set[str]:
 
 
 def _pyproject_entry_points(pyproject: bytes) -> set[str]:
+    """Modules named by ``[project]`` scripts and entry points."""
     try:
         doc = tomllib.loads(pyproject.decode("utf-8", "replace"))
     except tomllib.TOMLDecodeError:

@@ -28,6 +28,7 @@ _COLORS = {Severity.BLOCK: "\x1b[1;31m", Severity.WARN: "\x1b[33m", Severity.INF
 
 
 def to_text(report: Report, *, color: bool = False) -> str:
+    """The terminal report (SPEC §9.1)."""
     lines: list[str] = []
     for r in report.results:
         c = r.change
@@ -55,6 +56,7 @@ def _finding_text(f: Finding, color: bool) -> list[str]:
 
 
 def _clean(obj: Any) -> Any:
+    """Drop None values and turn severities into their labels."""
     if isinstance(obj, dict):
         return {k: _clean(v) for k, v in obj.items() if v is not None}
     if isinstance(obj, (list, tuple)):
@@ -65,6 +67,7 @@ def _clean(obj: Any) -> Any:
 
 
 def to_json(report: Report) -> str:
+    """The JSON report (SPEC §9.2), with sorted keys so output is stable."""
     changes = []
     for r in report.results:
         findings = []

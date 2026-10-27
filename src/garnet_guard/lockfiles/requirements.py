@@ -33,6 +33,12 @@ def _logical_lines(text: str) -> list[tuple[int, str]]:
 
 
 def parse(text: str) -> list[Pin]:
+    """Pins from a requirements file.
+
+    ``==`` pins from PyPI are checked. Ranges are ``unpinned``; URLs, paths,
+    editable installs and pins under a private ``--index-url`` are
+    ``unsupported``. Other options (``-r``, ``-c``) are skipped.
+    """
     pins: list[Pin] = []
     private_index: str | None = None
     for line_no, line in _logical_lines(text):

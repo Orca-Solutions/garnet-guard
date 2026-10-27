@@ -83,6 +83,12 @@ def _verify(att: Attestation, publisher: Publisher, dist: Distribution) -> None:
 
 
 def verify_provenance(filename: str, sha256: str, body: bytes) -> FileProvenance:
+    """Verify the Integrity API's provenance document for one file.
+
+    A failed verification returns ``verified=False`` with the error (GRN-T007).
+    A verifier that couldn't run also sets ``verification_ran=False``, which
+    the checks report as couldn't-check (GRN-E001) instead.
+    """
     try:
         prov = Provenance.model_validate_json(body)
     except ValidationError as err:

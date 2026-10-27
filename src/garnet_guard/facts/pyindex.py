@@ -60,6 +60,10 @@ def sensitive_set() -> tuple[str, ...]:
 
 
 def is_sensitive(name: str, call: ast.Call | None = None) -> bool:
+    """True if calling ``name`` is in the sensitive set.
+
+    ``importlib.import_module`` counts only with a non-literal argument.
+    """
     if name in _EXACT:
         return True
     if name == "importlib.import_module":
@@ -70,6 +74,7 @@ def is_sensitive(name: str, call: ast.Call | None = None) -> bool:
 
 
 def _dotted(node: ast.expr) -> list[str] | None:
+    """``a.b.c`` as ``["a", "b", "c"]``, or None if it isn't a plain dotted name."""
     parts: list[str] = []
     while isinstance(node, ast.Attribute):
         parts.append(node.attr)
@@ -81,6 +86,8 @@ def _dotted(node: ast.expr) -> list[str] | None:
 
 
 class _Resolver:
+    """Tracks imports and aliases, so ``sp.run`` resolves to ``subprocess.run``."""
+
     def __init__(self) -> None:
         self.aliases: dict[str, str] = {}
         self.imports: set[str] = set()
@@ -129,6 +136,7 @@ class _Resolver:
 
 
 def _is_main_guard(node: ast.stmt) -> bool:
+    """True for ``if __name__ == "__main__":``, which doesn't run on import."""
     if not isinstance(node, ast.If):
         return False
     t = node.test
@@ -233,6 +241,7 @@ def index_module(
 
 
 def module_name(path: str) -> str:
+    """The dotted name for a path: ``pkg/sub/__init__.py`` is ``pkg.sub``."""
     p = path[:-3] if path.endswith(".py") else path
     if p.endswith("/__init__"):
         p = p[: -len("/__init__")]

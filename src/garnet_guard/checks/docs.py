@@ -11,6 +11,7 @@ RULE_DOCS_BASE = "https://github.com/orca-solutions/garnet-guard/blob/main/docs/
 
 
 def rule_url(rule_id: str) -> str:
+    """The rule's docs page, linked from findings, ``explain`` and the PR comment."""
     return f"{RULE_DOCS_BASE}{rule_id}.md"
 
 

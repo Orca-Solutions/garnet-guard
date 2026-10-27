@@ -14,8 +14,10 @@ from ..models import (
     Severity,
 )
 
-MAX_EVIDENCE = 25
+MAX_EVIDENCE = 25  # evidence lines per finding; the rest are counted, not listed
 
+# Well-known build backends. A switch to one of these isn't GRN-C002; a switch
+# to anything else, or to a backend shipped inside the sdist, is.
 BACKEND_ALLOWLIST = frozenset(
     {
         "setuptools.build_meta",
@@ -39,6 +41,7 @@ BACKEND_ALLOWLIST = frozenset(
 
 
 def _pick(rel: ReleaseFacts, kind: str) -> ArtifactFacts | None:
+    """The inspected wheel or sdist of a release, if there is one."""
     for a in rel.content:
         if kind == "wheel" and a.filename.endswith(".whl"):
             return a
@@ -62,6 +65,7 @@ def _clip(text: str, n: int = 160) -> str:
 
 
 def _tag_note(b: ArtifactFacts, c: ArtifactFacts) -> tuple[Evidence, ...]:
+    """A note when the two wheels compared were built for different platforms."""
     if b.wheel_tag and c.wheel_tag and b.wheel_tag != c.wheel_tag:
         return (
             Evidence(
@@ -74,6 +78,7 @@ def _tag_note(b: ArtifactFacts, c: ArtifactFacts) -> tuple[Evidence, ...]:
 def new_pth_file(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
+    """GRN-C001: a new .pth file, or new executable lines in an existing one."""
     if base is None:
         return
     b, c = _pair(base, cand)
@@ -114,6 +119,10 @@ def new_pth_file(
 def new_build_hook(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
+    """GRN-C002: new sensitive calls in setup.py, or a new unusual build backend.
+
+    Only sdists are compared: a wheel is already built.
+    """
     if base is None:
         return
     b, c = _pick(base, "sdist"), _pick(cand, "sdist")
@@ -199,6 +208,12 @@ def _live_test_modules(art: ArtifactFacts) -> set[str]:
 def new_import_time_exec(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
+    """GRN-C003: new import-time calls to the sensitive APIs in pyindex.
+
+    A module byte-identical to a baseline file is skipped, and one moved from
+    a baseline path is compared with that file. Calls in test files that
+    nothing else imports are reported at info (docs/rules/GRN-C003.md).
+    """
     if base is None:
         return
     b, c = _pair(base, cand)

@@ -59,10 +59,12 @@ _PYLOCK_NAME = re.compile(r"^pylock(\.[^./\\]+)?\.toml$", re.IGNORECASE)
 
 
 def normalize(name: str) -> str:
+    """PEP 503 name normalization (``Foo_Bar`` becomes ``foo-bar``)."""
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def detect(name: str, data: bytes) -> Format:
+    """The lockfile's format, from its file name, else from its first bytes."""
     base = PurePath(name).name
     if base == "uv.lock":
         return "uv.lock"
@@ -83,6 +85,7 @@ def detect(name: str, data: bytes) -> Format:
 
 
 def parse(name: str, data: bytes, *, format: Format | None = None) -> list[Pin]:
+    """Every package entry in a lockfile. Raises ``LockfileError``."""
     from . import pylock, requirements, toml_locks
 
     fmt = format or detect(name, data)

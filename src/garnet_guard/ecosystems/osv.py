@@ -8,6 +8,7 @@ _ECOSYSTEMS = {"pypi": "PyPI", "npm": "npm"}
 
 
 def malicious_advisories(http: Http, ecosystem: str, package: str, version: str) -> tuple[str, ...]:
+    """OSV ``MAL-`` advisory ids for this exact version. Raises ``NetError``."""
     body = {"package": {"name": package, "ecosystem": _ECOSYSTEMS[ecosystem]}, "version": version}
     resp = http.post_json("https://api.osv.dev/v1/query", body)
     if resp.status != 200:

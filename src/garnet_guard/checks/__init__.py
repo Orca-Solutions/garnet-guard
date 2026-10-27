@@ -17,6 +17,7 @@ CheckFn = Callable[[Change, ReleaseFacts | None, ReleaseFacts], Iterable[RawFind
 def known_malicious(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
+    """GRN-K001: OSV lists the candidate under a ``MAL-`` advisory."""
     if cand.advisories:
         yield RawFinding(
             "GRN-K001",

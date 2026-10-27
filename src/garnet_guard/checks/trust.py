@@ -12,15 +12,18 @@ def _provs(rel: ReleaseFacts) -> list[tuple[ArtifactFacts, FileProvenance | None
 
 
 def _all_verified(rel: ReleaseFacts) -> bool:
+    """True when the release has files and every one has a verified attestation."""
     ps = _provs(rel)
     return bool(ps) and all(p is not None and p.verified for _, p in ps)
 
 
 def _unknown(rel: ReleaseFacts) -> list[str]:
+    """Files whose provenance couldn't be fetched or verified."""
     return [a.filename for a, p in _provs(rel) if p is None or not p.verification_ran]
 
 
 def _not_checked(rule: str, rel: ReleaseFacts, files: list[str]) -> RawFinding:
+    """GRN-E001 for a rule that needed provenance Garnet couldn't get."""
     return RawFinding(
         "GRN-E001",
         f"Couldn't evaluate {rule}: provenance of {rel.version} is unknown",
@@ -31,6 +34,12 @@ def _not_checked(rule: str, rel: ReleaseFacts, files: list[str]) -> RawFinding:
 def lost_provenance(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
+    """GRN-T001: every baseline file was attested; a candidate file isn't.
+
+    Silent when the baseline wasn't fully attested: a project that never
+    attested isn't flagged for not attesting now. If the candidate's
+    provenance couldn't be fetched, says so (GRN-E001) instead of passing.
+    """
     if base is None or not _all_verified(base):
         return
     missing = [a for a, p in _provs(cand) if p is not None and not p.present]
@@ -63,6 +72,7 @@ def _base_identity(base: ReleaseFacts) -> Evidence:
 def _publishers(
     rel: ReleaseFacts,
 ) -> dict[tuple[str | None, str | None, str | None], list[FileProvenance]]:
+    """Verified files grouped by (repository, workflow, environment)."""
     out: dict[tuple[str | None, str | None, str | None], list[FileProvenance]] = {}
     for _, p in _provs(rel):
         if p is not None and p.verified:
@@ -74,6 +84,11 @@ def _publishers(
 def publisher_changed(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
+    """GRN-T002: a candidate file was attested by a repository the baseline wasn't.
+
+    Needs verified attestations on both sides. A renamed repository keeps its
+    GitHub repository id, so a rename doesn't fire.
+    """
     if base is None:
         return
     bp, cp = _publishers(base), _publishers(cand)
@@ -105,6 +120,7 @@ def publisher_changed(
 def workflow_changed(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
+    """GRN-T003: same repository, different workflow file or environment."""
     if base is None:
         return
     bp, cp = _publishers(base), _publishers(cand)
@@ -136,6 +152,11 @@ def workflow_changed(
 def no_matching_tag(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
+    """GRN-T004: the baseline has a git tag and the candidate has none.
+
+    Silent unless the tag lookup for the candidate actually ran; a failed
+    lookup is reported by the fetcher as GRN-E001.
+    """
     if base is None or base.tag is None or not cand.tag_checked:
         return
     if cand.tag is None:
@@ -174,6 +195,7 @@ def no_matching_tag(
 def outside_trusted_publishing(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
+    """GRN-T005: every baseline file came through Trusted Publishing; a candidate file didn't."""
     if base is None:
         return
     bps = [p for _, p in _provs(base)]
@@ -193,6 +215,11 @@ def outside_trusted_publishing(
 def invalid_attestation(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
+    """GRN-T007: a candidate attestation exists but failed verification.
+
+    A verifier that couldn't run (``verification_ran`` False) isn't a failure;
+    GRN-T001 reports that as GRN-E001.
+    """
     bad = [
         p
         for _, p in _provs(cand)
@@ -211,6 +238,7 @@ def invalid_attestation(
 def hash_mismatch(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
+    """GRN-T008: a downloaded file doesn't match the registry's SHA-256, in either release."""
     for rel in (cand, base):
         if rel is None:
             continue

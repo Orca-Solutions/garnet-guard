@@ -11,6 +11,8 @@ from .base import Pin
 
 @dataclass(frozen=True)
 class PinChange:
+    """A package version in head that base didn't have, and what to compare it with."""
+
     package: str
     baseline: str | None
     candidate: str
@@ -18,6 +20,7 @@ class PinChange:
 
 
 def _key(v: str) -> tuple[int, Version | str]:
+    """Sort by PEP 440 version, with versions that don't parse first."""
     try:
         return (1, Version(v))
     except InvalidVersion:
