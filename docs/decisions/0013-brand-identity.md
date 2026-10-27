@@ -14,7 +14,7 @@
 - **Palette:** garnet-700 `#8E1B2C` is the brand colour; amber `#E0A100` is reserved for findings and warnings; ink `#1B1F24`, slate `#5C636B`, paper `#F7F3EE`. Red is the brand, never "danger".
 - **Tagline:** *Trust the last release. Check the next.*
 - **Badge wording:** "checked by Garnet Guard", never "guarded by" or "protected by".
-- **Where it lives:** the kit and the website are in [orca-solutions/gg-landing](https://github.com/orca-solutions/gg-landing) (moved out of `docs/brand/` on 2026-10-21, so brand and site ship as one package); `brand/brand-kit.md` there is the detail, including voice rules.
+- **Where it lives:** the kit and the website are in the private `orca-solutions/gg-landing` repository (moved out of `docs/brand/` on 2026-10-21, so brand and site ship as one package); `brand/brand-kit.md` there is the detail, including voice rules. `docs/brand/` here keeps copies of the few files this repository uses, including `brand-kit.md` (see docs/brand/README.md).
 - **Trademarks:** the name and mark are project trademarks, noted in NOTICE. The code stays Apache-2.0.
 
 ## Consequences

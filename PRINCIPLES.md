@@ -16,7 +16,7 @@ These are the commitments Garnet is built on. When a decision is unclear, the an
 7. **Warn by default, block by choice.** Users decide what blocks. Only cryptographic failures and confirmed malware block by default.
 8. **Never execute what we inspect.** Static analysis only, in a hardened reader, with limits on everything.
 
-Garnet Guard's voice follows from these principles; see [brand-kit.md](https://github.com/orca-solutions/gg-landing/blob/main/brand/brand-kit.md) in the gg-landing repository.
+Garnet Guard's voice follows from these principles; see docs/brand/brand-kit.md.
 
 ## How it's built
 

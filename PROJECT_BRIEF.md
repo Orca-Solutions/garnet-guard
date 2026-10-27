@@ -17,7 +17,7 @@ The approved outcome, constraints and permissions for anyone working on Garnet G
 - Detection is never paywalled ([OPEN_CORE.md](OPEN_CORE.md), ADR-0006, ADR-0009).
 - Python 3.11+, packaged with uv; distribution `garnet-guard`, import `garnet_guard`, CLI `garnet` (ADR-0002, ADR-0007).
 - New runtime dependencies need an ADR ([docs/API.md](docs/API.md) §8).
-- User-facing text follows the brand voice ([brand-kit.md](https://github.com/orca-solutions/gg-landing/blob/main/brand/brand-kit.md) in gg-landing).
+- User-facing text follows the brand voice ([docs/brand/brand-kit.md](docs/brand/brand-kit.md)).
 
 ## Permissions
 

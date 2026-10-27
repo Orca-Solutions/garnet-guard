@@ -33,7 +33,7 @@ Unit tests never touch the network. They run against recorded fixtures in `tests
 
 ## User-facing text
 
-Findings, `garnet explain` text, PR comments and CLI messages follow the voice rules in [brand-kit.md](https://github.com/orca-solutions/gg-landing/blob/main/brand/brand-kit.md) (gg-landing repository): calm, exact, never call anything "safe", and put evidence on every line.
+Findings, `garnet explain` text, PR comments and CLI messages follow the voice rules in docs/brand/brand-kit.md: calm, exact, never call anything "safe", and put evidence on every line.
 
 ## Pull requests
 

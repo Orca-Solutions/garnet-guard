@@ -59,7 +59,7 @@ Other routine changes are verified by their author.
 
 ### Style
 
-- **User-facing text** (findings, `explain` text, PR comments, CLI messages) follows the voice rules in [brand-kit.md](https://github.com/orca-solutions/gg-landing/blob/main/brand/brand-kit.md) (gg-landing repository): calm, exact, never "safe", evidence on every line.
+- **User-facing text** (findings, `explain` text, PR comments, CLI messages) follows the voice rules in docs/brand/brand-kit.md: calm, exact, never "safe", evidence on every line.
 - Python 3.11+, full type hints, `mypy --strict` on `src/`.
 - Dataclasses (frozen) for models. Keep the public API in `garnet_guard/__init__.py` small.
 - Findings must be deterministic: sort output, avoid timestamps in report bodies.
