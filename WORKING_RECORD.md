@@ -2,6 +2,25 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-10: GitHub Action preview
+
+**State.** The Action and its comment are built and wait on `garnet check` (owned by the prototype thread):
+
+- `action.yml` at the repository root (Marketplace needs it there; API.md §9 shows `action/`), with scripts in `action/`.
+- `action/comment/`: the `workflow_run` comment job for forks.
+- `action/examples/`: the single workflow, plus the two-workflow pair for forks.
+- `garnet_guard.markdown`: the SPEC §9.4 comment, rendered from the JSON report.
+- `docs/action.md` (usage) and `docs/marketplace.md` (listing steps).
+
+**Verification.**
+- `uv run pytest`: unit tests pass with no network. `tests/test_action.py` runs the shell scripts against a local git repository, with `uv` and `gh` stubbed.
+- ruff, mypy (strict), `lint-imports`, shellcheck, actionlint and zizmor all pass. zizmor's only findings are the `<release-commit-sha>` placeholders in the examples.
+- The Action itself has not run on GitHub yet. That needs `garnet check`.
+
+**Open questions.**
+- The comment's passing-update column says "no findings" where the mock shows "provenance ✓ · tag ✓ · content ✓". A report doesn't record which checks ran clean, so the mock's wording would claim more than Garnet Guard knows.
+- Rule links point to `docs/rules/<ID>.md` in the repository, not garnet-guard.dev, until a domain is registered.
+
 ## 2026-10-10: CI and release pipeline
 
 **State.** `.github/workflows/` has CI (`ci.yml`), the OpenSSF Scorecard (`scorecard.yml`) and a tag-triggered release (`release.yml`) that publishes with Trusted Publishing and PEP 740 attestations, then verifies them from PyPI. Dependabot watches GitHub Actions and the uv lockfile with a 7-day cooldown. All actions are pinned by commit SHA and every job declares minimal permissions.

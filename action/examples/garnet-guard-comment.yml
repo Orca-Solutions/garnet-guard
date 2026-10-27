@@ -1,0 +1,34 @@
+# Garnet Guard comment workflow: the comment half of the two-workflow pattern
+# (SPEC §10.2). Copy to .github/workflows/garnet-guard-comment.yml, together
+# with garnet-guard-fork.yml.
+#
+# It runs after the "Garnet Guard" workflow finishes, downloads its JSON
+# report, and posts or updates the pull request comment. It does not check
+# out or run pull request code, and it treats the report as untrusted data.
+#
+# Pin the Action to a full commit SHA from a Garnet Guard release, not a tag.
+name: Garnet Guard comment
+
+on:
+  # workflow_run is needed to comment on fork pull requests. The job never
+  # checks out or runs pull request code and treats the report as data.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: ["Garnet Guard"]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    name: Post the Garnet Guard comment
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read         # download the report artifact
+      pull-requests: write  # post or update the comment
+    steps:
+      - uses: orca-solutions/garnet-guard/action/comment@<release-commit-sha> # v0.1.0
