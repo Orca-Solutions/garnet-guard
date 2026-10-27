@@ -56,8 +56,8 @@ What Garnet Guard couldn't evaluate, said out loud instead of passed.
 | [GRN-E001](GRN-E001.md) | fetch-failed | absolute | `warn` | 0.1 |
 | [GRN-E002](GRN-E002.md) | parse-failed | absolute | `warn` | 0.1 |
 | [GRN-E003](GRN-E003.md) | budget-exceeded | absolute | `warn` | 0.1 |
-| [GRN-E004](GRN-E004.md) | unpinned-requirement | absolute | `info` | planned |
-| [GRN-E005](GRN-E005.md) | unsupported-source | absolute | `info` | planned |
+| [GRN-E004](GRN-E004.md) | unpinned-requirement | absolute | `info` | 0.1 |
+| [GRN-E005](GRN-E005.md) | unsupported-source | absolute | `info` | 0.1 |
 
 ## Replays
 

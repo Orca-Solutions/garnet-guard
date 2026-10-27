@@ -28,7 +28,8 @@ A safety limit was hit while reading the release. The defaults
 | Single Python file parsed with `ast` | 5 MB |
 | Wall-clock budget per change | 120 s |
 
-Policy can lower these limits but not raise them.
+Policy can lower these limits but not raise them. In 0.1 the wall-clock budget isn't
+enforced yet, and limits can't be changed; each network request has its own timeout.
 
 ## Why it matters
 
@@ -37,12 +38,14 @@ was not checked, and this finding says so instead of passing it.
 
 ## Example finding
 
-Illustrative; not from a real release.
+Illustrative; not from a real release. This is 0.1's output for a synthetic sdist with a
+40 MB file of zeros in it.
 
 ```text
 examplelib 2.6.1 → 2.6.2: WARN
-  WARN  GRN-E003 budget-exceeded: a safety limit was hit reading 2.6.2
-           - examplelib-2.6.2.tar.gz: entry examplelib/data.bin has compression ratio 1,840:1 (limit 100:1)
+  WARN  GRN-E003 budget-exceeded: Couldn't fully check 2.6.2: examplelib-2.6.2.tar.gz: archive exceeds compression ratio limit
+           - examplelib-2.6.2.tar.gz: archive exceeds compression ratio limit
+           - not evaluated: GRN-C001, GRN-C003
 ```
 
 ## How to resolve it
@@ -75,8 +78,8 @@ To change the rule's severity for every package instead:
 ```
 
 Suppressed findings still appear in JSON and SARIF output, marked with the ignore that
-matched. The policy format is in [SPEC §7](../SPEC-v1.md#7-policy); 0.1's `garnet diff`
-doesn't read policy files yet.
+matched. The policy format is in [SPEC §7](../SPEC-v1.md#7-policy); 0.1 doesn't read
+policy files yet.
 
 ## See also
 

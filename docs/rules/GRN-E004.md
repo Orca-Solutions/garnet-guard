@@ -3,7 +3,7 @@ id: GRN-E004
 name: unpinned-requirement
 kind: absolute
 default_severity: info
-status: planned
+status: implemented
 ---
 
 # GRN-E004 unpinned-requirement
@@ -12,11 +12,13 @@ status: planned
 |---|---|
 | Default severity | `info` |
 | Kind | absolute rule: fires on the new version alone, whatever the trusted version looked like. |
-| Status | Specified for 1.0, not yet implemented |
+| Status | Implemented in 0.1 (`garnet check`) |
 
 ## What it checks
 
 A line in a requirements file isn't pinned to one version (`==` with a full version).
+`garnet check` reports lines that are new or changed since the trusted lockfile, so an
+unpinned line you already had doesn't repeat on every update.
 
 ## Why it matters
 
@@ -26,13 +28,16 @@ diff anyone reviews.
 
 ## Example finding
 
-Illustrative. The rule is specified but not yet implemented.
+Illustrative; not from a real project. This is 0.1's output when `examplelib>=2.6` is
+added to a requirements file.
 
 ```text
-requirements.txt: INFO
-  INFO  GRN-E004 unpinned-requirement: examplelib>=2.6 is not pinned
-           - requirements.txt:7
+examplelib (new) → unpinned: PASS
+  info  GRN-E004 unpinned-requirement: examplelib was not checked: not pinned with == (>=2.6)
+           - not pinned with == (>=2.6)
 ```
+
+The JSON report also gives the file and line in the evidence.
 
 ## How to resolve it
 
@@ -50,8 +55,8 @@ in policy:
 ```
 
 Suppressed findings still appear in JSON and SARIF output, marked with the ignore that
-matched. The policy format is in [SPEC §7](../SPEC-v1.md#7-policy); 0.1's `garnet diff`
-doesn't read policy files yet.
+matched. The policy format is in [SPEC §7](../SPEC-v1.md#7-policy); 0.1 doesn't read
+policy files yet.
 
 ## See also
 
