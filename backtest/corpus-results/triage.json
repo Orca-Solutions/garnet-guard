@@ -1,0 +1,182 @@
+[
+  {
+    "package": "annotated-doc",
+    "baseline": "0.0.4",
+    "candidate": "0.0.5",
+    "rule": "GRN-T001",
+    "title": "2 file(s) in 0.0.5 have no attestation; every file of 0.0.4 had one",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "Both 0.0.5 files lack attestations; 0.0.2-0.0.4 were attested from fastapi/annotated-doc. Real provenance loss; cause not checked."
+  },
+  {
+    "package": "certifi",
+    "baseline": "2025.11.12",
+    "candidate": "2026.1.4",
+    "rule": "GRN-T004",
+    "title": "github.com/certifi/python-certifi has a tag for 2025.11.12 but none for 2026.1.4",
+    "claim": "wrong",
+    "verdict": "false positive",
+    "note": "Tag 2026.01.04 exists. certifi zero-pads tag names; Garnet compares the raw string, not the normalized version."
+  },
+  {
+    "package": "charset-normalizer",
+    "baseline": "3.4.2",
+    "candidate": "3.4.3",
+    "rule": "GRN-C002",
+    "title": "3.4.3 adds code that runs when the sdist is built",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "Switched from setuptools.build_meta to an in-tree backend (in-tree:backend). Real new build-time code; legitimate packaging change."
+  },
+  {
+    "package": "frozenlist",
+    "baseline": "1.4.0",
+    "candidate": "1.4.1",
+    "rule": "GRN-C002",
+    "title": "1.4.1 adds code that runs when the sdist is built",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "Switched to in-tree backend pep517_backend.hooks (aio-libs' shared Cython build backend)."
+  },
+  {
+    "package": "pillow",
+    "baseline": "11.2.1",
+    "candidate": "11.3.0",
+    "rule": "GRN-T001",
+    "title": "20 file(s) in 11.3.0 have no attestation; every file of 11.2.1 had one",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "20 of 106 files have no attestation; the other 86 and every 12.x file are attested. Partial provenance loss, probably a separate upload of some wheels; cause not checked."
+  },
+  {
+    "package": "pip",
+    "baseline": "26.1.2",
+    "candidate": "26.2",
+    "rule": "GRN-C003",
+    "title": "26.2 adds import-time calls to sensitive APIs in 1 module(s)",
+    "claim": "wrong",
+    "verdict": "false positive",
+    "note": "Vendored platformdirs: _pick_get_win_folder() runs at import but only returns get_win_folder_via_ctypes without calling it. pyindex counts any reference to a local function as a call (facts/pyindex.py:176)."
+  },
+  {
+    "package": "pyarrow",
+    "baseline": "23.0.1",
+    "candidate": "24.0.0",
+    "rule": "GRN-C002",
+    "title": "24.0.0 adds code that runs when the sdist is built",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "Switched to an in-tree backend (_build_backend)."
+  },
+  {
+    "package": "pyyaml",
+    "baseline": "6.0.1",
+    "candidate": "6.0.2",
+    "rule": "GRN-C002",
+    "title": "6.0.2 adds code that runs when the sdist is built",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "Added in-tree backend _pyyaml_pep517 (Cython 3 build fix)."
+  },
+  {
+    "package": "requests",
+    "baseline": "2.31.0",
+    "candidate": "2.32.2",
+    "rule": "GRN-C003",
+    "title": "2.32.2 adds import-time calls to sensitive APIs in 1 module(s)",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "compat.py calls _resolve_char_detection() at import, which calls importlib.import_module over a literal list ('chardet', 'charset_normalizer')."
+  },
+  {
+    "package": "s3fs",
+    "baseline": "2026.4.0",
+    "candidate": "2026.6.0",
+    "rule": "GRN-T004",
+    "title": "github.com/fsspec/s3fs has a tag for 2026.4.0 but none for 2026.6.0",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "github.com/fsspec/s3fs has tags 2026.4.0 and 2026.7.0 but none for 2026.6.0 (filesystem_spec does). Real missing tag; likely an untagged release."
+  },
+  {
+    "package": "scipy",
+    "baseline": "1.16.3",
+    "candidate": "1.17.0",
+    "rule": "GRN-C003",
+    "title": "1.17.0 adds import-time calls to sensitive APIs in 1 module(s)",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "Test module scipy/_lib/tests/test_array_api.py calls collect_public_functions() inside a module-level @pytest.mark.parametrize, which calls importlib.import_module. Test code; not imported in normal use."
+  },
+  {
+    "package": "scipy",
+    "baseline": "1.17.1",
+    "candidate": "1.18.0",
+    "rule": "GRN-C003",
+    "title": "1.18.0 adds import-time calls to sensitive APIs in 6 module(s)",
+    "claim": "wrong",
+    "verdict": "false positive",
+    "note": "Vendored array_api_compat moved from scipy/_lib/ to scipy/_external/. fft.py is byte-identical at the old path, so the __import__/exec calls are not new. Content diff matches modules by path only."
+  },
+  {
+    "package": "scipy",
+    "baseline": "1.17.1",
+    "candidate": "1.18.0",
+    "rule": "GRN-T004",
+    "title": "github.com/scipy/scipy-release has a tag for 1.17.1 but none for 1.18.0",
+    "claim": "wrong",
+    "verdict": "false positive",
+    "note": "1.18.0 is the first attested scipy release, from scipy/scipy-release, so the attested repo replaced the project-URL repo (scipy/scipy). The tag v1.18.0 exists in scipy/scipy. The finding also names scipy-release as having the 1.17.1 tag, which is wrong."
+  },
+  {
+    "package": "setuptools",
+    "baseline": "80.9.0",
+    "candidate": "80.10.1",
+    "rule": "GRN-C003",
+    "title": "80.10.1 adds import-time calls to sensitive APIs in 1 module(s)",
+    "claim": "wrong",
+    "verdict": "false positive",
+    "note": "setuptools/tests/fixtures.py: _build_distributions() is only called inside pytest fixtures, never at import. Same reference-as-call over-approximation as pip (inferred; the analyzer's path wasn't traced). Test code in any case."
+  },
+  {
+    "package": "sniffio",
+    "baseline": "0.0.0",
+    "candidate": "1.0.0",
+    "rule": "GRN-C002",
+    "title": "1.0.0 adds code that runs when the sdist is built",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "setup.py execs sniffio/_version.py to read __version__ (2018 release; 0.0.0 had no such call). Classic version-reading pattern."
+  },
+  {
+    "package": "typing-inspection",
+    "baseline": "0.0.0",
+    "candidate": "0.1.0",
+    "rule": "GRN-C003",
+    "title": "0.1.0 adds import-time calls to sensitive APIs in 1 module(s)",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "New module typing_objects.py builds helper functions with exec() of generated source at import (_compile_identity_check_function). Real import-time exec; legitimate."
+  },
+  {
+    "package": "watchfiles",
+    "baseline": "1.0.4",
+    "candidate": "1.0.5",
+    "rule": "GRN-T001",
+    "title": "71 file(s) in 1.0.5 have no attestation; every file of 1.0.4 had one",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "1.0.0-1.0.4 were attested from samuelcolvin/watchfiles; 1.0.5 and every later release have none. Real provenance loss; cause not checked. After this one warn the unattested release becomes the baseline and the rule goes quiet."
+  },
+  {
+    "package": "wheel",
+    "baseline": "0.44.0",
+    "candidate": "0.45.0",
+    "rule": "GRN-C003",
+    "title": "0.45.0 adds import-time calls to sensitive APIs in 1 module(s)",
+    "claim": "accurate",
+    "verdict": "benign",
+    "note": "_bdist_wheel.py adds __import__(\"setuptools.logging\") at import: a literal module name, equivalent to an import statement."
+  }
+]

@@ -1,0 +1,84 @@
+"""Tag lookup for GitHub repositories.
+
+Reads the public git ref advertisement over HTTPS
+(``/<owner>/<repo>.git/info/refs?service=git-upload-pack``). That needs no
+token, has no REST rate limit, and follows GitHub's redirects for renamed
+repositories. One request per repository covers every version.
+"""
+
+from __future__ import annotations
+
+import re
+
+from ..models import TagInfo
+from ..net import Http, NetError
+
+_REPO_RE = re.compile(r"^(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)")
+
+
+def parse_repo(url: str) -> str | None:
+    """Return ``owner/repo`` for a GitHub URL, else None."""
+    m = _REPO_RE.match(url.strip())
+    if not m:
+        return None
+    owner, repo = m.group(1), m.group(2)
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    if not repo or repo in (".", ".."):
+        return None
+    return f"{owner}/{repo}"
+
+
+def parse_ref_advertisement(data: bytes) -> dict[str, str]:
+    """Parse pkt-line output into {tag name: commit sha} (peeled where given)."""
+    tags: dict[str, str] = {}
+    pos = 0
+    while pos + 4 <= len(data):
+        try:
+            length = int(data[pos : pos + 4], 16)
+        except ValueError:
+            break
+        if length == 0:
+            pos += 4
+            continue
+        line = data[pos + 4 : pos + length].rstrip(b"\n")
+        pos += length
+        line = line.split(b"\x00", 1)[0]
+        if b" " not in line:
+            continue
+        sha, ref = line.split(b" ", 1)
+        name = ref.decode("utf-8", "replace")
+        if not name.startswith("refs/tags/"):
+            continue
+        tag = name[len("refs/tags/") :]
+        if tag.endswith("^{}"):
+            tags[tag[:-3]] = sha.decode()  # peeled: the commit an annotated tag points to
+        else:
+            tags.setdefault(tag, sha.decode())
+    return tags
+
+
+class TagLookup:
+    def __init__(self, http: Http) -> None:
+        self._http = http
+        self._cache: dict[str, dict[str, str]] = {}
+
+    def tags(self, repo: str) -> dict[str, str]:
+        if repo not in self._cache:
+            url = f"https://github.com/{repo}.git/info/refs?service=git-upload-pack"
+            resp = self._http.get(url, max_bytes=64 * 1024 * 1024)
+            if resp.status != 200:
+                raise NetError(f"tag lookup for github.com/{repo} returned HTTP {resp.status}")
+            self._cache[repo] = parse_ref_advertisement(resp.content)
+        return self._cache[repo]
+
+
+def match_tag(tags: dict[str, str], package: str, version: str) -> TagInfo | None:
+    """SPEC GRN-T004: accept X, vX, <name>-X and <name>-vX."""
+    names = [version, f"v{version}"]
+    for n in {package, package.replace("-", "_"), package.replace("_", "-")}:
+        names += [f"{n}-{version}", f"{n}-v{version}"]
+    for name in names:
+        if name in tags:
+            return TagInfo(name=name, sha=tags[name])
+    return None
