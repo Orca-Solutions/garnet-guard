@@ -212,7 +212,7 @@ def test_check_writes_sarif(tmp_path, monkeypatch) -> None:
     (tmp_path / "base.txt").write_text("demo==1.0\n")
     (tmp_path / "requirements.txt").write_text("flask>=3\ndemo==1.1\n")
 
-    def fake_evaluate(changes, *, options=None):
+    def fake_evaluate(changes, *, policy=None, options=None):
         return [run_checks(changes[0], release("1.0"), release("1.1", provenance="none"))]
 
     monkeypatch.setattr(cli, "evaluate", fake_evaluate)

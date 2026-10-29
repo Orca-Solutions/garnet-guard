@@ -192,3 +192,7 @@ _DOCS += (
 )
 
 DOCS: dict[str, RuleDoc] = {d.rule_id: d for d in _DOCS}
+
+# Rules in the SPEC §6.2 catalog that aren't built yet. A policy may already
+# name them; they produce no findings until they ship.
+PLANNED: frozenset[str] = frozenset({"GRN-T006", "GRN-C004", "GRN-C005", "GRN-C006"})

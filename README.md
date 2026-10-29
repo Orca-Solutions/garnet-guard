@@ -62,7 +62,7 @@ Garnet never runs the code it inspects. It downloads both releases and reads the
 
 Setup, permissions and the fork-safe two-workflow pattern are in [docs/action.md](docs/action.md). The Action is a preview.
 
-**Locally.** `garnet check` compares two lockfiles, for example your branch against `main`, and checks every package that changed.
+**Locally.** `garnet check` compares two lockfiles, for example your branch against `main`, and checks every package that changed. Once you've reviewed a finding, an ignore in `garnet.toml` silences it until a date you choose ([docs/policy.md](docs/policy.md)).
 
 **In agent hooks (planned).** A pre-install hook stops Claude Code or Codex from quietly adding a risky dependency.
 
@@ -95,12 +95,13 @@ uv run garnet diff pypi:lightning 2.6.4 2.6.5 --format json
 uv run garnet check --git-base main   # every lockfile here, against the same files on main
 uv run garnet check --base old/uv.lock --head uv.lock
 uv run garnet explain GRN-C003
+uv run garnet policy check          # validate garnet.toml and list its ignores
 uv run python -m backtest        # replay the 2026 incidents and the clean corpus
 ```
 
 `garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files. Lines it can't check (not pinned with `==`, or from git, a path or a private index) are listed as [GRN-E004](docs/rules/GRN-E004.md) or [GRN-E005](docs/rules/GRN-E005.md), never skipped. `garnet --help` lists every option.
 
-The exit code is 0 below `--fail-on` (default `block`), 1 for warn, 2 for block and 3 if Garnet Guard itself failed.
+The exit code is 0 below `--fail-on` (default: the policy's `fail_on`, else `block`), 1 for warn, 2 for block and 3 if Garnet Guard itself failed.
 
 ## Ecosystems
 

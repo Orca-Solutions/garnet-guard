@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -163,6 +164,7 @@ def test_check_renders_comment(env: dict[str, str]) -> None:
     assert f"check --git-base {env['BASE_SHA']} --format json" in calls
     assert "python -I -m garnet_guard.markdown" in calls
     assert "--github-token-env GARNET_GITHUB_TOKEN" in calls
+    assert "--no-policy" in calls and "--fail-on" not in calls
     assert "--head" not in calls
     assert "t0ken" not in calls
     assert "ran PR code" not in proc.stdout + proc.stderr
@@ -301,6 +303,86 @@ def test_sarif_failure_keeps_the_comment_and_fails_the_step(env: dict[str, str])
 def test_bad_sarif_input_is_refused(env: dict[str, str]) -> None:
     env |= {"GARNET_SARIF": "yes"}
     assert _run("action/run.sh", env).returncode == 3
+
+
+def test_fail_on_is_passed_through(env: dict[str, str]) -> None:
+    env |= {"GARNET_FAIL_ON": "warn"}
+    assert _run("action/run.sh", env).returncode == 0
+    assert "--fail-on warn" in Path(env["STUB_LOG"]).read_text()
+
+
+STRICT = "[garnet]\nversion = 1\nfail_on = 'warn'\n"
+RELAXED = "[garnet]\nversion = 1\nfail_on = 'never'\n"
+
+
+def _commit_at_base(env: dict[str, str], files: dict[str, str]) -> None:
+    """Add files to a new base commit, and point the event at it."""
+    ws = Path(env["GITHUB_WORKSPACE"])
+    _git(ws, "checkout", "-q", "--detach", env["BASE_SHA"])
+    for name, body in files.items():
+        (ws / name).parent.mkdir(parents=True, exist_ok=True)
+        (ws / name).write_text(body)
+    _git(ws, "add", "-A")
+    _git(ws, "commit", "-q", "-m", "base with policy")
+    base = _git(ws, "rev-parse", "HEAD")
+    _git(ws, "checkout", "-q", "main")
+    env["BASE_SHA"] = base
+    event = Path(env["GITHUB_EVENT_PATH"])
+    event.write_text(json.dumps({"pull_request": {"number": 7, "base": {"sha": base}}}))
+
+
+def _policy_passed(env: dict[str, str]) -> str | None:
+    """The policy file garnet check was given, read back, or None for --no-policy."""
+    calls = Path(env["STUB_LOG"]).read_text()
+    m = re.search(r"--policy (\S+)", calls)
+    if m is None:
+        assert "--no-policy" in calls
+        return None
+    assert str(Path(env["RUNNER_TEMP"]) / "garnet-guard" / "policy") in m.group(1)
+    return Path(m.group(1)).read_text()
+
+
+@pytest.mark.parametrize("name", ["garnet.toml", "pyproject.toml"])
+def test_policy_is_read_from_the_base_commit(env: dict[str, str], name: str) -> None:
+    _commit_at_base(env, {name: STRICT})
+    ws = Path(env["GITHUB_WORKSPACE"])
+    (ws / name).write_text(RELAXED)  # the pull request relaxes it
+    _git(ws, "add", name)
+    _git(ws, "commit", "-q", "-m", "relax")
+    assert _run("action/run.sh", env).returncode == 0
+    assert _policy_passed(env) == STRICT
+
+
+def test_pull_request_cannot_add_a_policy(env: dict[str, str]) -> None:
+    (Path(env["GITHUB_WORKSPACE"]) / "garnet.toml").write_text(RELAXED)
+    assert _run("action/run.sh", env).returncode == 0
+    assert _policy_passed(env) is None
+
+
+def test_garnet_toml_wins_over_pyproject(env: dict[str, str]) -> None:
+    _commit_at_base(env, {"garnet.toml": STRICT, "pyproject.toml": "[tool.garnet]\nversion = 1\n"})
+    assert _run("action/run.sh", env).returncode == 0
+    assert _policy_passed(env) == STRICT
+
+
+def test_explicit_policy_path(env: dict[str, str]) -> None:
+    _commit_at_base(env, {"ci/garnet.toml": STRICT})
+    env |= {"GARNET_POLICY": "ci/garnet.toml"}
+    assert _run("action/run.sh", env).returncode == 0
+    assert _policy_passed(env) == STRICT
+
+
+@pytest.mark.parametrize("missing", ["ci/garnet.toml", "../garnet.toml"])
+def test_explicit_policy_must_exist_at_the_base_commit(env: dict[str, str], missing: str) -> None:
+    env |= {"GARNET_POLICY": missing}
+    assert _run("action/run.sh", env).returncode == 0
+    out = _outputs(env)
+    assert out["exit-code"] == "3" and "verdict" not in out
+    assert "couldn't check" in Path(out["comment-path"]).read_text()
+    assert (
+        not Path(env["STUB_LOG"]).exists()
+        or "garnet check" not in Path(env["STUB_LOG"]).read_text()
+    )
 
 
 def _comment_env(env: dict[str, str], tmp_path: Path, **extra: str) -> dict[str, str]:
