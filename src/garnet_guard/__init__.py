@@ -10,9 +10,12 @@ from .models import (  # noqa: E402
     ChangeResult,
     Evidence,
     Finding,
+    Ignore,
+    Policy,
     Severity,
     Verdict,
 )
+from .policy import PolicyError, load_policy  # noqa: E402
 
 
 def explain(rule_id: str) -> object:
@@ -27,12 +30,16 @@ __all__ = [
     "ChangeResult",
     "Evidence",
     "Finding",
+    "Ignore",
     "Options",
+    "Policy",
+    "PolicyError",
     "Report",
     "Severity",
     "Verdict",
     "__version__",
     "compare",
     "explain",
+    "load_policy",
     "report",
 ]

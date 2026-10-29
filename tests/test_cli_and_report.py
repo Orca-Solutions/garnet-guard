@@ -44,7 +44,7 @@ def test_check_end_to_end_without_network(tmp_path, monkeypatch, capsys) -> None
     base.write_text("demo==1.0\n")
     head.write_text("demo==1.1\nflask>=3\n")
 
-    def fake_evaluate(changes, *, options=None):
+    def fake_evaluate(changes, *, policy=None, options=None):
         assert [(c.package, c.baseline, c.candidate) for c in changes] == [("demo", "1.0", "1.1")]
         return [run_checks(changes[0], release("1.0"), release("1.1", provenance="none"))]
 
@@ -71,7 +71,11 @@ def test_check_usage_errors(tmp_path, monkeypatch) -> None:
     assert main(["check", "--git-base", "HEAD"]) == 3  # no lockfiles, no repo
     (tmp_path / "a.txt").write_text("x==1\n")
     assert main(["check", "--base", "a.txt", "--head", "a.txt", "--format", "sarif"]) == 3
-    assert main(["check", "--base", "a.txt", "--head", "a.txt", "--policy", "p.toml"]) == 3
+    assert (
+        main(["check", "--base", "a.txt", "--head", "a.txt", "--policy", "p.toml"]) == 3
+    )  # missing
+    (tmp_path / "garnet.toml").write_text("[garnet]\nversion = 2\n")
+    assert main(["check", "--base", "a.txt", "--head", "a.txt"]) == 3  # invalid, found here
 
 
 def test_check_refuses_symlinked_lockfile(tmp_path, monkeypatch, capsys) -> None:
