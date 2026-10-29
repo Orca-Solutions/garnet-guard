@@ -4,8 +4,6 @@
 
 **What it is.** Garnet Guard is an Apache-2.0 tool that checks each dependency update against the release a project already trusts. It asks one question: does the new release differ from the last good one in a way that matters for trust? It runs as a GitHub Action that comments on Dependabot and Renovate PRs, and as a CLI (`garnet diff`, `garnet check`). It is deterministic, has no telemetry, and never imports, builds or installs the code it inspects; it reads files as bytes and parses Python with `ast`.
 
-**Who is asking.** I'm Jason Fricano, an attorney rather than a security engineer. I designed Garnet Guard and built it with AI coding agents (Claude Code and Codex). Every change goes through a pull request that I review and merge myself. That is the main reason I'm asking people who know this ground to check the approach before launch.
-
 **What it checks (PyPI first).**
 
 | Signal | Rules | How it's read |
