@@ -66,8 +66,8 @@ base="$(jq -r '.pull_request.base.sha // empty' "$event")"
 [[ "$pr" =~ ^[0-9]+$ ]] || die "The event has no pull request number."
 [[ "$base" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || die "The event has no base commit."
 
-fail_on="${GARNET_FAIL_ON:-block}"
-case "$fail_on" in warn|block|never) ;; *) die "fail-on must be warn, block or never, not '$fail_on'." ;; esac
+fail_on="${GARNET_FAIL_ON:-}"
+case "$fail_on" in ""|warn|block|never) ;; *) die "fail-on must be warn, block or never, not '$fail_on'." ;; esac
 case "${GARNET_FOOTER:-true}" in true|false) ;; *) die "footer must be true or false." ;; esac
 
 # A repository-relative path with no '..' segments and no leading '/' or '-'.
@@ -96,14 +96,41 @@ if ! git -C "$ws" cat-file -e "$base^{commit}" 2> /dev/null; then
 fi
 
 # --- Policy -----------------------------------------------------------------
-# garnet check doesn't read a policy in this preview, so there is no policy
-# input yet. When it does, read the policy from the base commit and always pass
-# --policy, so a pull request can't relax its own policy.
+# The policy comes from the base commit, never from the pull request's
+# checkout, so a pull request can't relax or remove the policy it is checked
+# with. A change to the policy applies to later pull requests once it is
+# merged. With no policy at the base commit, garnet runs with --no-policy, so
+# a garnet.toml added by the pull request is not read either.
+
+policy_dir="$out/policy"
+rm -rf "$policy_dir"
+mkdir -p "$policy_dir"
+policy_args=(--no-policy)
+read_policy() {
+  git -C "$ws" show "$base:$1" > "$policy_dir/$(basename "$1")" \
+    || couldnt_check "Couldn't read the policy file $1 from the base commit."
+  policy_args=(--policy "$policy_dir/$(basename "$1")")
+}
+case "${GARNET_POLICY:-auto}" in
+  auto)
+    for name in garnet.toml pyproject.toml; do
+      if git -C "$ws" cat-file -e "$base:$name" 2> /dev/null; then
+        read_policy "$name"
+        break
+      fi
+    done ;;
+  *)
+    safe_path "$GARNET_POLICY" || couldnt_check "policy must be a path inside the repository."
+    git -C "$ws" cat-file -e "$base:$GARNET_POLICY" 2> /dev/null \
+      || couldnt_check "The policy file $GARNET_POLICY isn't in the base commit, so nothing was checked."
+    read_policy "$GARNET_POLICY" ;;
+esac
 
 # --- Run garnet check ------------------------------------------------------
 
 args=(check --git-base "$base" --format json --output "$report"
-      --fail-on "$fail_on" --github-token-env GARNET_GITHUB_TOKEN)
+      --github-token-env GARNET_GITHUB_TOKEN "${policy_args[@]}")
+[[ -n "$fail_on" ]] && args+=(--fail-on "$fail_on")
 heads=()
 if [[ "${GARNET_LOCKFILES:-auto}" != "auto" ]]; then
   while IFS= read -r line; do
