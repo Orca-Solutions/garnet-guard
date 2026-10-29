@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,7 +25,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 REPORT = {
-    "schema": "https://garnet.dev/schema/report/v1.json",
+    "schema": "https://garnetguard.dev/schema/report/v1.json",
     "garnet_version": "0.1.0.dev0",
     "verdict": "warn",
     "policy": None,
@@ -163,6 +164,7 @@ def test_check_renders_comment(env: dict[str, str]) -> None:
     assert f"check --git-base {env['BASE_SHA']} --format json" in calls
     assert "python -I -m garnet_guard.markdown" in calls
     assert "--github-token-env GARNET_GITHUB_TOKEN" in calls
+    assert "--no-policy" in calls and "--fail-on" not in calls
     assert "--head" not in calls
     assert "t0ken" not in calls
     assert "ran PR code" not in proc.stdout + proc.stderr
@@ -239,6 +241,148 @@ def test_refuses_other_events(env: dict[str, str], event: str) -> None:
 def test_bad_fail_on_is_refused(env: dict[str, str]) -> None:
     env |= {"GARNET_FAIL_ON": "sometimes"}
     assert _run("action/run.sh", env).returncode == 3
+
+
+def test_sarif_is_off_by_default(env: dict[str, str]) -> None:
+    assert _run("action/run.sh", env).returncode == 0
+    out = _outputs(env)
+    assert "sarif-path" not in out and "sarif-upload" not in out
+    assert "garnet_guard.sarif" not in Path(env["STUB_LOG"]).read_text()
+
+
+def _sarif_env(env: dict[str, str], tmp_path: Path, head_repo: str) -> dict[str, str]:
+    report = tmp_path / "located.json"
+    doc = json.loads(json.dumps(REPORT))
+    doc["changes"][0] |= {"lockfile": "uv.lock", "line": 4}
+    report.write_text(json.dumps(doc))
+    event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text())
+    event["pull_request"] |= {
+        "head": {"repo": {"full_name": head_repo}},
+        "base": event["pull_request"]["base"] | {"repo": {"full_name": "o/r"}},
+    }
+    Path(env["GITHUB_EVENT_PATH"]).write_text(json.dumps(event))
+    return env | {"GARNET_SARIF": "true", "STUB_REPORT": str(report)}
+
+
+def test_sarif_is_rendered_for_upload(env: dict[str, str], tmp_path: Path) -> None:
+    env = _sarif_env(env, tmp_path, "o/r")
+    proc = _run("action/run.sh", env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    out = _outputs(env)
+    assert out["sarif-upload"] == "true" and out["exit-code"] == "1"
+    log = json.loads(Path(out["sarif-path"]).read_text())
+    (result,) = log["runs"][0]["results"]
+    assert result["ruleId"] == "GRN-T004" and result["level"] == "warning"
+    location = result["locations"][0]["physicalLocation"]
+    assert location["artifactLocation"]["uri"] == "uv.lock"
+    assert location["region"]["startLine"] == 4
+    assert "python -I -m garnet_guard.sarif" in Path(env["STUB_LOG"]).read_text()
+    assert "ran PR code" not in proc.stdout + proc.stderr
+
+
+def test_sarif_is_not_uploaded_from_forks(env: dict[str, str], tmp_path: Path) -> None:
+    env = _sarif_env(env, tmp_path, "fork-owner/r")
+    proc = _run("action/run.sh", env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    out = _outputs(env)
+    assert "sarif-upload" not in out and Path(out["sarif-path"]).exists()
+    assert "::notice title=Garnet Guard::This pull request comes from a fork" in proc.stdout
+
+
+def test_sarif_failure_keeps_the_comment_and_fails_the_step(env: dict[str, str]) -> None:
+    env |= {"GARNET_SARIF": "true"}  # the canned report has no lockfile to place findings on
+    proc = _run("action/run.sh", env)
+    assert proc.returncode == 0
+    out = _outputs(env)
+    assert out["exit-code"] == "3" and out["verdict"] == "warn"
+    assert "sarif-path" not in out
+    assert "1 of 1 update needs a look" in Path(out["comment-path"]).read_text()
+    assert "::error title=Garnet Guard::Couldn't render the SARIF report" in proc.stdout
+
+
+def test_bad_sarif_input_is_refused(env: dict[str, str]) -> None:
+    env |= {"GARNET_SARIF": "yes"}
+    assert _run("action/run.sh", env).returncode == 3
+
+
+def test_fail_on_is_passed_through(env: dict[str, str]) -> None:
+    env |= {"GARNET_FAIL_ON": "warn"}
+    assert _run("action/run.sh", env).returncode == 0
+    assert "--fail-on warn" in Path(env["STUB_LOG"]).read_text()
+
+
+STRICT = "[garnet]\nversion = 1\nfail_on = 'warn'\n"
+RELAXED = "[garnet]\nversion = 1\nfail_on = 'never'\n"
+
+
+def _commit_at_base(env: dict[str, str], files: dict[str, str]) -> None:
+    """Add files to a new base commit, and point the event at it."""
+    ws = Path(env["GITHUB_WORKSPACE"])
+    _git(ws, "checkout", "-q", "--detach", env["BASE_SHA"])
+    for name, body in files.items():
+        (ws / name).parent.mkdir(parents=True, exist_ok=True)
+        (ws / name).write_text(body)
+    _git(ws, "add", "-A")
+    _git(ws, "commit", "-q", "-m", "base with policy")
+    base = _git(ws, "rev-parse", "HEAD")
+    _git(ws, "checkout", "-q", "main")
+    env["BASE_SHA"] = base
+    event = Path(env["GITHUB_EVENT_PATH"])
+    event.write_text(json.dumps({"pull_request": {"number": 7, "base": {"sha": base}}}))
+
+
+def _policy_passed(env: dict[str, str]) -> str | None:
+    """The policy file garnet check was given, read back, or None for --no-policy."""
+    calls = Path(env["STUB_LOG"]).read_text()
+    m = re.search(r"--policy (\S+)", calls)
+    if m is None:
+        assert "--no-policy" in calls
+        return None
+    assert str(Path(env["RUNNER_TEMP"]) / "garnet-guard" / "policy") in m.group(1)
+    return Path(m.group(1)).read_text()
+
+
+@pytest.mark.parametrize("name", ["garnet.toml", "pyproject.toml"])
+def test_policy_is_read_from_the_base_commit(env: dict[str, str], name: str) -> None:
+    _commit_at_base(env, {name: STRICT})
+    ws = Path(env["GITHUB_WORKSPACE"])
+    (ws / name).write_text(RELAXED)  # the pull request relaxes it
+    _git(ws, "add", name)
+    _git(ws, "commit", "-q", "-m", "relax")
+    assert _run("action/run.sh", env).returncode == 0
+    assert _policy_passed(env) == STRICT
+
+
+def test_pull_request_cannot_add_a_policy(env: dict[str, str]) -> None:
+    (Path(env["GITHUB_WORKSPACE"]) / "garnet.toml").write_text(RELAXED)
+    assert _run("action/run.sh", env).returncode == 0
+    assert _policy_passed(env) is None
+
+
+def test_garnet_toml_wins_over_pyproject(env: dict[str, str]) -> None:
+    _commit_at_base(env, {"garnet.toml": STRICT, "pyproject.toml": "[tool.garnet]\nversion = 1\n"})
+    assert _run("action/run.sh", env).returncode == 0
+    assert _policy_passed(env) == STRICT
+
+
+def test_explicit_policy_path(env: dict[str, str]) -> None:
+    _commit_at_base(env, {"ci/garnet.toml": STRICT})
+    env |= {"GARNET_POLICY": "ci/garnet.toml"}
+    assert _run("action/run.sh", env).returncode == 0
+    assert _policy_passed(env) == STRICT
+
+
+@pytest.mark.parametrize("missing", ["ci/garnet.toml", "../garnet.toml"])
+def test_explicit_policy_must_exist_at_the_base_commit(env: dict[str, str], missing: str) -> None:
+    env |= {"GARNET_POLICY": missing}
+    assert _run("action/run.sh", env).returncode == 0
+    out = _outputs(env)
+    assert out["exit-code"] == "3" and "verdict" not in out
+    assert "couldn't check" in Path(out["comment-path"]).read_text()
+    assert (
+        not Path(env["STUB_LOG"]).exists()
+        or "garnet check" not in Path(env["STUB_LOG"]).read_text()
+    )
 
 
 def _comment_env(env: dict[str, str], tmp_path: Path, **extra: str) -> dict[str, str]:
