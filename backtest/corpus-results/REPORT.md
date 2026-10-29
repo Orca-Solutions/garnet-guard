@@ -1,6 +1,6 @@
 # Clean-corpus backtest, 2026-10-10
 
-> **Current result:** with the rule tuning from PR #8 (now merged), 12 of 974 clean updates warn (1.2%), and none of those warnings makes a false claim. See [Re-run on PR #8](#re-run-on-pr-8-2026-10-10). The sections before it describe the first run, which led to that tuning.
+> **Current result:** with the rule tuning from PR #8 (now merged), 12 of 974 clean updates warn (1.2%), and none of those warnings makes a false claim. Confirmed on main on 2026-10-29; see [Re-run on main](#re-run-on-main-2026-10-29). The sections before it describe the first run, which led to that tuning.
 
 The PyCon plan needed this number by Dec 1. Garnet `0.1.0.dev0` (the draft PR #1 engine) was run over the top 100 PyPI packages and the update between each pair of consecutive releases among their last 11 releases.
 
@@ -86,9 +86,9 @@ The fact cache defaults to `~/.cache/garnet-guard/backtest`. Set `GARNET_BACKTES
 
 ## Files
 
-- [summary.json](summary.json): the headline numbers.
-- [updates.json](updates.json): every update with every finding.
-- [triage.csv](triage.csv) and [triage.json](triage.json): one row per warning.
+- [summary.json](summary.json): the headline numbers of the latest run (main, 2026-10-29: 12 of 974).
+- [updates.json](updates.json): every update with every finding, from the same run.
+- [triage.csv](triage.csv) and [triage.json](triage.json): one row per warning of the first run (2026-10-10: 17 of 974). The 12 warnings of the latest run are all rows marked accurate there.
 
 ## Re-run on PR #8, 2026-10-10
 
@@ -103,3 +103,14 @@ At `e14015f` (fixes 1–4 only), with a fresh fact cache each time:
 - The incident replay still catches all three incidents.
 
 The results at `09bcd75` are in [after-pr8/summary.json](after-pr8/summary.json) and [after-pr8/updates.json](after-pr8/updates.json).
+
+## Re-run on main, 2026-10-29
+
+**On main at `ce133f4`: 12 of 974 clean updates warned (1.23%), in 12 of 100 packages, and none of the 12 is a false alarm.** [summary.json](summary.json) and [updates.json](updates.json) now hold this run.
+
+- By rule: C002 5, C003 3, T001 3, T004 1. Coverage gaps are unchanged at 33 (E002 32, E001 1).
+- Compared with the first run, the same 974 updates were checked and exactly five changed, all from warn to pass: certifi 2025.11.12 → 2026.1.4 (T004), pip 26.1.2 → 26.2 (C003), scipy 1.16.3 → 1.17.0 (C003, now info in a test file), scipy 1.17.1 → 1.18.0 (C003 and T004) and setuptools 80.9.0 → 80.10.1 (C003). No update gained a warning.
+- The 12 that still warn are annotated-doc 0.0.5, charset-normalizer 3.4.3, frozenlist 1.4.1, pillow 11.3.0, pyarrow 24.0.0, pyyaml 6.0.2, requests 2.32.2, s3fs 2026.6.0, sniffio 1.0.0, typing-inspection 0.1.0, watchfiles 1.0.5 and wheel 0.45.0. Each is marked accurate in the [triage](triage.json).
+- The incident replay on the same commit still warns on all three incidents, and 0 of the 20 clean incident-neighbour updates warn.
+- `summary.json` is byte-identical to [after-pr8/summary.json](after-pr8/summary.json). `updates.json` differs from the after-PR-#8 file in a single evidence line: scipy 1.17.0's info-level C003 finding no longer notes that the two wheels it compared had different platform tags.
+- Run on the maintainer's machine with the repository's locked dependencies (`httpx` 0.28.1, `packaging` 26.3, `pypi-attestations` 0.0.30), in about 21 minutes with a cold cache and no GitHub token.
