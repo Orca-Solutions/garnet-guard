@@ -98,10 +98,21 @@ We fed the original malicious files from the 2026 PyPI compromises through `garn
 | elementary-data 0.23.2 → 0.23.3 | warn | GRN-C001 new `elementary.pth` with an `exec` of a base64 payload; GRN-T004 no tag `v0.23.3` |
 | 20 clean updates ([list](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/clean.toml)) | 0 warn | none |
 
+The same replay covers the npm account takeovers of August and September 2025. npm deletes the tarball of a removed version, so these use the registry facts the public write-ups recorded (provenance present or not, the `package.json` scripts) and fetch the previous release and the repository's tags live. The malicious tarballs were not inspected.
+
+| Release | Result | Rules that fired |
+|---|---|---|
+| chalk 5.6.0 → 5.6.1 | warn | GRN-T004 no tag `v5.6.1` where `v5.6.0` exists |
+| debug 4.4.1 → 4.4.2 | warn | GRN-T004 no tag `4.4.2` |
+| nx 21.4.1 → 21.5.0 | warn | GRN-T001 21.4.1 had provenance, 21.5.0 has none; GRN-C002 `postinstall` became `node telemetry.js`; GRN-T004 no tag |
+| @ctrl/tinycolor 4.1.0 → 4.1.1 | warn | GRN-C002 new `postinstall` running `node bundle.js`; GRN-T004 no tag |
+| 1,809 updates of the top 200 npm packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-npm/REPORT.md)) | 33 warn (1.8%) | GRN-T004 25, GRN-T001 5, GRN-T002 2, GRN-T003 1 |
+
 Limits, stated plainly:
 - GRN-T001 (lost provenance) couldn't fire in either case, because neither project signed its releases before the attack.
 - GRN-T004 checks tags as they exist today.
 - Twenty clean updates is a small sample. The month-2 backtest covers the last ~20 releases of the top ~500 PyPI packages.
+- chalk and debug are reported by the missing tag alone: they never used provenance, and the one changed file, `index.js`, is gone from the registry. A JavaScript content rule is still to come.
 
 Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightning](https://snyk.io/blog/lightning-pypi-compromise-bun-based-credential-stealer), [CSA on elementary-data](https://labs.cloudsecurityalliance.org/research/csa-research-note-pypi-elementarydata-supply-chain-20260429/), and the files from DataDog's malicious-software-packages dataset.
 
@@ -113,6 +124,7 @@ Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightn
 pip install --pre garnet-guard   # or run it without installing: uvx garnet-guard check --git-base main
 garnet diff requests 2.32.4 2.32.5
 garnet diff pypi:lightning 2.6.4 2.6.5 --format json
+garnet diff npm:chalk 5.6.0 5.6.2
 garnet check --git-base main   # every lockfile here, against the same files on main
 garnet check --base old/uv.lock --head uv.lock
 garnet policy check            # validate garnet.toml and list its ignores
