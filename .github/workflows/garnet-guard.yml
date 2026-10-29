@@ -1,0 +1,37 @@
+# Garnet Guard checks this repository's own dependency pull requests, the same
+# way a user's repository would (action/examples/garnet-guard.yml). Dependabot
+# opens a pull request for uv.lock each week (.github/dependabot.yml).
+#
+# The Action is pinned to a commit on main, not run from the pull request
+# (uses: ./). From the pull request it would install Garnet Guard from the
+# pull request's own uv.lock, so the updated packages would run before they
+# were checked. Move the pin forward by hand after the Action changes, and to
+# a release commit once one is tagged.
+name: Garnet Guard
+
+on:
+  pull_request:
+    paths:
+      - "uv.lock"
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  garnet-guard:
+    name: Check dependency changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read        # read the lockfiles and the base commit
+      pull-requests: write  # post or update the comment
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: orca-solutions/garnet-guard@609e12c751c856a976d9f738a0f7574314fceb5a # main, 2026-10-29
+        with:
+          fail-on: block
