@@ -35,8 +35,8 @@ a token-based upload looks like.
 ## Example finding
 
 From the [replay](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml) of lightning 2.6.2
-([MAL-2026-3201](https://osv.dev/vulnerability/MAL-2026-3201)), checked against the tags as
-they exist today.
+([MAL-2026-3201](https://osv.dev/vulnerability/MAL-2026-3201)). The replay checks the tags as
+they stood when the release was uploaded; for lightning they are the same today.
 
 ```text
 lightning 2.6.1 → 2.6.2: WARN
@@ -45,8 +45,25 @@ lightning 2.6.1 → 2.6.2: WARN
            - 2.6.2: no tag named 2.6.2, v2.6.2, lightning-2.6.2 or lightning-v2.6.2 <https://github.com/Lightning-AI/pytorch-lightning/tags>
 ```
 
-The same rule reported lightning 2.6.3 and elementary-data 0.23.3
-([MAL-2026-3083](https://osv.dev/vulnerability/MAL-2026-3083)) in the replay.
+The same rule reported lightning 2.6.3 and telnyx 4.87.1 and 4.87.2
+([PYSEC-2026-3](https://osv.dev/vulnerability/PYSEC-2026-3)) in the replay.
+
+Three replays show what this rule can and can't see:
+
+- **elementary-data 0.23.3** ([MAL-2026-3083](https://osv.dev/vulnerability/MAL-2026-3083)):
+  no finding on the day. The attacker controlled the project's CI and pushed a `v0.23.3` tag
+  on an orphan commit before publishing, so a matching tag existed when the release went out
+  ([StepSecurity](https://www.stepsecurity.io/blog/elementary-data-compromised-on-pypi-and-ghcr-forged-release-pushed-via-github-actions-script-injection)).
+  The tag has since been deleted, so checking today's tags would report it. GRN-C001 caught
+  the release instead. An attacker who can push to the repository can create a tag, so this
+  rule is evidence of an upload from outside the repository, not proof that a release came
+  from the project.
+- **telnyx 4.87.1**: reported on the day, not today. The release was uploaded with a stolen
+  token and had no tag. Telnyx later published its own 4.87.1 tag, so checking today's tags
+  would miss it.
+- **litellm 1.82.7 and 1.82.8**: no finding. litellm tags its builds `v1.82.6-nightly`,
+  `v1.82.6.rc.1` and so on, never plain `1.82.6`, so the trusted version had no matching tag
+  to lose.
 
 ## How to resolve it
 

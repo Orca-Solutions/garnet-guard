@@ -46,7 +46,11 @@ lightning 2.6.1 → 2.6.2: WARN
            - lightning/__init__.py:14 calls subprocess.Popen (in _run_runtime(), reached at import)
 ```
 
-The same rule reported lightning 2.6.3 in the replay.
+The same rule reported lightning 2.6.3, litellm 1.82.7 and 1.82.8
+([PYSEC-2026-2](https://osv.dev/vulnerability/PYSEC-2026-2)), and telnyx 4.87.1 and 4.87.2
+([PYSEC-2026-3](https://osv.dev/vulnerability/PYSEC-2026-3)) in the replay. In telnyx 4.87.1 a
+typo stopped the payload before it ran; the rule reads code and reports what a module calls
+at import, not whether the call succeeds.
 
 ## How to resolve it
 

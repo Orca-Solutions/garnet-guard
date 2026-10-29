@@ -1,9 +1,19 @@
 # Real compromises replayed by `python -m backtest`.
 #
 # The malicious versions are no longer listed on PyPI, but the files are still
-# served by files.pythonhosted.org. URLs and SHA-256 come from the PyPI JSON
-# snapshot in DataDog's malicious-software-packages-dataset; Garnet checks
-# every download against the hash before reading it. Nothing is executed.
+# served by files.pythonhosted.org. For lightning and elementary-data, URLs and
+# SHA-256 come from the PyPI JSON snapshot in DataDog's
+# malicious-software-packages-dataset. For litellm and telnyx, URLs come from
+# PyPI Inspector links in the OSV advisories and from SafeDep's write-up; a
+# files.pythonhosted.org path is the file's BLAKE2b-256, and every file here
+# hashes to its path. Their SHA-256 match the advisories (litellm: the
+# litellm-pwn-detect hash table; telnyx: GHSA-955r-262c-33jc and StepSecurity).
+# Garnet checks every download against the hash before reading it. Nothing is
+# executed.
+#
+# tags_on_the_day records git tags that changed between the upload and today,
+# with the evidence: `sha` restores a tag deleted since, `absent = true` hides
+# a tag pushed later. The replay uses the tags as they stood on the day.
 
 [[incident]]
 id = "lightning-2.6.2"
@@ -55,3 +65,91 @@ url = "https://files.pythonhosted.org/packages/22/11/e4da100e382242b5e00e60f9da4
 sha256 = "e06db3fdea8102f3954875b733a1f770e5c7e06bca110742e0bac6580216d90a"
 packagetype = "sdist"
 uploaded_at = "2026-04-24T22:20:49+00:00"
+[[incident.tags_on_the_day]]
+repo = "elementary-data/elementary"
+tag = "v0.23.3"
+sha = "b1e4b1f3aad0d489ab0e9208031c67402bbb8480"
+evidence = "The attacker pushed v0.23.3 on an orphan commit (dated 2026-04-24T22:19:21Z, still fetchable by sha) and dispatched the release workflow with tag=v0.23.3; the tag has since been deleted. https://www.stepsecurity.io/blog/elementary-data-compromised-on-pypi-and-ghcr-forged-release-pushed-via-github-actions-script-injection"
+
+[[incident]]
+id = "litellm-1.82.7"
+package = "litellm"
+baseline = "1.82.6"
+candidate = "1.82.7"
+source_repo = "BerriAI/litellm"
+osv = "PYSEC-2026-2"
+summary = "Uploaded with a PyPI token stolen through a compromised Trivy step in CI; a payload added to litellm/proxy/proxy_server.py runs when the proxy module is imported."
+[[incident.files]]
+filename = "litellm-1.82.7-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/79/5f/b6998d42c6ccd32d36e12661f2734602e72a576d52a51f4245aef0b20b4d/litellm-1.82.7-py3-none-any.whl"
+sha256 = "8395c3268d5c5dbae1c7c6d4bb3c318c752ba4608cfcd90eb97ffb94a910eac2"
+packagetype = "bdist_wheel"
+uploaded_at = "2026-03-24T10:39:00+00:00"
+# The sdist (sha256 8a2a05fd8bdc329c8a86d2d08229d167500c01ecad06e40477c49fb0096efdea)
+# is left out: no public source gives its URL. Content rules compare wheels, so
+# only GRN-C002, which reads sdists, goes unreplayed for this release.
+
+[[incident]]
+id = "litellm-1.82.8"
+package = "litellm"
+baseline = "1.82.6"
+candidate = "1.82.8"
+source_repo = "BerriAI/litellm"
+osv = "PYSEC-2026-2"
+summary = "Second upload 13 minutes later: the same proxy_server.py payload, plus a new litellm_init.pth that runs it at every Python start."
+[[incident.files]]
+filename = "litellm-1.82.8-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/fd/78/2167536f8859e655b28adf09ee7f4cd876745a933ba2be26853557775412/litellm-1.82.8-py3-none-any.whl"
+sha256 = "d2a0d5f564628773b6af7b9c11f6b86531a875bd2d186d7081ab62748a800ebb"
+packagetype = "bdist_wheel"
+uploaded_at = "2026-03-24T10:52:00+00:00"
+[[incident.files]]
+filename = "litellm-1.82.8.tar.gz"
+url = "https://files.pythonhosted.org/packages/f6/2c/731b614e6cee0bca1e010a36fd381fba69ee836fe3cb6753ba23ef2b9601/litellm-1.82.8.tar.gz"
+sha256 = "d39f4e7a218053cce976c91eacf184cf09a6960c731cc9d66d8e1a53406593a5"
+packagetype = "sdist"
+uploaded_at = "2026-03-24T10:52:00+00:00"
+
+[[incident]]
+id = "telnyx-4.87.1"
+package = "telnyx"
+baseline = "4.87.0"
+candidate = "4.87.1"
+source_repo = "team-telnyx/telnyx-python"
+osv = "PYSEC-2026-3"
+summary = "Uploaded with a stolen PyPI token; code appended to telnyx/_client.py fetches a second stage at import. A typo stopped it from running in this version."
+[[incident.files]]
+filename = "telnyx-4.87.1-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/83/b7/5e93f51cd157cc8cf5599f387e587a1926d50fc7e54fb76d04b342341fb0/telnyx-4.87.1-py3-none-any.whl"
+sha256 = "7321caa303fe96ded0492c747d2f353c4f7d17185656fe292ab0a59e2bd0b8d9"
+packagetype = "bdist_wheel"
+uploaded_at = "2026-03-27T03:51:00+00:00"
+# The sdist (sha256 f66c1ea3b25ec95d0c6a07be92c761551e543a7b256f9c78a2ff781c77df7093)
+# is left out: no public source gives its URL. Content rules compare wheels, so
+# only GRN-C002, which reads sdists, goes unreplayed for this release.
+[[incident.tags_on_the_day]]
+repo = "team-telnyx/telnyx-python"
+tag = "v4.87.1"
+absent = true
+evidence = "Today's v4.87.1 is Telnyx's own later release: commit 8bbd1654fa6392a210a277b13a1d35dd19c70243 (\"release: 4.87.1 (#236)\") is dated 2026-03-27T20:21:26Z, 16 hours after the upload. SafeDep found no tag for 4.87.1 on the day: https://safedep.io/malicious-telnyx-pypi-compromise/"
+
+[[incident]]
+id = "telnyx-4.87.2"
+package = "telnyx"
+baseline = "4.87.0"
+candidate = "4.87.2"
+source_repo = "team-telnyx/telnyx-python"
+osv = "PYSEC-2026-3"
+summary = "Second upload 16 minutes later with the typo fixed, so the payload runs when telnyx is imported."
+[[incident.files]]
+filename = "telnyx-4.87.2-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/5a/73/87cb49434a1f89f253819b81993d3a4e65186ae08b013b9825633ceac359/telnyx-4.87.2-py3-none-any.whl"
+sha256 = "cd08115806662469bbedec4b03f8427b97c8a4b3bc1442dc18b72b4e19395fe3"
+packagetype = "bdist_wheel"
+uploaded_at = "2026-03-27T04:07:00+00:00"
+[[incident.files]]
+filename = "telnyx-4.87.2.tar.gz"
+url = "https://files.pythonhosted.org/packages/3c/89/bff9e644b1076b96ba1e23deb2b7acffa9fe84166219ba9cb47cf356b7ec/telnyx-4.87.2.tar.gz"
+sha256 = "a9235c0eb74a8e92e5a0150e055ee9dcdc6252a07785b6677a9ca831157833a5"
+packagetype = "sdist"
+uploaded_at = "2026-03-27T04:07:00+00:00"

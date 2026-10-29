@@ -13,7 +13,7 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
   - known-bad: GRN-K001
   - couldn't-check: GRN-E001 to E003
 - `garnet explain <RULE-ID>`, text and JSON reports, and exit codes per SPEC §8.
-- `python -m backtest` replays real incidents and a clean corpus.
+- `python -m backtest` replays real incidents and a clean corpus. The incidents are lightning 2.6.2/2.6.3, elementary-data 0.23.3, litellm 1.82.7/1.82.8 and telnyx 4.87.1/4.87.2, checked against the git tags as they stood when each release was uploaded.
 - A docs page for every rule ID in `docs/rules/`, with an example finding and how to resolve or allowlist it.
 - CI on every pull request (ruff, mypy, import contracts, tests on Python 3.11 to 3.14, build), the OpenSSF Scorecard workflow, Dependabot for the repository itself, and a tag-triggered release that publishes to PyPI with Trusted Publishing and PEP 740 attestations. See docs/RELEASING.md.
 - The GitHub Action (`action.yml`) checks a pull request's lockfile changes and posts or updates one comment. It includes a `workflow_run` comment job for forks (`action/comment`) and example workflows in `action/examples/`. See docs/action.md.

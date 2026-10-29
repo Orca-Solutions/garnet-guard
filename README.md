@@ -33,6 +33,7 @@ The most damaging supply-chain attacks of 2025–26 did not come from obscure ty
 
 - **lightning 2.6.2 / 2.6.3 (PyPI, April 2026)** was uploaded outside the project's CI, with no matching git tag, and ran its payload at import time.
 - **elementary-data 0.23.3 (PyPI, April 2026)** was published by the project's own hijacked pipeline and added a `.pth` file that runs on every Python start.
+- **litellm 1.82.7 / 1.82.8 and telnyx 4.87.1 / 4.87.2 (PyPI, March 2026)** were uploaded with publish tokens stolen through a poisoned security scanner in CI, and ran their payloads at import time; litellm 1.82.8 also added a `.pth` file.
 - **chalk, debug and the Shai-Hulud worm (npm, September 2025)** spread through hijacked accounts to 500+ packages.
 
 Malware feeds caught these only after the fact. Cooldowns only buy time. pip and uv do not verify PyPI's signing attestations at all. But each malicious release *differed from the previous good release* in ways a machine can check. Garnet checks them.
@@ -74,15 +75,22 @@ We fed the original malicious files from the 2026 PyPI compromises through `garn
 |---|---|---|
 | lightning 2.6.1 → 2.6.2 | warn | GRN-C003 `subprocess.Popen` reached at import from `lightning/__init__.py:14`; GRN-T004 no tag `2.6.2` |
 | lightning 2.6.1 → 2.6.3 | warn | GRN-C003, GRN-T004 |
-| elementary-data 0.23.2 → 0.23.3 | warn | GRN-C001 new `elementary.pth` with an `exec` of a base64 payload; GRN-T004 no tag `v0.23.3` |
+| elementary-data 0.23.2 → 0.23.3 | warn | GRN-C001 new `elementary.pth` with an `exec` of a base64 payload |
+| litellm 1.82.6 → 1.82.7 | warn | GRN-C003 `subprocess.run` at import in `litellm/proxy/proxy_server.py:139` |
+| litellm 1.82.6 → 1.82.8 | warn | GRN-C001 new `litellm_init.pth` that starts a base64 payload; GRN-C003 |
+| telnyx 4.87.0 → 4.87.1 | warn | GRN-C003 `subprocess.Popen` reached at import in `telnyx/_client.py:7810`; GRN-T004 no tag `v4.87.1` |
+| telnyx 4.87.0 → 4.87.2 | warn | GRN-C003 `subprocess`, `urllib.request` reached at import in `telnyx/_client.py`; GRN-T004 no tag `v4.87.2` |
 | 20 clean updates ([list](backtest/clean.toml)) | 0 warn | none |
 
 Limits, stated plainly:
-- GRN-T001 (lost provenance) couldn't fire in either case, because neither project signed its releases before the attack.
-- GRN-T004 checks tags as they exist today.
+- GRN-T001 (lost provenance) couldn't fire in any case, because none of these projects signed its releases before the attack.
+- GRN-T004 uses the git tags as they stood when each release was uploaded, recorded with evidence in [incidents.toml](backtest/incidents.toml). Against today's tags it would also report elementary-data 0.23.3 (the attacker's tag was deleted later) and miss telnyx 4.87.1 (Telnyx tagged its own 4.87.1 that evening).
+- GRN-T004 couldn't fire for litellm, which doesn't tag plain version numbers.
+- In telnyx 4.87.1 a typo stopped the payload from running. GRN-C003 reads code; it reports what the module calls at import, not whether the call would succeed.
+- The litellm 1.82.7 and telnyx 4.87.1 sdists aren't replayed, because no public source gives their URLs. The wheels are, and content rules compare wheels.
 - Twenty clean updates is a small sample. The month-2 backtest covers the last ~20 releases of the top ~500 PyPI packages.
 
-Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightning](https://snyk.io/blog/lightning-pypi-compromise-bun-based-credential-stealer), [CSA on elementary-data](https://labs.cloudsecurityalliance.org/research/csa-research-note-pypi-elementarydata-supply-chain-20260429/), and the files from DataDog's malicious-software-packages dataset.
+Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightning](https://snyk.io/blog/lightning-pypi-compromise-bun-based-credential-stealer), [CSA on elementary-data](https://labs.cloudsecurityalliance.org/research/csa-research-note-pypi-elementarydata-supply-chain-20260429/), [PyPI's incident report on litellm and telnyx](https://blog.pypi.org/posts/2026-04-02-incident-report-litellm-telnyx-supply-chain-attack/), and the files from DataDog's malicious-software-packages dataset.
 
 ## Try it today (0.1 preview)
 
