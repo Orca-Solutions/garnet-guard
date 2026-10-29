@@ -131,7 +131,7 @@ The replays run from a checkout of this repository:
 
 ```sh
 uv sync
-uv run python -m backtest      # replay the 2026 incidents and the clean corpus
+uv run python -m backtest      # replay the 2026 attacks (7 malicious releases) and the clean corpus
 ```
 
 `garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files. Lines it can't check (not pinned with `==`, or from git, a path or a private index) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. `garnet --help` lists every option.
