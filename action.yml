@@ -20,9 +20,18 @@ inputs:
   footer:
     description: End the comment with a line linking to Garnet Guard's rule docs. Set to false to remove it.
     default: "true"
+  policy:
+    description: >-
+      Path of the policy file, relative to the repository root. "auto" reads
+      garnet.toml, else [tool.garnet] in pyproject.toml. The policy is always read
+      from the pull request's base commit, so a pull request can't relax the policy
+      it is checked with.
+    default: auto
   fail-on:
-    description: Fail the step at this verdict or worse. One of warn, block, never.
-    default: block
+    description: >-
+      Fail the step at this verdict or worse. One of warn, block, never. Empty means
+      the policy's fail_on, else block.
+    default: ""
   github-token:
     description: >-
       Token for reading the base commit, looking up release tags and posting the
@@ -56,6 +65,7 @@ runs:
       env:
         GARNET_ACTION_PATH: ${{ github.action_path }}
         GARNET_LOCKFILES: ${{ inputs.lockfiles }}
+        GARNET_POLICY: ${{ inputs.policy }}
         GARNET_FOOTER: ${{ inputs.footer }}
         GARNET_FAIL_ON: ${{ inputs.fail-on }}
         GARNET_GITHUB_TOKEN: ${{ inputs.github-token }}

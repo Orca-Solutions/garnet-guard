@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import IntEnum, StrEnum
 from typing import Literal
 
@@ -111,6 +112,7 @@ class Finding:
     remediation: str
     release: str | None = None
     docs_url: str | None = None
+    suppressed_by: Ignore | None = None  # still reported, but not in the verdict
 
 
 @dataclass(frozen=True)
@@ -132,6 +134,46 @@ class Limits:
     max_ratio: int = 100
     max_py_file_bytes: int = 5 * 1024 * 1024
     budget_seconds: int = 120
+
+
+# --- Policy (SPEC §7) ----------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Ignore:
+    """One ``[[garnet.ignore]]`` entry: findings someone reviewed and accepted.
+
+    It applies to ``rules`` for ``package`` (and ``versions`` of the candidate,
+    when set) through ``until``, then stops applying. ``package`` is normalized.
+    """
+
+    package: str
+    rules: tuple[str, ...]
+    reason: str
+    until: date
+    ecosystem: str | None = None
+    versions: str | None = None
+    acknowledge_critical: bool = False
+
+    def expired(self, today: date) -> bool:
+        """True after ``until``. The ignore still applies on that day."""
+        return today > self.until
+
+
+@dataclass(frozen=True)
+class Policy:
+    """A policy file, parsed and checked. ``Policy()`` is the defaults.
+
+    ``source`` and ``sha256`` say which file it came from, for the report.
+    """
+
+    source: str | None = None
+    sha256: str | None = None
+    default: Severity | None = None  # replaces "warn" for rules whose default is warn
+    fail_on: Severity | None = None  # None: the CLI's default
+    rules: Mapping[str, Severity] = field(default_factory=dict)
+    ignores: tuple[Ignore, ...] = ()
+    limits: Limits = field(default_factory=Limits)
 
 
 # --- Release facts -------------------------------------------------------
