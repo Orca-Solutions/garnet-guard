@@ -11,7 +11,7 @@ from pathlib import Path
 from . import __version__
 from .checks import DOCS
 from .checks.docs import rule_url
-from .engine import Options, Report, compare, evaluate, report, unchecked_result
+from .engine import ECOSYSTEMS, Options, Report, compare, evaluate, report, unchecked_result
 from .facts.pyindex import SENSITIVE_SET_VERSION, sensitive_set
 from .lockfiles import LockfileError
 from .models import Change, Severity
@@ -96,7 +96,9 @@ def _parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     d.add_argument(
-        "package", help="package name, optionally prefixed with the ecosystem (pypi:requests)"
+        "package",
+        help="package name, prefixed with the ecosystem for npm (pypi:requests, npm:chalk, "
+        "npm:@scope/name); PyPI when there is no prefix",
     )
     d.add_argument("old", help="the version you trust")
     d.add_argument("new", help="the version you are updating to")
@@ -213,13 +215,17 @@ def _markdown(rep: Report) -> str:
 
 def _diff(args: argparse.Namespace) -> int:
     """``garnet diff``: two releases of one package."""
-    eco, _, name = args.package.rpartition(":")
-    eco = eco or "pypi"
-    if eco != "pypi":
-        print(f"garnet: unsupported ecosystem {eco!r}; 0.1 supports pypi", file=sys.stderr)
+    eco, _, name = (
+        args.package.partition(":") if ":" in args.package else ("pypi", "", args.package)
+    )
+    if eco not in ECOSYSTEMS:
+        print(f"garnet: unsupported ecosystem {eco!r}; supported: pypi, npm", file=sys.stderr)
         return 3
     token = os.environ.get(args.github_token_env) or None
-    result = compare(eco, name, args.old, args.new, options=Options(github_token=token))
+    try:
+        result = compare(eco, name, args.old, args.new, options=Options(github_token=token))
+    except ValueError as err:
+        raise UsageError(str(err)) from err
     rep = report([result])
     if args.format == "json":
         out = to_json(rep)

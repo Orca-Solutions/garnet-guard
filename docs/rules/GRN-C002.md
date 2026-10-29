@@ -20,8 +20,14 @@ Any of these, compared with the trusted version:
 
 - a new or changed `setup.py` adds a call in the [sensitive call set](#sensitive-call-set);
 - the build backend changed to one that is not on the allowlist, or to an in-tree backend;
-- an npm `preinstall`, `install`, `postinstall` or `prepare` script was added or changed
-  (npm support is planned for 1.0).
+- an npm `preinstall`, `install` or `postinstall` script was added or changed in the
+  tarball's `package.json`. A script that was removed doesn't fire.
+
+`prepare` is not checked, although [SPEC §6.2](../SPEC-v1.md#62-rule-catalog) lists it: npm
+runs `prepare` for git dependencies and in a package's own checkout, never when it installs
+a published tarball. In the top-200 npm backtest every one of the 18 `prepare` changes was
+a build-tool switch (`tsc` to `tshy`, `husky` to `lefthook`), and none of the replayed
+incidents used it.
 
 Build backends on the allowlist: `setuptools.build_meta`, `setuptools.build_meta:__legacy__`,
 `hatchling.build`, `flit_core.buildapi`, `poetry.core.masonry.api`, `poetry_core.masonry.api`,
@@ -36,7 +42,23 @@ credentials CI has.
 
 ## Example finding
 
-Illustrative; not from a real release.
+From the [replay](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/npm-incidents.toml)
+of nx 21.5.0 ([MAL-2025-41439](https://osv.dev/vulnerability/MAL-2025-41439)), published with
+a stolen npm token on 2025-08-26. npm has removed the tarball, so the replay uses the
+`package.json` scripts recorded in the
+[Nx postmortem](https://nx.dev/blog/s1ngularity-postmortem) and
+[StepSecurity's write-up](https://www.stepsecurity.io/blog/supply-chain-security-alert-popular-nx-build-system-package-compromised-with-data-stealing-malware);
+the baseline is fetched from the registry.
+
+```text
+nx 21.4.1 → 21.5.0: WARN
+  WARN  GRN-C002 new-build-hook: 21.5.0 adds or changes a script that runs when the package is installed
+           - package.json: postinstall script changed to node telemetry.js (was node ./bin/post-install || exit 0)
+```
+
+The same replay reports @ctrl/tinycolor 4.1.1, the first Shai-Hulud package, for a new
+`postinstall` running `node bundle.js`. The Python case is illustrative, not from a real
+release:
 
 ```text
 examplelib 2.6.1 → 2.6.2: WARN
@@ -46,9 +68,12 @@ examplelib 2.6.1 → 2.6.2: WARN
 
 ## How to resolve it
 
-1. Read the `setup.py` diff or the new backend named in the evidence.
+1. Read the `setup.py` diff or the new backend named in the evidence. For npm, read the
+   script and the file it runs in the new tarball (`npm pack <name>@<version>` downloads it
+   without installing).
 2. Prefer installing a wheel if the release has one for your platform: wheels don't run
-   build code. (`pip install --only-binary :all:` or `uv pip install --no-build`.)
+   build code. (`pip install --only-binary :all:` or `uv pip install --no-build`.) For npm,
+   `npm install --ignore-scripts` installs without running any lifecycle script.
 3. If the build change is expected, merge and add an ignore for this version.
 
 ## Allowlisting

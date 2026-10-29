@@ -59,9 +59,10 @@ _DOCS: tuple[RuleDoc, ...] = (
         "The trusted version had a matching git tag in the source repository; the new version has none.",
         "Projects that tag releases normally tag every release. A version on the registry with no tag "
         "was probably not built from the repository's history, which is typical of a token-based upload. "
-        "Accepted tag forms are X, vX, <name>-X and <name>-vX, with X compared as a version "
-        "(tag 2026.01.04 matches 2026.1.4). Both the attested repository and the project's "
-        "source URL are searched.",
+        "Accepted tag forms are X, vX, <name>-X and <name>-vX (and <name>@X for npm), with X "
+        "compared as a version (tag 2026.01.04 matches 2026.1.4). Both the attested repository "
+        "and the project's source URL are searched. chalk 5.6.1 and debug 4.4.2, published from a "
+        "phished npm account, had no tag.",
         "Check the repository's tags and releases page. A missing tag can be an oversight, so confirm "
         "with the maintainers before merging.",
     ),
@@ -111,10 +112,13 @@ _DOCS: tuple[RuleDoc, ...] = (
         "new-build-hook",
         "diff",
         W,
-        "setup.py gained sensitive calls, or the build backend changed to an unknown or in-tree backend.",
-        "Code in setup.py or a custom build backend runs on your machine when the sdist is built, "
-        "before you ever import the package.",
-        "Read the setup.py diff or the new backend. Prefer installing the wheel if one exists.",
+        "setup.py gained sensitive calls, the build backend changed to an unknown or in-tree backend, "
+        "or an npm preinstall, install or postinstall script was added or changed.",
+        "Code in setup.py, a custom build backend or an npm install script runs on your machine when "
+        "the package is built or installed, before you ever import it. nx 21.5.0 and "
+        "@ctrl/tinycolor 4.1.1 (Shai-Hulud) carried their payload in a postinstall script.",
+        "Read the setup.py diff, the new backend, or the npm script and the file it runs. Prefer "
+        "installing the wheel if one exists; on npm, `npm install --ignore-scripts` skips the scripts.",
     ),
     RuleDoc(
         "GRN-C003",

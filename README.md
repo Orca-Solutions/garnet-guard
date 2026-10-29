@@ -86,7 +86,7 @@ Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightn
 
 ## Try it today (0.1 preview)
 
-`garnet diff` compares two releases of one PyPI package, and `garnet check` compares two lockfiles:
+`garnet diff` compares two releases of one PyPI or npm package, and `garnet check` compares two lockfiles:
 
 ```sh
 uv sync
@@ -104,7 +104,7 @@ The exit code is 0 below `--fail-on` (default `block`), 1 for warn, 2 for block 
 
 ## Ecosystems
 
-Python first (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt). npm (package-lock, pnpm-lock, yarn.lock) follows.
+Python first (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt). npm is checked by `garnet diff npm:<name> <old> <new>` (provenance, tags, install scripts, OSV); the npm lockfile parsers (package-lock, pnpm-lock, yarn.lock) follow.
 
 ## Project
 

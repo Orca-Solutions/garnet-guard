@@ -18,8 +18,9 @@ status: implemented
 
 The trusted version has a matching git tag in the project's source repository and the new
 version has none. A tag matches if it is named `X`, `vX`, `<name>-X` or `<name>-vX`, where
-`<name>` is the package name. An exact name wins; otherwise `X` is compared as a PEP 440
-version, so tag `2026.01.04` matches release `2026.1.4`.
+`<name>` is the package name. For npm packages `<name>@X` also matches, with or without
+the `@scope/`, since monorepo tools tag that way. An exact name wins; otherwise `X` is
+compared as a PEP 440 version, so tag `2026.01.04` matches release `2026.1.4`.
 
 Garnet Guard looks for the tag in the repository named by the attestation first, then in
 the repository in the package's project URLs, and accepts a tag in either. Some projects
@@ -47,6 +48,21 @@ lightning 2.6.1 → 2.6.2: WARN
 
 The same rule reported lightning 2.6.3 and elementary-data 0.23.3
 ([MAL-2026-3083](https://osv.dev/vulnerability/MAL-2026-3083)) in the replay.
+
+On npm it is the one signal shared by all four replayed account takeovers. chalk 5.6.1
+([MAL-2025-47141](https://osv.dev/vulnerability/MAL-2025-47141)), published from a phished
+maintainer account on 2025-09-08, had never used provenance and changed no install script,
+so this rule is what reports it:
+
+```text
+chalk 5.6.0 → 5.6.1: WARN
+  WARN  GRN-T004 no-matching-tag: github.com/chalk/chalk has a tag for 5.6.0 but none for 5.6.1
+           - 5.6.0 → tag v5.6.0 at 5c91505e184aff4609c0a7fb235770c2f71db4a3 <https://github.com/chalk/chalk/tree/v5.6.0>
+           - 5.6.1: no tag named 5.6.1, v5.6.1, chalk-5.6.1 or chalk-v5.6.1 in github.com/chalk/chalk <https://github.com/chalk/chalk/tags>
+```
+
+That is the same observation a debug maintainer made by hand that morning: the version on
+npm was not in the repository ([debug-js/debug#1005](https://github.com/debug-js/debug/issues/1005)).
 
 ## How to resolve it
 

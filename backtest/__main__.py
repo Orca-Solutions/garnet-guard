@@ -1,9 +1,9 @@
 """Replay real incidents and clean updates through the engine.
 
-    uv run python -m backtest              # incidents and clean corpus
-    uv run python -m backtest incidents    # incidents only
-    uv run python -m backtest select       # pick the clean corpus (top 100 x last 11 releases)
-    uv run python -m backtest corpus [DIR] # run the clean corpus; see backtest/corpus.py
+    uv run python -m backtest                  # incidents and clean updates, PyPI and npm
+    uv run python -m backtest incidents        # incidents only
+    uv run python -m backtest select [npm]     # pick the clean corpus (top packages x last 11 releases)
+    uv run python -m backtest corpus [npm] [DIR]  # run the clean corpus; see backtest/corpus.py
 
 Known-bad lookups (GRN-K001) are off: the question is what Garnet catches
 before any feed lists a release. Results go to backtest/results.json.
@@ -17,6 +17,7 @@ import tomllib
 from datetime import datetime
 from pathlib import Path
 
+from garnet_guard.ecosystems import npm
 from garnet_guard.ecosystems.pypi import RegistryFile, ReplayRelease
 from garnet_guard.engine import Options, compare, report
 from garnet_guard.models import ChangeResult, Severity
@@ -36,34 +37,66 @@ def _detected(result: ChangeResult) -> list[str]:
     )
 
 
+def _pypi_options(inc: dict[str, object]) -> Options:
+    """PyPI incidents: the removed files are still served by URL and hash."""
+    files = inc["files"]
+    assert isinstance(files, list)
+    replay = ReplayRelease(
+        files=tuple(
+            RegistryFile(
+                filename=f["filename"],
+                url=f["url"],
+                sha256=f["sha256"],
+                packagetype=f["packagetype"],
+                uploaded_at=datetime.fromisoformat(f["uploaded_at"]),
+            )
+            for f in files
+        ),
+        source_repo=str(inc["source_repo"]),
+        note="replayed: release removed from PyPI; files fetched by URL and hash, provenance not available",
+    )
+    return Options(replay={str(inc["candidate"]): replay}, check_known_bad=False)
+
+
+def _npm_options(inc: dict[str, object]) -> Options:
+    """npm incidents: the registry record is gone, so facts come from write-ups."""
+    scripts = inc.get("scripts", [])
+    assert isinstance(scripts, list)
+    tp = inc.get("trusted_publisher")
+    replay = npm.ReplayRelease(
+        uploaded_at=datetime.fromisoformat(str(inc["uploaded_at"])),
+        attestation=bool(inc.get("attestation", False)),
+        trusted_publisher=bool(tp) if tp is not None else None,
+        scripts=tuple((str(k), str(v)) for k, v in scripts),
+        source_repo=str(inc["source_repo"]),
+        note=str(inc["note"]),
+    )
+    return Options(npm_replay={str(inc["candidate"]): replay}, check_known_bad=False)
+
+
 def run_incidents() -> list[dict[str, object]]:
-    data = tomllib.loads((HERE / "incidents.toml").read_text())
+    incidents: list[dict[str, object]] = []
+    for name in ("incidents.toml", "npm-incidents.toml"):
+        incidents += tomllib.loads((HERE / name).read_text())["incident"]
     rows = []
-    for inc in data["incident"]:
-        replay = ReplayRelease(
-            files=tuple(
-                RegistryFile(
-                    filename=f["filename"],
-                    url=f["url"],
-                    sha256=f["sha256"],
-                    packagetype=f["packagetype"],
-                    uploaded_at=datetime.fromisoformat(f["uploaded_at"]),
-                )
-                for f in inc["files"]
-            ),
-            source_repo=inc["source_repo"],
-            note="replayed: release removed from PyPI; files fetched by URL and hash, provenance not available",
+    for inc in incidents:
+        eco = str(inc.get("ecosystem", "pypi"))
+        opts = _npm_options(inc) if eco == "npm" else _pypi_options(inc)
+        package, baseline, candidate = (
+            str(inc["package"]),
+            str(inc["baseline"]),
+            str(inc["candidate"]),
         )
-        opts = Options(replay={inc["candidate"]: replay}, check_known_bad=False)
-        result = compare("pypi", inc["package"], inc["baseline"], inc["candidate"], options=opts)
+        result = compare(eco, package, baseline, candidate, options=opts)
         rules = _detected(result)
         print(f"=== incident {inc['id']}: {inc['summary']}")
         print(to_text(report([result])))
         rows.append(
             {
                 "id": inc["id"],
-                "baseline": inc["baseline"],
-                "candidate": inc["candidate"],
+                "ecosystem": eco,
+                "baseline": baseline,
+                "candidate": candidate,
                 "caught": bool(rules),
                 "rules": rules,
                 "verdict": result.verdict.value,
@@ -74,18 +107,20 @@ def run_incidents() -> list[dict[str, object]]:
 
 def run_clean() -> list[dict[str, object]]:
     data = tomllib.loads((HERE / "clean.toml").read_text())
+    pairs = [("pypi", *p) for p in data["pairs"]] + [("npm", *p) for p in data.get("npm_pairs", [])]
     rows = []
-    for package, old, new in data["pairs"]:
-        result = compare("pypi", package, old, new, options=Options(check_known_bad=False))
+    for eco, package, old, new in pairs:
+        result = compare(eco, package, old, new, options=Options(check_known_bad=False))
         rules = _detected(result)
         errors = sorted({f.rule_id for f in result.findings if f.rule_id.startswith("GRN-E")})
         print(
-            f"--- clean {package} {old} → {new}: {result.verdict.value} {rules or ''} {errors or ''}"
+            f"--- clean {eco} {package} {old} → {new}: {result.verdict.value} {rules or ''} {errors or ''}"
         )
         if rules or errors:
             print(to_text(report([result])))
         rows.append(
             {
+                "ecosystem": eco,
                 "package": package,
                 "baseline": old,
                 "candidate": new,

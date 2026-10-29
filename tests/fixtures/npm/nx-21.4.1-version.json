@@ -1,0 +1,39 @@
+{
+ "_npmUser": {
+  "email": "james@henry.sc",
+  "name": "jameshenry"
+ },
+ "bugs": {
+  "url": "https://github.com/nrwl/nx/issues"
+ },
+ "dist": {
+  "attestations": {
+   "provenance": {
+    "predicateType": "https://slsa.dev/provenance/v1"
+   },
+   "url": "https://registry.npmjs.org/-/npm/v1/attestations/nx@21.4.1"
+  },
+  "fileCount": 1352,
+  "integrity": "sha512-nD8NjJGYk5wcqiATzlsLauvyrSHV2S2YmM2HBIKqTTwVP2sey07MF3wDB9U2BwxIjboahiITQ6pfqFgB79TF2A==",
+  "shasum": "4649405ac2a3c69a22352c0423521051e0af5422",
+  "signatures": [
+   {
+    "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+    "sig": "MEUCIAUlSXnRoU09jWV7wjS9vEoRk/2Tk+rf6uJ3PE09iqC+AiEAv/RVezZTNAuWowPW+auaZYVI17PdjvPDH7GlNNh37xI="
+   }
+  ],
+  "tarball": "https://registry.npmjs.org/nx/-/nx-21.4.1.tgz",
+  "unpackedSize": 9356079
+ },
+ "homepage": "https://nx.dev",
+ "name": "nx",
+ "repository": {
+  "directory": "packages/nx",
+  "type": "git",
+  "url": "git+https://github.com/nrwl/nx.git"
+ },
+ "scripts": {
+  "postinstall": "node ./bin/post-install || exit 0"
+ },
+ "version": "21.4.1"
+}

@@ -78,11 +78,20 @@ class TagLookup:
         return self._cache[repo]
 
 
-def _prefixes(package: str) -> list[str]:
-    """Tag prefixes to try: none, then ``<name>-`` in each spelling of the name."""
+def _prefixes(package: str, *, npm: bool = False) -> list[str]:
+    """Tag prefixes to try: none, then ``<name>-`` in each spelling of the name.
+
+    npm monorepos tag ``<name>@X`` (lerna, changesets), with or without the
+    ``@scope/``, so those forms are added for npm packages.
+    """
     out = [""]
-    for n in sorted({package, package.replace("-", "_"), package.replace("_", "-")}):
+    names = {package, package.replace("-", "_"), package.replace("_", "-")}
+    if npm and "/" in package:
+        names.add(package.rpartition("/")[2])
+    for n in sorted(names):
         out.append(f"{n}-")
+        if npm:
+            out.append(f"{n}@")
     return out
 
 
@@ -94,14 +103,19 @@ def _as_version(text: str) -> Version | None:
 
 
 def match_tag(
-    tags: dict[str, str], package: str, version: str, repo: str | None = None
+    tags: dict[str, str],
+    package: str,
+    version: str,
+    repo: str | None = None,
+    *,
+    npm: bool = False,
 ) -> TagInfo | None:
-    """SPEC GRN-T004: accept X, vX, <name>-X and <name>-vX.
+    """SPEC GRN-T004: accept X, vX, <name>-X and <name>-vX (and <name>@X for npm).
 
     An exact name wins. Otherwise X is compared as a PEP 440 version, so
     tag ``2026.01.04`` matches release ``2026.1.4``.
     """
-    prefixes = _prefixes(package)
+    prefixes = _prefixes(package, npm=npm)
     for p in prefixes:
         for name in (f"{p}{version}", f"{p}v{version}"):
             if name in tags:

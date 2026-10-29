@@ -220,6 +220,12 @@ class ArtifactFacts:
     unparsed: tuple[str, ...] = ()  # .py files ast couldn't parse
     wheel_tag: str | None = None
     entry_points: tuple[str, ...] = ()  # modules named by entry points
+    # npm: the registry's Subresource Integrity string ("sha512-…") and the
+    # one computed from the download (GRN-T008), and the package.json scripts
+    # that run on the installing machine, as sorted (name, command) pairs.
+    integrity: str | None = None
+    downloaded_integrity: str | None = None
+    install_scripts: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

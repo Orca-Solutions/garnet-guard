@@ -11,7 +11,7 @@ from pathlib import Path
 from . import __version__
 from .checks import ALL_CHECKS, DOCS
 from .checks.docs import rule_url
-from .ecosystems import github, pypi
+from .ecosystems import github, npm, pypi
 from .models import (
     Change,
     ChangeResult,
@@ -32,11 +32,59 @@ class Options:
 
     github_token: str | None = None
     limits: Limits = field(default_factory=Limits)
-    # Registry data for releases the registry no longer lists (incident replay).
+    # Registry data for releases the registry no longer lists (incident
+    # replay), by version: PyPI files still served by URL, npm recorded facts.
     replay: Mapping[str, pypi.ReplayRelease] = field(default_factory=dict)
+    npm_replay: Mapping[str, npm.ReplayRelease] = field(default_factory=dict)
     # OSV is queried for the candidate only. The backtest turns it off so
     # results show what Garnet catches before any feed lists a release.
     check_known_bad: bool = True
+
+
+ECOSYSTEMS = ("pypi", "npm")
+
+
+class Fetcher:
+    """One HTTP client and the per-run caches, shared by every release fetched."""
+
+    def __init__(self, options: Options) -> None:
+        self.options = options
+        self.http = Http(github_token=options.github_token)
+        tags = github.TagLookup(self.http)
+        self._pypi = pypi.FetchContext(http=self.http, limits=options.limits, tags=tags)
+        self._npm = npm.FetchContext(http=self.http, limits=options.limits, tags=tags)
+
+    def __enter__(self) -> Fetcher:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.http.close()
+
+    def release_facts(
+        self, ecosystem: str, package: str, version: str, *, advisories: bool
+    ) -> ReleaseFacts:
+        if ecosystem == "npm":
+            return npm.release_facts(
+                package,
+                version,
+                self._npm,
+                replay=self.options.npm_replay.get(version),
+                advisories=advisories,
+            )
+        return pypi.release_facts(
+            package,
+            version,
+            self._pypi,
+            replay=self.options.replay.get(version),
+            advisories=advisories,
+        )
+
+
+def normalize(ecosystem: str, package: str) -> str:
+    """The ecosystem's canonical spelling of a package name."""
+    if ecosystem not in ECOSYSTEMS:
+        raise ValueError(f"unsupported ecosystem: {ecosystem!r} (supported: pypi, npm)")
+    return npm.normalize(package) if ecosystem == "npm" else pypi.normalize(package)
 
 
 @dataclass(frozen=True)
@@ -109,19 +157,22 @@ def _finding(change: Change, raw: RawFinding) -> Finding:
 
 
 def fetch_facts(
-    package: str, versions: list[str], options: Options, *, candidate: str
+    package: str,
+    versions: list[str],
+    options: Options,
+    *,
+    candidate: str,
+    ecosystem: str = "pypi",
 ) -> dict[str, ReleaseFacts]:
     """Fetch facts for several versions of one package in parallel."""
-    with Http(github_token=options.github_token) as http:
-        ctx = pypi.FetchContext(http=http, limits=options.limits, tags=github.TagLookup(http))
+    with Fetcher(options) as fetcher:
         with ThreadPoolExecutor(max_workers=max(1, len(versions))) as pool:
             futures = {
                 v: pool.submit(
-                    pypi.release_facts,
+                    fetcher.release_facts,
+                    ecosystem,
                     package,
                     v,
-                    ctx,
-                    replay=options.replay.get(v),
                     advisories=options.check_known_bad and v == candidate,
                 )
                 for v in versions
@@ -142,12 +193,10 @@ def compare(
     Fetches both releases, so it needs the network. Problems fetching or
     reading them come back as GRN-E findings, not exceptions.
     """
-    if ecosystem != "pypi":
-        raise ValueError(f"unsupported ecosystem: {ecosystem!r} (0.1 supports pypi)")
     opts = options or Options()
-    name = pypi.normalize(package)
+    name = normalize(ecosystem, package)
     versions = [candidate] + ([baseline] if baseline else [])
-    facts = fetch_facts(name, versions, opts, candidate=candidate)
+    facts = fetch_facts(name, versions, opts, candidate=candidate, ecosystem=ecosystem)
     change = Change(ecosystem, name, baseline, candidate)
     return run_checks(change, facts.get(baseline) if baseline else None, facts[candidate])
 
@@ -156,34 +205,34 @@ def evaluate(changes: list[Change], *, options: Options | None = None) -> list[C
     """Check many changes with one HTTP client, fetching each release once."""
     opts = options or Options()
     for c in changes:
-        if c.ecosystem != "pypi":
-            raise ValueError(f"unsupported ecosystem: {c.ecosystem!r} (0.1 supports pypi)")
+        if c.ecosystem not in ECOSYSTEMS:
+            raise ValueError(f"unsupported ecosystem: {c.ecosystem!r} (supported: pypi, npm)")
     if not changes:
         return []
-    with Http(github_token=opts.github_token) as http:
-        ctx = pypi.FetchContext(http=http, limits=opts.limits, tags=github.TagLookup(http))
-        cache: dict[tuple[str, str, bool], Future[ReleaseFacts]] = {}
+    with Fetcher(opts) as fetcher:
+        cache: dict[tuple[str, str, str, bool], Future[ReleaseFacts]] = {}
         lock = threading.Lock()
         with ThreadPoolExecutor(max_workers=8) as pool:
 
-            def facts(package: str, version: str, advisories: bool) -> Future[ReleaseFacts]:
-                key = (package, version, advisories)
+            def facts(
+                ecosystem: str, package: str, version: str, advisories: bool
+            ) -> Future[ReleaseFacts]:
+                key = (ecosystem, package, version, advisories)
                 with lock:
                     if key not in cache:
                         cache[key] = pool.submit(
-                            pypi.release_facts,
+                            fetcher.release_facts,
+                            ecosystem,
                             package,
                             version,
-                            ctx,
-                            replay=opts.replay.get(version),
                             advisories=advisories,
                         )
                     return cache[key]
 
             pending = []
             for c in changes:
-                cand = facts(c.package, c.candidate, opts.check_known_bad)
-                base = facts(c.package, c.baseline, False) if c.baseline else None
+                cand = facts(c.ecosystem, c.package, c.candidate, opts.check_known_bad)
+                base = facts(c.ecosystem, c.package, c.baseline, False) if c.baseline else None
                 pending.append((c, base, cand))
             return [
                 run_checks(c, base.result() if base else None, cand.result())

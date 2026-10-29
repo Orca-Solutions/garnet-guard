@@ -46,16 +46,19 @@ Every run goes through the same five stages, whichever command started it.
    or installed from git, a path or a private index) become GRN-E004 or GRN-E005 findings
    here, so they show up in the report instead of disappearing. `garnet diff` skips this
    stage: you name the package and both versions yourself.
-2. **Gather the facts.** `engine.py` asks `ecosystems/pypi.py` for a `ReleaseFacts` record
-   for each version. That module fetches PyPI's metadata, the attestation for every file,
-   the sdist and one wheel, the project's git tags (`ecosystems/github.py`) and malware
-   advisories (`ecosystems/osv.py`), and verifies attestations
-   (`ecosystems/provenance.py`). A failure in any step is recorded on the facts as an
-   error naming the rules it kept from running.
+2. **Gather the facts.** `engine.py` asks `ecosystems/pypi.py` or `ecosystems/npm.py` for a
+   `ReleaseFacts` record for each version. The PyPI module fetches PyPI's metadata, the
+   attestation for every file, the sdist and one wheel; the npm module fetches the
+   registry's package document, the release's attestations and the tarball. Both look up
+   the project's git tags (`ecosystems/github.py`) and malware advisories
+   (`ecosystems/osv.py`), and verify attestations (`ecosystems/provenance.py` for PEP 740,
+   `ecosystems/npm_provenance.py` for npm provenance). A failure in any step is recorded on
+   the facts as an error naming the rules it kept from running.
 3. **Read the files.** `facts/inventory.py` lists every file in an archive with its size,
    hash and kind. `facts/pyindex.py` parses each Python file with `ast` (Python's own
    parser, which reads code as a tree without running it) and records the sensitive calls
-   that run at import time.
+   that run at import time. `facts/npmmeta.py` reads an npm tarball's file list and the
+   install-time scripts in its `package.json`.
 4. **Judge.** `checks/` holds one function per rule. Each takes the baseline facts and the
    candidate facts and returns findings. Checks do no network or file access at all, so a
    test can hand them made-up facts and know exactly what should come back.
@@ -76,10 +79,10 @@ results describe what users will see.
 | [`workspace.py`](../src/garnet_guard/workspace.py) | Finds lockfiles, reads the base version from git, refuses symlinked lockfiles, and turns lockfile differences into `Change` records. |
 | [`lockfiles/`](../src/garnet_guard/lockfiles/) | One parser per lockfile format (`uv.lock`, `poetry.lock`, `pylock.toml`, `requirements*.txt`) and the code that compares two lists of pins. |
 | [`engine.py`](../src/garnet_guard/engine.py) | Runs the stages in order: fetch facts in parallel, run every check, turn errors into findings, sort, decide the verdict. |
-| [`ecosystems/`](../src/garnet_guard/ecosystems/) | Everything fetched about a release: PyPI metadata and files, attestations, git tags, OSV advisories. |
+| [`ecosystems/`](../src/garnet_guard/ecosystems/) | Everything fetched about a release: PyPI and npm registry metadata and files, attestations, git tags, OSV advisories. |
 | [`net.py`](../src/garnet_guard/net.py) | The only code that uses the network. HTTPS only, a short list of allowed hosts, size caps, timeouts and retries. |
 | [`safe_archive.py`](../src/garnet_guard/safe_archive.py) | The only code that opens zip and tar archives. Reads them in memory, never extracts to disk, and rejects dangerous entries. |
-| [`facts/`](../src/garnet_guard/facts/) | Describes what an archive contains, and what its Python code does at import time, without running it. |
+| [`facts/`](../src/garnet_guard/facts/) | Describes what an archive contains, what its Python code does at import time, and which npm scripts run at install, without running anything. |
 | [`models.py`](../src/garnet_guard/models.py) | The records passed between stages: `Change`, `ReleaseFacts`, `Finding` and the rest. All frozen, so no stage can change what an earlier one recorded. |
 | [`checks/`](../src/garnet_guard/checks/) | One small function per rule (`trust.py`, `content.py`, and K001 in `__init__.py`), plus `docs.py` with the text `garnet explain` prints. |
 | [`report.py`](../src/garnet_guard/report.py) | Text and JSON output. Escapes package-supplied text before it reaches a terminal. |
@@ -91,7 +94,7 @@ Outside `src/`:
 |---|---|
 | [`action/`](../action/) and [`action.yml`](../action.yml) | The GitHub Action: shell scripts that run `garnet check` and post the comment. See [action.md](action.md). |
 | [`tests/`](../tests/) | Unit tests. `tests/builders.py` builds tiny wheels, sdists and facts in memory, so tests never use the network. |
-| [`backtest/`](../backtest/) | Replays of real compromised releases (`incidents.toml`) and a corpus of ordinary updates, to measure what Garnet catches and how often it's wrong. Run with `uv run python -m backtest`. |
+| [`backtest/`](../backtest/) | Replays of real compromised releases (`incidents.toml`, `npm-incidents.toml`) and corpora of ordinary updates, to measure what Garnet catches and how often it's wrong. Run with `uv run python -m backtest`. |
 | [`docs/rules/`](rules/README.md) | One page per rule. Findings link to these pages. |
 
 ## The boundaries are enforced
