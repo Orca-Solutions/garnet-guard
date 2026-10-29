@@ -50,6 +50,7 @@ Changelog = "https://github.com/orca-solutions/garnet-guard/blob/main/CHANGELOG.
 
 [project.scripts]
 garnet = "garnet_guard.cli:main"
+garnet-guard = "garnet_guard.cli:main" # so `uvx garnet-guard` works (ADR-0007)
 
 [tool.ruff]
 line-length = 100

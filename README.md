@@ -110,7 +110,7 @@ Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightn
 `garnet diff` compares two releases of one PyPI package, and `garnet check` compares two lockfiles:
 
 ```sh
-pip install --pre garnet-guard
+pip install --pre garnet-guard   # or run it without installing: uvx garnet-guard check --git-base main
 garnet diff requests 2.32.4 2.32.5
 garnet diff pypi:lightning 2.6.4 2.6.5 --format json
 garnet check --git-base main   # every lockfile here, against the same files on main

@@ -17,7 +17,7 @@ The first pre-release. It claims the `garnet-guard` name on PyPI and lets people
   - content: GRN-C001 to C003
   - known-bad: GRN-K001
   - couldn't-check: GRN-E001 to E005
-- `garnet explain <RULE-ID>`, text and JSON reports, and exit codes per SPEC §8.
+- `garnet explain <RULE-ID>`, text and JSON reports, and exit codes per SPEC §8. The command is `garnet`; `garnet-guard` is the same command, so `uvx garnet-guard` works (ADR-0007).
 - `python -m backtest` replays real incidents and a clean corpus.
 - A docs page for every rule ID in `docs/rules/`, with an example finding and how to resolve or allowlist it. Findings, `garnet explain` and the PR comment link to these pages on https://garnetguard.dev/rules/.
 - CI on every pull request (ruff, mypy, import contracts, tests on Python 3.11 to 3.14, build), the OpenSSF Scorecard workflow, Dependabot for the repository itself, and a tag-triggered release that publishes to PyPI with Trusted Publishing and PEP 740 attestations. See docs/RELEASING.md.
