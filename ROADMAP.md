@@ -31,7 +31,7 @@ Months count from the repository going live. Version numbers are targets, not pr
 - [ ] GitHub tag lookup; OSV lookup
 - [ ] Rules GRN-T001–T005, T007, T008, C001–C003, K001, E001–E005
 - [ ] Reporters: text, JSON, SARIF
-- [ ] First incident replays: lightning 2.6.2/2.6.3, elementary-data 0.23.3, reproducible from one command **by Nov 15, 2026** (PyCon proposal dependency)
+- [ ] First incident replays: lightning 2.6.2/2.6.3, elementary-data 0.23.3, litellm 1.82.7/1.82.8, telnyx 4.87.1/4.87.2, reproducible from one command **by Nov 15, 2026** (PyCon proposal dependency)
 - [ ] **Reduced clean-corpus backtest by Dec 1, 2026:** top 100 PyPI packages × last 10 releases, warn rate per rule. Pulled forward from month 2 so the PyCon US 2027 proposal can cite a real false-positive number
 - [ ] Approach-check notes to three to five packaging and security experts on reading the Integrity API (outreach Draft A)
 

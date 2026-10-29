@@ -154,4 +154,4 @@ See [docs/API.md](docs/API.md) §9 for the full layout and §2 for the import ru
 
 ## Backtesting
 
-`backtest/` replays known incidents (lightning 2.6.2/2.6.3, elementary-data 0.23.3, and npm cases once the adapter lands) and a clean corpus of recent releases of the top ~500 PyPI packages. Every rule change runs against it. Two numbers gate releases: detection on the incident set and warn rate on the clean corpus. Where an incident's malicious artifacts were removed from the registry, the replay uses recorded `ReleaseFacts` from public write-ups rather than the files.
+`backtest/` replays known incidents (lightning 2.6.2/2.6.3, elementary-data 0.23.3, litellm 1.82.7/1.82.8, telnyx 4.87.1/4.87.2, and npm cases once the adapter lands) and a clean corpus of recent releases of the top ~500 PyPI packages. Every rule change runs against it. Two numbers gate releases: detection on the incident set and warn rate on the clean corpus. Where an incident's malicious artifacts were removed from the registry, the replay uses recorded `ReleaseFacts` from public write-ups rather than the files.

@@ -293,7 +293,7 @@ Garnet follows semantic versioning from 1.0. The public interface is: CLI comman
 
 ## 13. Acceptance criteria for 1.0
 
-1. Every replayed incident in the backtest corpus that Garnet targets (at minimum lightning 2.6.2 and 2.6.3, elementary-data 0.23.3, and one npm account-takeover case) produces at least one `warn` or `block` finding from a rule other than GRN-K001.
+1. Every replayed incident in the backtest corpus that Garnet targets (at minimum lightning 2.6.2 and 2.6.3, elementary-data 0.23.3, litellm 1.82.7 and 1.82.8, telnyx 4.87.1 and 4.87.2, and one npm account-takeover case) produces at least one `warn` or `block` finding from a rule other than GRN-K001.
 2. On the clean corpus (the last 20 releases of the top 500 PyPI packages, and the top 200 npm packages), the share of changes with a `warn` or higher is published per rule, and the overall rate is at or below the target set after the month-2 backtest.
 3. The parser fuzzing suite runs for at least 1 CPU-hour per parser per release with no crash, hang or limit bypass.
 4. Every rule has `explain` text, positive and negative fixtures, and SARIF metadata.

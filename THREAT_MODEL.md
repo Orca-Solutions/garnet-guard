@@ -10,7 +10,7 @@ Someone who gains the ability to publish a new version of a **legitimate, alread
 
 | Path | Example | Garnet signals |
 |---|---|---|
-| Stolen or leaked long-lived publish token | lightning 2.6.2/2.6.3 | Lost provenance (T001), outside Trusted Publishing (T005), no matching tag (T004) |
+| Stolen or leaked long-lived publish token | lightning 2.6.2/2.6.3, litellm 1.82.7/1.82.8, telnyx 4.87.1/4.87.2 | Lost provenance (T001), outside Trusted Publishing (T005), no matching tag (T004) |
 | Hijacked maintainer account (phishing, session theft) | chalk/debug, Sept 2025 | Lost provenance, new install script or obfuscated code (C002, C005) |
 | Compromised CI of the real project (script injection, poisoned action) | elementary-data 0.23.3 | Provenance looks valid, so content rules carry it: new `.pth` (C001), new import-time exec (C003) |
 | Moved publishing to a fork or new repo | repo-jacking variants | Publisher changed (T002), workflow changed (T003) |

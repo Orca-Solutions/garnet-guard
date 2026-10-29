@@ -38,6 +38,10 @@ class Options:
     limits: Limits = field(default_factory=Limits)
     # Registry data for releases the registry no longer lists (incident replay).
     replay: Mapping[str, pypi.ReplayRelease] = field(default_factory=dict)
+    # Tags as they stood on the day of an incident, per repository, laid over
+    # the tags fetched now: a sha restores a tag deleted since, None hides a
+    # tag pushed later (incident replay).
+    tags_then: Mapping[str, Mapping[str, str | None]] = field(default_factory=dict)
     # OSV is queried for the candidate only. The backtest turns it off so
     # results show what Garnet catches before any feed lists a release.
     check_known_bad: bool = True
@@ -164,7 +168,9 @@ def fetch_facts(
 ) -> dict[str, ReleaseFacts]:
     """Fetch facts for several versions of one package in parallel."""
     with Http(github_token=options.github_token) as http:
-        ctx = pypi.FetchContext(http=http, limits=options.limits, tags=github.TagLookup(http))
+        ctx = pypi.FetchContext(
+            http=http, limits=options.limits, tags=github.TagLookup(http, options.tags_then)
+        )
         with ThreadPoolExecutor(max_workers=max(1, len(versions))) as pool:
             futures = {
                 v: pool.submit(
@@ -225,7 +231,9 @@ def evaluate(
     if not changes:
         return []
     with Http(github_token=opts.github_token) as http:
-        ctx = pypi.FetchContext(http=http, limits=opts.limits, tags=github.TagLookup(http))
+        ctx = pypi.FetchContext(
+            http=http, limits=opts.limits, tags=github.TagLookup(http, opts.tags_then)
+        )
         cache: dict[tuple[str, str, bool], Future[ReleaseFacts]] = {}
         lock = threading.Lock()
         with ThreadPoolExecutor(max_workers=8) as pool:

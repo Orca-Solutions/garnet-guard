@@ -63,10 +63,11 @@ What Garnet Guard couldn't evaluate, said out loud instead of passed.
 
 Example findings marked as replays come from `uv run python -m backtest`, which runs
 Garnet Guard against real compromised releases listed in [backtest/incidents.toml](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml)
-and a corpus of clean updates. In the current replay, all three incident releases
-(lightning 2.6.2 and 2.6.3, elementary-data 0.23.3) got a `warn` from content and tag
-rules alone, and 0 of 20 clean updates got a `warn` from a detection rule. Other
-examples are illustrative and say so.
+and a corpus of clean updates. In the current replay, all seven incident releases
+(lightning 2.6.2 and 2.6.3, elementary-data 0.23.3, litellm 1.82.7 and 1.82.8, telnyx
+4.87.1 and 4.87.2) got a `warn` from content and tag rules alone, with git tags as they
+stood when each release was uploaded, and 0 of 20 clean updates got a `warn` from a
+detection rule. Other examples are illustrative and say so.
 
 ## Rule IDs and links
 
