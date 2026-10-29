@@ -7,17 +7,19 @@
 # Action's own directory with uv configuration discovery turned off.
 #
 # Writes these step outputs: verdict, exit-code, report-path, comment-path,
-# pr-number, no-changes. exit-code is garnet's (0, 1 or 2), or 3 when Garnet
-# Guard couldn't check the pull request. The script itself exits 0 once it
-# knows which pull request it is on, so the comment step can still run.
+# pr-number, no-changes, and with sarif on, sarif-path and sarif-upload.
+# exit-code is garnet's (0, 1 or 2), or 3 when Garnet Guard couldn't check the
+# pull request. The script itself exits 0 once it knows which pull request it
+# is on, so the comment step can still run.
 set -euo pipefail
 
 out="${RUNNER_TEMP:?}/garnet-guard"
 mkdir -p "$out"
 report="$out/report.json"
 comment="$out/comment.md"
+sarif="$out/garnet.sarif"
 # Never pick up a report from an earlier run in the same job.
-rm -f "$report" "$comment"
+rm -f "$report" "$comment" "$sarif"
 ws="${GITHUB_WORKSPACE:?}"
 run_url="${GITHUB_SERVER_URL:?}/${GITHUB_REPOSITORY:?}/actions/runs/${GITHUB_RUN_ID:?}"
 favicon="https://raw.githubusercontent.com/orca-solutions/garnet-guard/main/docs/brand/favicon/favicon-16.svg"
@@ -69,6 +71,7 @@ base="$(jq -r '.pull_request.base.sha // empty' "$event")"
 fail_on="${GARNET_FAIL_ON:-}"
 case "$fail_on" in ""|warn|block|never) ;; *) die "fail-on must be warn, block or never, not '$fail_on'." ;; esac
 case "${GARNET_FOOTER:-true}" in true|false) ;; *) die "footer must be true or false." ;; esac
+case "${GARNET_SARIF:-false}" in true|false) ;; *) die "sarif must be true or false." ;; esac
 
 # A repository-relative path with no '..' segments and no leading '/' or '-'.
 safe_path() {
@@ -187,6 +190,27 @@ render=("${garnet[@]}" python -I -m garnet_guard.markdown "$report" --output "$c
 [[ "${GARNET_FOOTER:-true}" == "false" ]] && render+=(--no-footer)
 (cd "$out" && "${render[@]}") || couldnt_check "Couldn't render the comment."
 cat "$comment" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+# --- SARIF for code scanning -------------------------------------------------
+# Rendered from the same JSON report. A pull request from a fork gets a
+# read-only token, so its upload would fail; the comment and job summary still
+# carry the report. A SARIF failure keeps the comment but fails the step.
+
+if [[ "${GARNET_SARIF:-false}" == "true" ]]; then
+  if (cd "$out" && "${garnet[@]}" python -I -m garnet_guard.sarif "$report" --output "$sarif"); then
+    output sarif-path "$sarif"
+    head_repo="$(jq -r '.pull_request.head.repo.full_name // empty' "$event")"
+    base_repo="$(jq -r '.pull_request.base.repo.full_name // empty' "$event")"
+    if [[ -n "$head_repo" && "$head_repo" == "$base_repo" ]]; then
+      output sarif-upload true
+    else
+      echo "::notice title=Garnet Guard::This pull request comes from a fork, so its token can't upload SARIF. The findings are in the comment and the job summary."
+    fi
+  else
+    echo "::error title=Garnet Guard::Couldn't render the SARIF report, so nothing was uploaded to code scanning."
+    code=3
+  fi
+fi
 
 output verdict "$verdict"
 output exit-code "$code"

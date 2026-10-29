@@ -243,6 +243,68 @@ def test_bad_fail_on_is_refused(env: dict[str, str]) -> None:
     assert _run("action/run.sh", env).returncode == 3
 
 
+def test_sarif_is_off_by_default(env: dict[str, str]) -> None:
+    assert _run("action/run.sh", env).returncode == 0
+    out = _outputs(env)
+    assert "sarif-path" not in out and "sarif-upload" not in out
+    assert "garnet_guard.sarif" not in Path(env["STUB_LOG"]).read_text()
+
+
+def _sarif_env(env: dict[str, str], tmp_path: Path, head_repo: str) -> dict[str, str]:
+    report = tmp_path / "located.json"
+    doc = json.loads(json.dumps(REPORT))
+    doc["changes"][0] |= {"lockfile": "uv.lock", "line": 4}
+    report.write_text(json.dumps(doc))
+    event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text())
+    event["pull_request"] |= {
+        "head": {"repo": {"full_name": head_repo}},
+        "base": event["pull_request"]["base"] | {"repo": {"full_name": "o/r"}},
+    }
+    Path(env["GITHUB_EVENT_PATH"]).write_text(json.dumps(event))
+    return env | {"GARNET_SARIF": "true", "STUB_REPORT": str(report)}
+
+
+def test_sarif_is_rendered_for_upload(env: dict[str, str], tmp_path: Path) -> None:
+    env = _sarif_env(env, tmp_path, "o/r")
+    proc = _run("action/run.sh", env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    out = _outputs(env)
+    assert out["sarif-upload"] == "true" and out["exit-code"] == "1"
+    log = json.loads(Path(out["sarif-path"]).read_text())
+    (result,) = log["runs"][0]["results"]
+    assert result["ruleId"] == "GRN-T004" and result["level"] == "warning"
+    location = result["locations"][0]["physicalLocation"]
+    assert location["artifactLocation"]["uri"] == "uv.lock"
+    assert location["region"]["startLine"] == 4
+    assert "python -I -m garnet_guard.sarif" in Path(env["STUB_LOG"]).read_text()
+    assert "ran PR code" not in proc.stdout + proc.stderr
+
+
+def test_sarif_is_not_uploaded_from_forks(env: dict[str, str], tmp_path: Path) -> None:
+    env = _sarif_env(env, tmp_path, "fork-owner/r")
+    proc = _run("action/run.sh", env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    out = _outputs(env)
+    assert "sarif-upload" not in out and Path(out["sarif-path"]).exists()
+    assert "::notice title=Garnet Guard::This pull request comes from a fork" in proc.stdout
+
+
+def test_sarif_failure_keeps_the_comment_and_fails_the_step(env: dict[str, str]) -> None:
+    env |= {"GARNET_SARIF": "true"}  # the canned report has no lockfile to place findings on
+    proc = _run("action/run.sh", env)
+    assert proc.returncode == 0
+    out = _outputs(env)
+    assert out["exit-code"] == "3" and out["verdict"] == "warn"
+    assert "sarif-path" not in out
+    assert "1 of 1 update needs a look" in Path(out["comment-path"]).read_text()
+    assert "::error title=Garnet Guard::Couldn't render the SARIF report" in proc.stdout
+
+
+def test_bad_sarif_input_is_refused(env: dict[str, str]) -> None:
+    env |= {"GARNET_SARIF": "yes"}
+    assert _run("action/run.sh", env).returncode == 3
+
+
 def test_fail_on_is_passed_through(env: dict[str, str]) -> None:
     env |= {"GARNET_FAIL_ON": "warn"}
     assert _run("action/run.sh", env).returncode == 0

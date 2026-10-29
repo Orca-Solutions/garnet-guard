@@ -18,6 +18,7 @@ from .lockfiles import LockfileError
 from .models import Change, Policy, Severity
 from .policy import PolicyError, describe, expired_ignores, load_policy
 from .report import escape, to_json, to_text
+from .sarif import to_sarif
 from .workspace import Unchecked, changes_for, dedupe, discover, git_show, plain_file
 
 _FAIL_ON = {"warn": Severity.WARN, "block": Severity.BLOCK, "never": Severity.OFF}
@@ -69,7 +70,7 @@ def _parser() -> argparse.ArgumentParser:
         "--format",
         choices=("text", "json", "sarif", "markdown"),
         default="text",
-        help="report format (default: text; sarif isn't supported in this preview yet)",
+        help="report format (default: text)",
     )
     c.add_argument(
         "--output", metavar="PATH", help="write the report to this file instead of stdout"
@@ -192,8 +193,6 @@ def _check(args: argparse.Namespace) -> int:
     """``garnet check``: every dependency change between two lockfiles."""
     if args.offline or args.cache_dir:
         raise _not_yet("--offline/--cache-dir")
-    if args.format == "sarif":
-        raise _not_yet("--format sarif")
     if args.base and args.git_base:
         raise UsageError("use --base or --git-base, not both")
     if not args.base and not args.git_base:
@@ -232,6 +231,8 @@ def _check(args: argparse.Namespace) -> int:
         out = to_json(rep)
     elif args.format == "markdown":
         out = _markdown(rep)
+    elif args.format == "sarif":
+        out = to_sarif(rep)
     else:
         out = to_text(rep, color=args.output is None and sys.stdout.isatty())
     if args.output:
