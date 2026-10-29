@@ -20,10 +20,10 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from .checks.docs import rule_url
+
 MARKER = "<!-- garnet:report -->"
-REPO_URL = "https://github.com/orca-solutions/garnet-guard"
-RULES_URL = f"{REPO_URL}/blob/main/docs/rules/"
-WHAT_URL = f"{REPO_URL}#readme"
+WHAT_URL = "https://garnetguard.dev/"
 FAVICON_URL = (
     "https://raw.githubusercontent.com/orca-solutions/garnet-guard/main/"
     "docs/brand/favicon/favicon-16.svg"
@@ -95,7 +95,7 @@ def code(value: object, *, in_table: bool = False) -> str:
 
 
 def rule_link(rule_id: str) -> str:
-    return f"[`{rule_id}`]({RULES_URL}{rule_id}.md)"
+    return f"[`{rule_id}`]({rule_url(rule_id)})"
 
 
 def _rule(value: object) -> str | None:
@@ -201,7 +201,7 @@ def _header(flagged: int, total: int) -> str:
 
 def _footer(cited: Sequence[str]) -> str:
     links = [f"[what is this?]({WHAT_URL})"]
-    links += [f"[{r}]({RULES_URL}{r}.md)" for r in cited]
+    links += [f"[{r}]({rule_url(r)})" for r in cited]
     return "<sub>Garnet Guard · " + " · ".join(links) + "</sub>"
 
 

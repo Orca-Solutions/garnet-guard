@@ -71,6 +71,7 @@ examples are illustrative and say so.
 ## Rule IDs and links
 
 Rule IDs are permanent: a rule is never renumbered and an ID is never reused. Each page
-lives at `docs/rules/<ID>.md`. Its stable link, for findings, `garnet explain` and the PR
-comment, is `https://github.com/orca-solutions/garnet-guard/blob/main/docs/rules/<ID>.md`.
-When the project has a docs domain, the same files will be served at `/rules/<ID>` there.
+lives at `docs/rules/<ID>.md`, and the website serves it at `https://garnetguard.dev/rules/<ID>`.
+That address is the stable link for findings, `garnet explain` and the PR comment. The site
+is built from a pinned commit of this repository, so an edit here appears there once the
+site's pin is moved forward.

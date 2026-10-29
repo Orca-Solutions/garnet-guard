@@ -25,7 +25,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 REPORT = {
-    "schema": "https://garnet.dev/schema/report/v1.json",
+    "schema": "https://garnetguard.dev/schema/report/v1.json",
     "garnet_version": "0.1.0.dev0",
     "verdict": "warn",
     "policy": None,

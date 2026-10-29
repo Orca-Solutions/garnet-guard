@@ -119,7 +119,7 @@ def to_json(report: Report) -> str:
             "expired": [_ignore(i) for i in report.expired],
         }
     doc = {
-        "schema": "https://garnet.dev/schema/report/v1.json",
+        "schema": "https://garnetguard.dev/schema/report/v1.json",
         "garnet_version": report.garnet_version,
         "verdict": report.verdict.value,
         "policy": policy,

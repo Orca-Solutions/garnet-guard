@@ -16,7 +16,7 @@ def test_explain(capsys) -> None:
     assert main(["explain", "GRN-C003"]) == 0
     out = capsys.readouterr().out
     assert "new-import-time-exec" in out and "subprocess.*" in out
-    assert "docs/rules/GRN-C003.md" in out
+    assert "https://garnetguard.dev/rules/GRN-C003" in out
     assert main(["explain", "GRN-X999"]) == 3
 
 
@@ -29,7 +29,7 @@ def test_json_is_deterministic() -> None:
     r = report([run_checks(change, release("1.0"), release("1.1", provenance="none", tag=False))])
     assert to_json(r) == to_json(r)
     assert '"rule_id": "GRN-T001"' in to_json(r)
-    assert "/docs/rules/GRN-T001.md" in to_json(r)
+    assert "https://garnetguard.dev/rules/GRN-T001" in to_json(r)
     assert "GRN-T004" in to_text(r)
     assert r.exit_code(fail_on=__import__("garnet_guard").Severity.WARN) == 1
 

@@ -69,7 +69,7 @@ def test_report_is_valid_sarif_and_follows_the_spec() -> None:
         assert loc["region"] == {"startLine": 7}
     t004 = driver["rules"][sorted(DOCS).index("GRN-T004")]
     assert t004["defaultConfiguration"] == {"level": "warning"}
-    assert t004["helpUri"].endswith("/docs/rules/GRN-T004.md")
+    assert t004["helpUri"] == "https://garnetguard.dev/rules/GRN-T004"
     assert "trust" in t004["properties"]["tags"]
 
 
