@@ -16,7 +16,7 @@ def test_explain(capsys) -> None:
     assert main(["explain", "GRN-C003"]) == 0
     out = capsys.readouterr().out
     assert "new-import-time-exec" in out and "subprocess.*" in out
-    assert "docs/rules/GRN-C003.md" in out
+    assert "https://garnetguard.dev/rules/GRN-C003" in out
     assert main(["explain", "GRN-X999"]) == 3
 
 
@@ -29,7 +29,7 @@ def test_json_is_deterministic() -> None:
     r = report([run_checks(change, release("1.0"), release("1.1", provenance="none", tag=False))])
     assert to_json(r) == to_json(r)
     assert '"rule_id": "GRN-T001"' in to_json(r)
-    assert "/docs/rules/GRN-T001.md" in to_json(r)
+    assert "https://garnetguard.dev/rules/GRN-T001" in to_json(r)
     assert "GRN-T004" in to_text(r)
     assert r.exit_code(fail_on=__import__("garnet_guard").Severity.WARN) == 1
 
@@ -44,7 +44,7 @@ def test_check_end_to_end_without_network(tmp_path, monkeypatch, capsys) -> None
     base.write_text("demo==1.0\n")
     head.write_text("demo==1.1\nflask>=3\n")
 
-    def fake_evaluate(changes, *, options=None):
+    def fake_evaluate(changes, *, policy=None, options=None):
         assert [(c.package, c.baseline, c.candidate) for c in changes] == [("demo", "1.0", "1.1")]
         return [run_checks(changes[0], release("1.0"), release("1.1", provenance="none"))]
 
@@ -70,8 +70,11 @@ def test_check_usage_errors(tmp_path, monkeypatch) -> None:
     assert main(["check"]) == 3  # no base
     assert main(["check", "--git-base", "HEAD"]) == 3  # no lockfiles, no repo
     (tmp_path / "a.txt").write_text("x==1\n")
-    assert main(["check", "--base", "a.txt", "--head", "a.txt", "--format", "sarif"]) == 3
-    assert main(["check", "--base", "a.txt", "--head", "a.txt", "--policy", "p.toml"]) == 3
+    assert (
+        main(["check", "--base", "a.txt", "--head", "a.txt", "--policy", "p.toml"]) == 3
+    )  # missing
+    (tmp_path / "garnet.toml").write_text("[garnet]\nversion = 2\n")
+    assert main(["check", "--base", "a.txt", "--head", "a.txt"]) == 3  # invalid, found here
 
 
 def test_check_refuses_symlinked_lockfile(tmp_path, monkeypatch, capsys) -> None:

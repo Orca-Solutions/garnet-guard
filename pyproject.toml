@@ -1,11 +1,27 @@
 [project]
 name = "garnet-guard"
-version = "0.1.0.dev0"
+version = "0.1.0a1"
 description = "Release-diff guard: flags trust and content changes between two releases of a dependency"
+readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Garnet contributors" }]
 requires-python = ">=3.11"
+keywords = ["supply-chain", "security", "dependencies", "provenance", "dependabot", "renovate"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
 dependencies = [
     "httpx>=0.28.1",
     "packaging>=26.3",
@@ -20,14 +36,23 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "import-linter>=2.15",
+    "jsonschema>=4",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "respx>=0.23.1",
     "ruff>=0.17.0",
 ]
 
+[project.urls]
+Homepage = "https://garnetguard.dev/"
+Rules = "https://garnetguard.dev/rules/"
+Source = "https://github.com/orca-solutions/garnet-guard"
+Issues = "https://github.com/orca-solutions/garnet-guard/issues"
+Changelog = "https://github.com/orca-solutions/garnet-guard/blob/main/CHANGELOG.md"
+
 [project.scripts]
 garnet = "garnet_guard.cli:main"
+garnet-guard = "garnet_guard.cli:main" # so `uvx garnet-guard` works (ADR-0007)
 
 [tool.ruff]
 line-length = 100
@@ -72,6 +97,20 @@ forbidden_modules = [
     "garnet_guard.safe_archive",
     "garnet_guard.report",
     "garnet_guard.cli",
+    "garnet_guard.policy",
+]
+
+[[tool.importlinter.contracts]]
+name = "policy reads only its file: no network, ecosystems, archives or engine"
+type = "forbidden"
+source_modules = ["garnet_guard.policy"]
+forbidden_modules = [
+    "garnet_guard.net",
+    "garnet_guard.ecosystems",
+    "garnet_guard.safe_archive",
+    "garnet_guard.facts",
+    "garnet_guard.engine",
+    "httpx",
 ]
 
 [[tool.importlinter.contracts]]
@@ -104,6 +143,7 @@ source_modules = [
     "garnet_guard.report",
     "garnet_guard.cli",
     "garnet_guard.safe_archive",
+    "garnet_guard.policy",
 ]
 forbidden_modules = ["httpx"]
 allow_indirect_imports = true

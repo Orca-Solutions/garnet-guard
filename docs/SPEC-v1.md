@@ -206,7 +206,7 @@ Human-readable, grouped by change, worst first. Colors only on a TTY. All packag
 
 ```json
 {
-  "schema": "https://garnet.dev/schema/report/v1.json",
+  "schema": "https://garnetguard.dev/schema/report/v1.json",
   "garnet_version": "1.0.0",
   "verdict": "warn",
   "policy": {"source": "garnet.toml", "sha256": "…"},
@@ -223,7 +223,7 @@ Human-readable, grouped by change, worst first. Colors only on a TTY. All packag
 }
 ```
 
-The schema is published with each release. Within 1.x, fields may be added but not removed or retyped. (The schema URL host is a placeholder until the project domain is chosen.)
+The schema is published with each release. Within 1.x, fields may be added but not removed or retyped. (The URL names the schema; garnetguard.dev doesn't serve the file yet.)
 
 ### 9.3 SARIF
 

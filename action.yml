@@ -20,9 +20,24 @@ inputs:
   footer:
     description: End the comment with a line linking to Garnet Guard's rule docs. Set to false to remove it.
     default: "true"
+  policy:
+    description: >-
+      Path of the policy file, relative to the repository root. "auto" reads
+      garnet.toml, else [tool.garnet] in pyproject.toml. The policy is always read
+      from the pull request's base commit, so a pull request can't relax the policy
+      it is checked with.
+    default: auto
+  sarif:
+    description: >-
+      Upload the findings to GitHub code scanning as SARIF, so they show on the
+      pull request's changed lockfile lines and in the Security tab. Needs the
+      security-events: write permission. Skipped for pull requests from forks.
+    default: "false"
   fail-on:
-    description: Fail the step at this verdict or worse. One of warn, block, never.
-    default: block
+    description: >-
+      Fail the step at this verdict or worse. One of warn, block, never. Empty means
+      the policy's fail_on, else block.
+    default: ""
   github-token:
     description: >-
       Token for reading the base commit, looking up release tags and posting the
@@ -39,6 +54,9 @@ outputs:
   comment-path:
     description: Path of the rendered pull request comment (Markdown).
     value: ${{ steps.check.outputs.comment-path }}
+  sarif-path:
+    description: Path of the SARIF report (SPEC §9.3). Empty unless sarif is true.
+    value: ${{ steps.check.outputs.sarif-path }}
 
 runs:
   using: composite
@@ -56,7 +74,9 @@ runs:
       env:
         GARNET_ACTION_PATH: ${{ github.action_path }}
         GARNET_LOCKFILES: ${{ inputs.lockfiles }}
+        GARNET_POLICY: ${{ inputs.policy }}
         GARNET_FOOTER: ${{ inputs.footer }}
+        GARNET_SARIF: ${{ inputs.sarif }}
         GARNET_FAIL_ON: ${{ inputs.fail-on }}
         GARNET_GITHUB_TOKEN: ${{ inputs.github-token }}
       run: bash "$GARNET_ACTION_PATH/action/run.sh"
@@ -71,6 +91,14 @@ runs:
         GARNET_UPDATE_ONLY: ${{ steps.check.outputs.no-changes }}
         GH_TOKEN: ${{ inputs.github-token }}
       run: bash "$GARNET_ACTION_PATH/action/post-comment.sh"
+
+    - name: Upload SARIF to code scanning
+      if: ${{ always() && steps.check.outputs.sarif-upload == 'true' }}
+      uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+      with:
+        sarif_file: ${{ steps.check.outputs.sarif-path }}
+        category: garnet-guard
+        token: ${{ inputs.github-token }}
 
     - name: Apply fail-on
       if: ${{ always() }}

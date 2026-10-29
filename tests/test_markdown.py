@@ -50,7 +50,7 @@ def test_comment_follows_the_design() -> None:
     assert lines[1].endswith("**Garnet Guard: 1 of 3 updates needs a look**")
     assert "> [!WARNING]" in out and "[!CAUTION]" not in out
     assert "> **`examplelib` `2.6.1` → `2.6.2`**" in out
-    assert f"> - [`GRN-T004`]({md.RULES_URL}GRN-T004.md) github\\.com/" in out
+    assert "> - [`GRN-T004`](https://garnetguard.dev/rules/GRN-T004) github\\.com/" in out
     assert "<details><summary>2 updates with nothing worth a look</summary>" in out
     assert out.index("`idna`") < out.index("`requests`")
     assert lines[-1].startswith("<sub>Garnet Guard · [what is this?]")
@@ -140,7 +140,7 @@ def test_package_strings_cannot_inject(hostile: str) -> None:
     out = md.render(doc)
     body = out.split("\n", 2)[2]  # skip marker and header, which carry no package text
     body = body.rsplit("\n<sub>", 1)[0]
-    body = re.sub(re.escape(md.RULES_URL) + r"GRN-[A-Z]\d{3}\.md", "RULE", body)
+    body = re.sub(r"https://garnetguard\.dev/rules/GRN-[A-Z]\d{3}", "RULE", body)
     # Code spans render literally; everything outside them must be inert.
     prose = re.sub(r"(`+).*?\1", "", body)
     assert "<img" not in prose and "<sub" not in prose

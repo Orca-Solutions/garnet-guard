@@ -7,17 +7,19 @@
 # Action's own directory with uv configuration discovery turned off.
 #
 # Writes these step outputs: verdict, exit-code, report-path, comment-path,
-# pr-number, no-changes. exit-code is garnet's (0, 1 or 2), or 3 when Garnet
-# Guard couldn't check the pull request. The script itself exits 0 once it
-# knows which pull request it is on, so the comment step can still run.
+# pr-number, no-changes, and with sarif on, sarif-path and sarif-upload.
+# exit-code is garnet's (0, 1 or 2), or 3 when Garnet Guard couldn't check the
+# pull request. The script itself exits 0 once it knows which pull request it
+# is on, so the comment step can still run.
 set -euo pipefail
 
 out="${RUNNER_TEMP:?}/garnet-guard"
 mkdir -p "$out"
 report="$out/report.json"
 comment="$out/comment.md"
+sarif="$out/garnet.sarif"
 # Never pick up a report from an earlier run in the same job.
-rm -f "$report" "$comment"
+rm -f "$report" "$comment" "$sarif"
 ws="${GITHUB_WORKSPACE:?}"
 run_url="${GITHUB_SERVER_URL:?}/${GITHUB_REPOSITORY:?}/actions/runs/${GITHUB_RUN_ID:?}"
 favicon="https://raw.githubusercontent.com/orca-solutions/garnet-guard/main/docs/brand/favicon/favicon-16.svg"
@@ -66,9 +68,10 @@ base="$(jq -r '.pull_request.base.sha // empty' "$event")"
 [[ "$pr" =~ ^[0-9]+$ ]] || die "The event has no pull request number."
 [[ "$base" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] || die "The event has no base commit."
 
-fail_on="${GARNET_FAIL_ON:-block}"
-case "$fail_on" in warn|block|never) ;; *) die "fail-on must be warn, block or never, not '$fail_on'." ;; esac
+fail_on="${GARNET_FAIL_ON:-}"
+case "$fail_on" in ""|warn|block|never) ;; *) die "fail-on must be warn, block or never, not '$fail_on'." ;; esac
 case "${GARNET_FOOTER:-true}" in true|false) ;; *) die "footer must be true or false." ;; esac
+case "${GARNET_SARIF:-false}" in true|false) ;; *) die "sarif must be true or false." ;; esac
 
 # A repository-relative path with no '..' segments and no leading '/' or '-'.
 safe_path() {
@@ -96,14 +99,41 @@ if ! git -C "$ws" cat-file -e "$base^{commit}" 2> /dev/null; then
 fi
 
 # --- Policy -----------------------------------------------------------------
-# garnet check doesn't read a policy in this preview, so there is no policy
-# input yet. When it does, read the policy from the base commit and always pass
-# --policy, so a pull request can't relax its own policy.
+# The policy comes from the base commit, never from the pull request's
+# checkout, so a pull request can't relax or remove the policy it is checked
+# with. A change to the policy applies to later pull requests once it is
+# merged. With no policy at the base commit, garnet runs with --no-policy, so
+# a garnet.toml added by the pull request is not read either.
+
+policy_dir="$out/policy"
+rm -rf "$policy_dir"
+mkdir -p "$policy_dir"
+policy_args=(--no-policy)
+read_policy() {
+  git -C "$ws" show "$base:$1" > "$policy_dir/$(basename "$1")" \
+    || couldnt_check "Couldn't read the policy file $1 from the base commit."
+  policy_args=(--policy "$policy_dir/$(basename "$1")")
+}
+case "${GARNET_POLICY:-auto}" in
+  auto)
+    for name in garnet.toml pyproject.toml; do
+      if git -C "$ws" cat-file -e "$base:$name" 2> /dev/null; then
+        read_policy "$name"
+        break
+      fi
+    done ;;
+  *)
+    safe_path "$GARNET_POLICY" || couldnt_check "policy must be a path inside the repository."
+    git -C "$ws" cat-file -e "$base:$GARNET_POLICY" 2> /dev/null \
+      || couldnt_check "The policy file $GARNET_POLICY isn't in the base commit, so nothing was checked."
+    read_policy "$GARNET_POLICY" ;;
+esac
 
 # --- Run garnet check ------------------------------------------------------
 
 args=(check --git-base "$base" --format json --output "$report"
-      --fail-on "$fail_on" --github-token-env GARNET_GITHUB_TOKEN)
+      --github-token-env GARNET_GITHUB_TOKEN "${policy_args[@]}")
+[[ -n "$fail_on" ]] && args+=(--fail-on "$fail_on")
 heads=()
 if [[ "${GARNET_LOCKFILES:-auto}" != "auto" ]]; then
   while IFS= read -r line; do
@@ -160,6 +190,27 @@ render=("${garnet[@]}" python -I -m garnet_guard.markdown "$report" --output "$c
 [[ "${GARNET_FOOTER:-true}" == "false" ]] && render+=(--no-footer)
 (cd "$out" && "${render[@]}") || couldnt_check "Couldn't render the comment."
 cat "$comment" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+# --- SARIF for code scanning -------------------------------------------------
+# Rendered from the same JSON report. A pull request from a fork gets a
+# read-only token, so its upload would fail; the comment and job summary still
+# carry the report. A SARIF failure keeps the comment but fails the step.
+
+if [[ "${GARNET_SARIF:-false}" == "true" ]]; then
+  if (cd "$out" && "${garnet[@]}" python -I -m garnet_guard.sarif "$report" --output "$sarif"); then
+    output sarif-path "$sarif"
+    head_repo="$(jq -r '.pull_request.head.repo.full_name // empty' "$event")"
+    base_repo="$(jq -r '.pull_request.base.repo.full_name // empty' "$event")"
+    if [[ -n "$head_repo" && "$head_repo" == "$base_repo" ]]; then
+      output sarif-upload true
+    else
+      echo "::notice title=Garnet Guard::This pull request comes from a fork, so its token can't upload SARIF. The findings are in the comment and the job summary."
+    fi
+  else
+    echo "::error title=Garnet Guard::Couldn't render the SARIF report, so nothing was uploaded to code scanning."
+    code=3
+  fi
+fi
 
 output verdict "$verdict"
 output exit-code "$code"

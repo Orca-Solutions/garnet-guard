@@ -1,14 +1,16 @@
-"""Orchestration: fetch facts, run checks, apply default severities."""
+"""Orchestration: fetch facts, run checks, apply the policy."""
 
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from . import __version__
+from . import policy as pol
 from .checks import ALL_CHECKS, DOCS
 from .checks.docs import rule_url
 from .ecosystems import github, npm, pypi
@@ -17,7 +19,9 @@ from .models import (
     ChangeResult,
     Evidence,
     Finding,
+    Ignore,
     Limits,
+    Policy,
     RawFinding,
     ReleaseFacts,
     Severity,
@@ -39,6 +43,8 @@ class Options:
     # OSV is queried for the candidate only. The backtest turns it off so
     # results show what Garnet catches before any feed lists a release.
     check_known_bad: bool = True
+    # The day ignores expire against. None means today in UTC.
+    today: date | None = None
 
 
 ECOSYSTEMS = ("pypi", "npm")
@@ -94,21 +100,50 @@ class Report:
     garnet_version: str
     verdict: Verdict
     results: tuple[ChangeResult, ...]
+    policy: Policy = field(default_factory=Policy)
+    expired: tuple[Ignore, ...] = ()  # ignores past their until date
 
     def exit_code(self, fail_on: Severity) -> int:
         """0 below ``fail_on``, else 1 for warn and 2 for block (SPEC §8).
 
-        ``info`` never fails a run. Exit code 3 (Garnet itself failed) is the
-        CLI's to return.
+        ``info`` and suppressed findings never fail a run. Exit code 3 (Garnet
+        itself failed) is the CLI's to return.
         """
-        worst = max((f.severity for r in self.results for f in r.findings), default=Severity.OFF)
+        worst = _worst(f for r in self.results for f in r.findings)
         if fail_on == Severity.OFF or worst < fail_on or worst < Severity.WARN:
             return 0
         return 2 if worst >= Severity.BLOCK else 1
 
 
-def run_checks(change: Change, base: ReleaseFacts | None, cand: ReleaseFacts) -> ChangeResult:
-    """Pure: facts in, findings out. Used by the engine, the backtest and tests."""
+def _utc_today() -> date:
+    return datetime.now(UTC).date()
+
+
+def _lowest(a: Limits, b: Limits) -> Limits:
+    """Each limit at the lower of two settings (a policy may only lower them)."""
+    return replace(a, **{f.name: min(getattr(a, f.name), getattr(b, f.name)) for f in fields(a)})
+
+
+def _worst(findings: Iterable[Finding]) -> Severity:
+    """The highest severity among findings no ignore suppressed (SPEC §8)."""
+    return max((f.severity for f in findings if f.suppressed_by is None), default=Severity.OFF)
+
+
+def run_checks(
+    change: Change,
+    base: ReleaseFacts | None,
+    cand: ReleaseFacts,
+    *,
+    policy: Policy | None = None,
+    today: date | None = None,
+) -> ChangeResult:
+    """Pure: facts in, findings out. Used by the engine, the backtest and tests.
+
+    ``policy`` sets severities and suppresses ignored findings; rules set to
+    "off" are left out. Ignores expire against ``today`` (default: UTC today).
+    """
+    policy = policy or Policy()
+    day = today or _utc_today()
     raws: list[RawFinding] = []
     for _rule, fn, ecos in ALL_CHECKS:
         if change.ecosystem in ecos:
@@ -128,19 +163,34 @@ def run_checks(change: Change, base: ReleaseFacts | None, cand: ReleaseFacts) ->
                     release=rel.version if rel is base else None,
                 )
             )
+    found = {_finding(change, r, policy, day) for r in raws}
     findings = sorted(
-        {_finding(change, r) for r in raws},
-        key=lambda f: (-int(f.severity), f.rule_id, f.release or "", f.title),
+        (f for f in found if f.severity > Severity.OFF),
+        key=lambda f: (
+            f.suppressed_by is not None,
+            -int(f.severity),
+            f.rule_id,
+            f.release or "",
+            f.title,
+        ),
     )
-    worst = max((f.severity for f in findings), default=Severity.OFF)
-    return ChangeResult(change, Verdict.from_severity(worst), tuple(findings))
+    return ChangeResult(change, Verdict.from_severity(_worst(findings)), tuple(findings))
 
 
-def _finding(change: Change, raw: RawFinding) -> Finding:
+def _finding(change: Change, raw: RawFinding, policy: Policy, today: date) -> Finding:
     doc = DOCS[raw.rule_id]
-    severity = doc.default
-    if raw.lowered_to is not None and raw.lowered_to < doc.default:
+    severity = pol.severity_for(policy, doc)
+    if raw.lowered_to is not None and raw.lowered_to < severity:
         severity = raw.lowered_to
+    ignore, expired = pol.suppression(policy, raw.rule_id, change, today)
+    evidence = raw.evidence + tuple(
+        Evidence(
+            "note",
+            f"an ignore for this expired on {e.until.isoformat()} and no longer applies "
+            f"(reason given: {e.reason})",
+        )
+        for e in expired
+    )
     return Finding(
         rule_id=raw.rule_id,
         name=doc.name,
@@ -148,11 +198,12 @@ def _finding(change: Change, raw: RawFinding) -> Finding:
         default_severity=doc.default,
         change=change,
         title=raw.title,
-        evidence=raw.evidence,
+        evidence=evidence,
         explanation=doc.explanation,
         remediation=doc.remediation,
         release=raw.release,
         docs_url=rule_url(raw.rule_id),
+        suppressed_by=ignore,
     )
 
 
@@ -186,6 +237,7 @@ def compare(
     baseline: str | None,
     candidate: str,
     *,
+    policy: Policy | None = None,
     options: Options | None = None,
 ) -> ChangeResult:
     """Compare two releases of one package (``garnet diff``).
@@ -193,17 +245,29 @@ def compare(
     Fetches both releases, so it needs the network. Problems fetching or
     reading them come back as GRN-E findings, not exceptions.
     """
+    policy = policy or Policy()
     opts = options or Options()
+    opts = replace(opts, limits=_lowest(opts.limits, policy.limits))
     name = normalize(ecosystem, package)
     versions = [candidate] + ([baseline] if baseline else [])
     facts = fetch_facts(name, versions, opts, candidate=candidate, ecosystem=ecosystem)
     change = Change(ecosystem, name, baseline, candidate)
-    return run_checks(change, facts.get(baseline) if baseline else None, facts[candidate])
+    return run_checks(
+        change,
+        facts.get(baseline) if baseline else None,
+        facts[candidate],
+        policy=policy,
+        today=opts.today,
+    )
 
 
-def evaluate(changes: list[Change], *, options: Options | None = None) -> list[ChangeResult]:
+def evaluate(
+    changes: list[Change], *, policy: Policy | None = None, options: Options | None = None
+) -> list[ChangeResult]:
     """Check many changes with one HTTP client, fetching each release once."""
+    policy = policy or Policy()
     opts = options or Options()
+    opts = replace(opts, limits=_lowest(opts.limits, policy.limits))
     for c in changes:
         if c.ecosystem not in ECOSYSTEMS:
             raise ValueError(f"unsupported ecosystem: {c.ecosystem!r} (supported: pypi, npm)")
@@ -235,12 +299,25 @@ def evaluate(changes: list[Change], *, options: Options | None = None) -> list[C
                 base = facts(c.ecosystem, c.package, c.baseline, False) if c.baseline else None
                 pending.append((c, base, cand))
             return [
-                run_checks(c, base.result() if base else None, cand.result())
+                run_checks(
+                    c,
+                    base.result() if base else None,
+                    cand.result(),
+                    policy=policy,
+                    today=opts.today,
+                )
                 for c, base, cand in pending
             ]
 
 
-def unchecked_result(change: Change, rule_id: str, detail: str) -> ChangeResult:
+def unchecked_result(
+    change: Change,
+    rule_id: str,
+    detail: str,
+    *,
+    policy: Policy | None = None,
+    today: date | None = None,
+) -> ChangeResult:
     """A change Garnet didn't evaluate (GRN-E004 / GRN-E005): reported, never passed."""
     where = f"{change.lockfile}:{change.line}" if change.lockfile and change.line else None
     raw = RawFinding(
@@ -248,8 +325,8 @@ def unchecked_result(change: Change, rule_id: str, detail: str) -> ChangeResult:
         f"{change.package} was not checked: {detail}",
         (Evidence("file", detail, path=change.lockfile, line=change.line),) if where else (),
     )
-    finding = _finding(change, raw)
-    return ChangeResult(change, Verdict.from_severity(finding.severity), (finding,))
+    finding = _finding(change, raw, policy or Policy(), today or _utc_today())
+    return ChangeResult(change, Verdict.from_severity(_worst([finding])), (finding,))
 
 
 def diff_lockfiles(
@@ -264,15 +341,18 @@ def diff_lockfiles(
     return changes_for(head_name, head_data, base_data)[0]
 
 
-def report(results: list[ChangeResult]) -> Report:
-    """Collect results into a ``Report``, worst change first, with the overall verdict."""
-    worst = max((f.severity for r in results for f in r.findings), default=Severity.OFF)
+def report(
+    results: list[ChangeResult], *, policy: Policy | None = None, today: date | None = None
+) -> Report:
+    """Collect results into a ``Report``, worst change first, with the overall verdict.
+
+    With a ``policy``, the report names it and lists its expired ignores.
+    """
+    policy = policy or Policy()
+    worst = _worst(f for r in results for f in r.findings)
     ordered = sorted(
         results,
-        key=lambda r: (
-            -max((int(f.severity) for f in r.findings), default=0),
-            r.change.package,
-            r.change.candidate,
-        ),
+        key=lambda r: (-int(_worst(r.findings)), r.change.package, r.change.candidate),
     )
-    return Report(__version__, Verdict.from_severity(worst), tuple(ordered))
+    expired = pol.expired_ignores(policy, today or _utc_today())
+    return Report(__version__, Verdict.from_severity(worst), tuple(ordered), policy, expired)

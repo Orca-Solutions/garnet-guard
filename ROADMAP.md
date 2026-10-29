@@ -43,7 +43,7 @@ Launch means the replay write-up plus a working GitHub Action. The bar doesn't m
 
 - [ ] GitHub Action with a sticky PR comment and optional SARIF upload
 - [ ] Verify Dependabot token behavior; ship single-job and two-workflow examples
-- [ ] Policy file with expiring ignores (SPEC §7)
+- [x] Policy file with expiring ignores (SPEC §7)
 - [ ] Dogfood on Garnet's own repo and 5–10 friendly repos (outreach Draft B)
 - [ ] Opt-in interest list link in the README (not telemetry)
 - [ ] Docs site: quickstart, one page per rule, policy guide, comparison page
