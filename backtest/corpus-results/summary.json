@@ -1,25 +1,25 @@
 {
   "updates": 974,
   "packages": 100,
-  "updates_warned": 17,
-  "warn_rate": 0.0175,
-  "packages_with_a_warn": 16,
+  "updates_warned": 12,
+  "warn_rate": 0.0123,
+  "packages_with_a_warn": 12,
   "warns_by_rule": {
-    "GRN-C003": {
-      "updates": 7,
-      "packages": 6
-    },
     "GRN-C002": {
       "updates": 5,
       "packages": 5
+    },
+    "GRN-C003": {
+      "updates": 3,
+      "packages": 3
     },
     "GRN-T001": {
       "updates": 3,
       "packages": 3
     },
     "GRN-T004": {
-      "updates": 3,
-      "packages": 3
+      "updates": 1,
+      "packages": 1
     }
   },
   "updates_with_coverage_gaps": 33,
