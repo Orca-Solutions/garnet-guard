@@ -38,10 +38,9 @@ Dependabot pull requests get a read-only token by default. The `permissions` blo
 | `lockfiles` | `auto` | `auto` checks every lockfile Garnet Guard recognizes. Otherwise, give a newline-separated list of paths relative to the repository root. |
 | `comment` | `true` | Post or update one pull request comment. |
 | `footer` | `true` | End the comment with one line of links to Garnet Guard's docs. Set it to `false` to remove that line. The footer links only to documentation. |
+| `sarif` | `false` | Also upload the findings to GitHub code scanning (SPEC §9.3), so they show on the pull request's changed lockfile lines and in the repository's Security tab. Needs `security-events: write`. See [Code scanning](#code-scanning). |
 | `fail-on` | `block` | Fail the step at this verdict or worse: `warn`, `block` or `never`. |
 | `github-token` | `${{ github.token }}` | Used to fetch the base commit, look up release tags, and post the comment. |
-
-SARIF upload (`sarif:` in SPEC §10.2) arrives with the SARIF reporter.
 
 ## Outputs
 
@@ -50,6 +49,7 @@ SARIF upload (`sarif:` in SPEC §10.2) arrives with the SARIF reporter.
 | `verdict` | `pass`, `warn` or `block`. It is empty when Garnet Guard couldn't produce a report. |
 | `report-path` | The JSON report (SPEC §9.2). |
 | `comment-path` | The rendered comment (Markdown). |
+| `sarif-path` | The SARIF report (SPEC §9.3). Empty unless `sarif` is `true`. |
 
 ## What it does
 
@@ -62,6 +62,21 @@ SARIF upload (`sarif:` in SPEC §10.2) arrives with the SARIF reporter.
 7. It fails the step according to `fail-on`.
 
 If Garnet Guard itself fails, or a report is missing or invalid, the comment says it **couldn't check** the pull request and links to the run log, and the step fails (exit code 3). A failure is never reported as a pass.
+
+## Code scanning
+
+With `sarif: true`, the Action renders the same JSON report as SARIF 2.1.0 and uploads it with `github/codeql-action/upload-sarif` under the category `garnet-guard`. Each finding becomes a code scanning alert on the lockfile line that pins the new version, with the rule's `explain` text as its help, so it appears in the pull request's **Files changed** view, in the **Checks** tab and in the repository's **Security** tab. Severity maps `block` to `error`, `warn` to `warning` and `info` to `note`. The job needs one more permission:
+
+```yaml
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write  # upload the SARIF report
+```
+
+The comment stays the primary report. Code scanning needs to be available on the repository (it is on public repositories, and on private ones with GitHub Advanced Security). A pull request from a fork gets a read-only token that can't upload, so the Action skips the upload with a notice and the comment and job summary still carry the findings. If the SARIF report can't be rendered, the comment is still posted and the step fails: a missing upload is never a pass.
+
+The upload step is `github/codeql-action/upload-sarif`, pinned by commit SHA inside `action.yml`. The SARIF file is written to the runner's temporary directory; `python -m garnet_guard.sarif report.json` renders one from any JSON report.
 
 ## Pull requests from forks
 
@@ -84,7 +99,7 @@ The same holds for any pull request that edits the workflow file itself, for exa
 
 | Job | Permissions |
 |---|---|
-| Single workflow | `contents: read`, `pull-requests: write` |
+| Single workflow | `contents: read`, `pull-requests: write`, plus `security-events: write` with `sarif: true` |
 | Fork pattern, check job | `contents: read` |
 | Fork pattern, comment job | `actions: read`, `pull-requests: write` |
 

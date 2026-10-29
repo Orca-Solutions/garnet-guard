@@ -70,7 +70,6 @@ def test_check_usage_errors(tmp_path, monkeypatch) -> None:
     assert main(["check"]) == 3  # no base
     assert main(["check", "--git-base", "HEAD"]) == 3  # no lockfiles, no repo
     (tmp_path / "a.txt").write_text("x==1\n")
-    assert main(["check", "--base", "a.txt", "--head", "a.txt", "--format", "sarif"]) == 3
     assert main(["check", "--base", "a.txt", "--head", "a.txt", "--policy", "p.toml"]) == 3
 
 
