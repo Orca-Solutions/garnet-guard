@@ -1,6 +1,6 @@
 [project]
 name = "garnet-guard"
-version = "0.1.0.dev0"
+version = "0.1.0a1"
 description = "Release-diff guard: flags trust and content changes between two releases of a dependency"
 readme = "README.md"
 license = "Apache-2.0"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.0a1"
 
 from .engine import Options, Report, compare, report  # noqa: E402
 from .models import (  # noqa: E402
