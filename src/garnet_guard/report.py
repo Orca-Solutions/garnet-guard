@@ -90,7 +90,7 @@ def to_json(report: Report) -> str:
             }
         )
     doc = {
-        "schema": "https://garnet.dev/schema/report/v1.json",
+        "schema": "https://garnetguard.dev/schema/report/v1.json",
         "garnet_version": report.garnet_version,
         "verdict": report.verdict.value,
         "policy": None,
