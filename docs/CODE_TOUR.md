@@ -36,7 +36,7 @@ Every run goes through the same five stages, whichever command started it.
  3. Read the files          facts/                          → what each artifact contains
         (archives)            safe_archive.py: the only archive code
  4. Judge                   checks/                         → findings (no network, no files)
- 5. Write it up             engine.py, report.py, markdown.py → text, JSON, the PR comment
+ 5. Write it up             engine.py, report.py, markdown.py, sarif.py → text, JSON, the PR comment, SARIF
 ```
 
 1. **Find what changed.** `garnet check` reads the trusted lockfile and the updated one
@@ -61,8 +61,9 @@ Every run goes through the same five stages, whichever command started it.
    test can hand them made-up facts and know exactly what should come back.
 5. **Write it up.** `engine.py` gives each finding its rule's default severity, sorts the
    findings so the same input always gives the same report, and works out the verdict.
-   `report.py` writes terminal text or JSON, and `markdown.py` writes the pull request
-   comment for the GitHub Action.
+   `report.py` writes terminal text or JSON, `markdown.py` writes the pull request
+   comment for the GitHub Action, and `sarif.py` writes the report GitHub code scanning
+   reads for the Security tab.
 
 The CLI, the Action and the backtest all call the same engine functions: `compare()` for
 one package and `evaluate()` for many, both in `engine.py`. That is why the backtest's
@@ -82,8 +83,10 @@ results describe what users will see.
 | [`facts/`](../src/garnet_guard/facts/) | Describes what an archive contains, and what its Python code does at import time, without running it. |
 | [`models.py`](../src/garnet_guard/models.py) | The records passed between stages: `Change`, `ReleaseFacts`, `Finding` and the rest. All frozen, so no stage can change what an earlier one recorded. |
 | [`checks/`](../src/garnet_guard/checks/) | One small function per rule (`trust.py`, `content.py`, and K001 in `__init__.py`), plus `docs.py` with the text `garnet explain` prints. |
+| [`policy.py`](../src/garnet_guard/policy.py) | Reads `garnet.toml` (SPEC §7): rule severities, expiring ignores and lower limits. Strict on purpose: an unknown key or a missing reason is an error, not a default. |
 | [`report.py`](../src/garnet_guard/report.py) | Text and JSON output. Escapes package-supplied text before it reaches a terminal. |
 | [`markdown.py`](../src/garnet_guard/markdown.py) | The pull request comment. Treats the whole report as untrusted and escapes every string so a package can't add links, mentions or HTML. |
+| [`sarif.py`](../src/garnet_guard/sarif.py) | The SARIF report for GitHub code scanning, rendered from the JSON report the same way. Rule metadata comes from Garnet's own rule docs, never from the report. |
 
 Outside `src/`:
 

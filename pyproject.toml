@@ -35,6 +35,7 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "import-linter>=2.15",
+    "jsonschema>=4",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "respx>=0.23.1",
@@ -95,6 +96,20 @@ forbidden_modules = [
     "garnet_guard.safe_archive",
     "garnet_guard.report",
     "garnet_guard.cli",
+    "garnet_guard.policy",
+]
+
+[[tool.importlinter.contracts]]
+name = "policy reads only its file: no network, ecosystems, archives or engine"
+type = "forbidden"
+source_modules = ["garnet_guard.policy"]
+forbidden_modules = [
+    "garnet_guard.net",
+    "garnet_guard.ecosystems",
+    "garnet_guard.safe_archive",
+    "garnet_guard.facts",
+    "garnet_guard.engine",
+    "httpx",
 ]
 
 [[tool.importlinter.contracts]]
@@ -127,6 +142,7 @@ source_modules = [
     "garnet_guard.report",
     "garnet_guard.cli",
     "garnet_guard.safe_archive",
+    "garnet_guard.policy",
 ]
 forbidden_modules = ["httpx"]
 allow_indirect_imports = true

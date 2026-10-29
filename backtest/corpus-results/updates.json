@@ -1290,24 +1290,11 @@
     "baseline": "2025.11.12",
     "candidate": "2026.1.4",
     "coverage_gaps": [],
-    "findings": [
-      {
-        "evidence": [
-          "2025.11.12 \u2192 tag 2025.11.12 at 37ea150bee10958559f804f128de2fdd48e1ed45",
-          "2026.1.4: no tag named 2026.1.4, v2026.1.4, certifi-2026.1.4 or certifi-v2026.1.4"
-        ],
-        "release": null,
-        "rule": "GRN-T004",
-        "severity": "warn",
-        "title": "github.com/certifi/python-certifi has a tag for 2025.11.12 but none for 2026.1.4"
-      }
-    ],
+    "findings": [],
     "package": "certifi",
-    "verdict": "warn",
-    "warn_rules": [
-      "GRN-T004"
-    ],
-    "warned": true
+    "verdict": "pass",
+    "warn_rules": [],
+    "warned": false
   },
   {
     "baseline": "2026.1.4",
@@ -5109,30 +5096,11 @@
     "baseline": "26.1.2",
     "candidate": "26.2",
     "coverage_gaps": [],
-    "findings": [
-      {
-        "evidence": [
-          "pip/_vendor/platformdirs/windows.py:323 calls ctypes.WinDLL (in get_win_folder_via_ctypes(), reached at import)",
-          "pip/_vendor/platformdirs/windows.py:325 calls ctypes.POINTER (in get_win_folder_via_ctypes(), reached at import)",
-          "pip/_vendor/platformdirs/windows.py:329 calls ctypes.WinDLL (in get_win_folder_via_ctypes(), reached at import)",
-          "pip/_vendor/platformdirs/windows.py:331 calls ctypes.POINTER (in get_win_folder_via_ctypes(), reached at import)",
-          "pip/_vendor/platformdirs/windows.py:333 calls ctypes.WinDLL (in get_win_folder_via_ctypes(), reached at import)",
-          "pip/_vendor/platformdirs/windows.py:343 calls ctypes.byref (in get_win_folder_via_ctypes(), reached at import)",
-          "pip/_vendor/platformdirs/windows.py:345 calls ctypes.wintypes.LPWSTR (in get_win_folder_via_ctypes(), reached at import)",
-          "pip/_vendor/platformdirs/windows.py:346 calls ctypes.byref (in get_win_folder_via_ctypes(), reached at import)"
-        ],
-        "release": null,
-        "rule": "GRN-C003",
-        "severity": "warn",
-        "title": "26.2 adds import-time calls to sensitive APIs in 1 module(s)"
-      }
-    ],
+    "findings": [],
     "package": "pip",
-    "verdict": "warn",
-    "warn_rules": [
-      "GRN-C003"
-    ],
-    "warned": true
+    "verdict": "pass",
+    "warn_rules": [],
+    "warned": false
   },
   {
     "baseline": "26.2",
@@ -8281,7 +8249,7 @@
       {
         "evidence": [
           "2026.4.0 \u2192 tag 2026.4.0 at 35d9eb0566bf128267613d46761894dfd25482aa",
-          "2026.6.0: no tag named 2026.6.0, v2026.6.0, s3fs-2026.6.0 or s3fs-v2026.6.0"
+          "2026.6.0: no tag named 2026.6.0, v2026.6.0, s3fs-2026.6.0 or s3fs-v2026.6.0 in github.com/fsspec/s3fs"
         ],
         "release": null,
         "rule": "GRN-T004",
@@ -8484,20 +8452,18 @@
       {
         "evidence": [
           "scipy/_lib/tests/test_array_api.py:389 calls importlib.import_module (in collect_public_functions(), reached at import)",
-          "compared wheels with different tags: cp313-cp313-manylinux2014_x86_64.cp313-cp313-manylinux_2_17_x86_64 vs cp313-cp313-manylinux_2_27_x86_64.cp313-cp313-manylinux_2_28_x86_64"
+          "test files run only when the package's own tests run, so this is reported at info"
         ],
         "release": null,
         "rule": "GRN-C003",
-        "severity": "warn",
-        "title": "1.17.0 adds import-time calls to sensitive APIs in 1 module(s)"
+        "severity": "info",
+        "title": "1.17.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
       }
     ],
     "package": "scipy",
-    "verdict": "warn",
-    "warn_rules": [
-      "GRN-C003"
-    ],
-    "warned": true
+    "verdict": "pass",
+    "warn_rules": [],
+    "warned": false
   },
   {
     "baseline": "1.17.0",
@@ -8513,43 +8479,11 @@
     "baseline": "1.17.1",
     "candidate": "1.18.0",
     "coverage_gaps": [],
-    "findings": [
-      {
-        "evidence": [
-          "new module scipy/_external/array_api_compat/cupy/__init__.py:12 calls __import__",
-          "new module scipy/_external/array_api_compat/cupy/__init__.py:13 calls __import__",
-          "new module scipy/_external/array_api_compat/cupy/fft.py:7 calls exec",
-          "new module scipy/_external/array_api_compat/cupy/linalg.py:10 calls exec",
-          "new module scipy/_external/array_api_compat/dask/array/__init__.py:16 calls __import__",
-          "new module scipy/_external/array_api_compat/dask/array/__init__.py:17 calls __import__",
-          "new module scipy/_external/array_api_compat/numpy/__init__.py:23 calls __import__",
-          "new module scipy/_external/array_api_compat/numpy/__init__.py:25 calls __import__",
-          "new module scipy/_external/array_api_compat/torch/__init__.py:13 calls __import__",
-          "new module scipy/_external/array_api_compat/torch/__init__.py:14 calls __import__"
-        ],
-        "release": null,
-        "rule": "GRN-C003",
-        "severity": "warn",
-        "title": "1.18.0 adds import-time calls to sensitive APIs in 6 module(s)"
-      },
-      {
-        "evidence": [
-          "1.17.1 \u2192 tag v1.17.1 at 527eb7fd7953a1de068f94bf8b322f249b9405ae",
-          "1.18.0: no tag named 1.18.0, v1.18.0, scipy-1.18.0 or scipy-v1.18.0"
-        ],
-        "release": null,
-        "rule": "GRN-T004",
-        "severity": "warn",
-        "title": "github.com/scipy/scipy-release has a tag for 1.17.1 but none for 1.18.0"
-      }
-    ],
+    "findings": [],
     "package": "scipy",
-    "verdict": "warn",
-    "warn_rules": [
-      "GRN-C003",
-      "GRN-T004"
-    ],
-    "warned": true
+    "verdict": "pass",
+    "warn_rules": [],
+    "warned": false
   },
   {
     "baseline": "1.18.0",
@@ -8595,23 +8529,11 @@
     "baseline": "80.9.0",
     "candidate": "80.10.1",
     "coverage_gaps": [],
-    "findings": [
-      {
-        "evidence": [
-          "setuptools/tests/fixtures.py:96 calls subprocess.check_output (in _build_distributions(), reached at import)"
-        ],
-        "release": null,
-        "rule": "GRN-C003",
-        "severity": "warn",
-        "title": "80.10.1 adds import-time calls to sensitive APIs in 1 module(s)"
-      }
-    ],
+    "findings": [],
     "package": "setuptools",
-    "verdict": "warn",
-    "warn_rules": [
-      "GRN-C003"
-    ],
-    "warned": true
+    "verdict": "pass",
+    "warn_rules": [],
+    "warned": false
   },
   {
     "baseline": "80.10.1",

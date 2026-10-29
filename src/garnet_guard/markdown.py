@@ -136,6 +136,17 @@ def _active(change: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return sorted(found, key=lambda f: -rank.get(str(f.get("severity")), 0))
 
 
+def _ignored(change: Mapping[str, Any]) -> list[str]:
+    """Rule IDs of findings a policy ignore suppressed, sorted and unique."""
+    return sorted(
+        {
+            r
+            for f in _list(change.get("findings"))
+            if isinstance(f, Mapping) and f.get("suppressed_by") and (r := _rule(f.get("rule_id")))
+        }
+    )
+
+
 def _finding_line(f: Mapping[str, Any]) -> str:
     rid = _rule(f.get("rule_id"))
     label = rule_link(rid) if rid else code(f.get("rule_id", "?"))
@@ -153,12 +164,21 @@ def _flagged_block(change: Mapping[str, Any]) -> list[str]:
     name = code(change.get("package", "?"))
     lines = ["> [!WARNING]", f"> **{name} {_update(change)}**"]
     lines += [_finding_line(f) for f in _active(change)]
+    ignored = _ignored(change)
+    if ignored:
+        lines.append(f"> - ignored by the policy: {', '.join(f'`{r}`' for r in ignored)}")
     return lines
 
 
 def _pass_row(change: Mapping[str, Any]) -> str:
     infos = sorted({r for f in _active(change) if (r := _rule(f.get("rule_id")))})
-    checks = "info: " + ", ".join(f"`{r}`" for r in infos) if infos else "no findings"
+    ignored = _ignored(change)
+    parts = []
+    if infos:
+        parts.append("info: " + ", ".join(f"`{r}`" for r in infos))
+    if ignored:
+        parts.append("ignored by the policy: " + ", ".join(f"`{r}`" for r in ignored))
+    checks = " · ".join(parts) or "no findings"
     return (
         f"| {code(change.get('package', '?'), in_table=True)} "
         f"| {_update(change, in_table=True)} | {checks} |"
@@ -185,6 +205,23 @@ def _footer(cited: Sequence[str]) -> str:
     return "<sub>Garnet Guard · " + " · ".join(links) + "</sub>"
 
 
+def _expired_lines(doc: Mapping[str, Any]) -> list[str]:
+    """One line per policy ignore past its until date, so nobody misses it."""
+    policy = doc.get("policy")
+    expired = _list(policy.get("expired")) if isinstance(policy, Mapping) else []
+    lines = []
+    for e in expired:
+        if not isinstance(e, Mapping):
+            continue
+        rules = ", ".join(f"`{r}`" for x in _list(e.get("rules")) if (r := _rule(x)))
+        lines.append(
+            f"- The policy's ignore for {code(e.get('package', '?'))} ({rules}) expired on "
+            f"{code(e.get('until', '?'))} and no longer applies. Review it again, then renew "
+            "or remove it."
+        )
+    return lines + [""] if lines else []
+
+
 def render(doc: Mapping[str, Any], *, footer: bool = True, max_chars: int = MAX_CHARS) -> str:
     """Render a JSON report as the PR comment. Deterministic for a given document."""
     if not isinstance(doc, Mapping) or not isinstance(doc.get("changes"), list):
@@ -208,6 +245,7 @@ def render(doc: Mapping[str, Any], *, footer: bool = True, max_chars: int = MAX_
     body: list[str] = []
     for c in flagged:
         body += _flagged_block(c) + [""]
+    body += _expired_lines(doc)
 
     def assemble(rows: list[str], dropped: int) -> str:
         parts = list(head) + body

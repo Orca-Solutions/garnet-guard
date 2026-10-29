@@ -55,8 +55,8 @@ in policy:
 ```
 
 Suppressed findings still appear in JSON and SARIF output, marked with the ignore that
-matched. The policy format is in [SPEC §7](../SPEC-v1.md#7-policy); 0.1 doesn't read
-policy files yet.
+matched. How to write one is in [the policy guide](../policy.md); the format is in
+[SPEC §7](../SPEC-v1.md#7-policy).
 
 ## See also
 

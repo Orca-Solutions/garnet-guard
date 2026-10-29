@@ -6,6 +6,7 @@ import argparse
 import os
 import sys
 from collections.abc import Sequence
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from . import __version__
@@ -14,8 +15,10 @@ from .checks.docs import rule_url
 from .engine import Options, Report, compare, evaluate, report, unchecked_result
 from .facts.pyindex import SENSITIVE_SET_VERSION, sensitive_set
 from .lockfiles import LockfileError
-from .models import Change, Severity
-from .report import to_json, to_text
+from .models import Change, Policy, Severity
+from .policy import PolicyError, describe, expired_ignores, load_policy
+from .report import escape, to_json, to_text
+from .sarif import to_sarif
 from .workspace import Unchecked, changes_for, dedupe, discover, git_show, plain_file
 
 _FAIL_ON = {"warn": Severity.WARN, "block": Severity.BLOCK, "never": Severity.OFF}
@@ -25,13 +28,15 @@ exit codes:
   0  nothing at or above --fail-on (by default, warnings exit 0)
   1  warn findings, with --fail-on warn
   2  block findings, with --fail-on warn or block
-  3  Garnet couldn't finish: bad arguments, an unreadable lockfile or an internal
-     error. This is never a pass.
+  3  Garnet couldn't finish: bad arguments, an invalid policy file, an unreadable
+     lockfile or an internal error. This is never a pass.
 
 Each finding links to its rule's page; `garnet explain RULE` prints a summary.
 """
 
-_FAIL_ON_HELP = "exit non-zero at this verdict or worse (default: block)"
+_FAIL_ON_HELP = "exit non-zero at this verdict or worse (default: the policy's fail_on, else block)"
+_POLICY_HELP = "policy file (default: garnet.toml here, else [tool.garnet] in pyproject.toml)"
+_NO_POLICY_HELP = "don't read a policy file; use the default severities and no ignores"
 _GITHUB_ENV_HELP = "environment variable that holds a GitHub token (default: GITHUB_TOKEN)"
 
 
@@ -65,15 +70,12 @@ def _parser() -> argparse.ArgumentParser:
         "--format",
         choices=("text", "json", "sarif", "markdown"),
         default="text",
-        help="report format (default: text; sarif isn't supported in this preview yet)",
+        help="report format (default: text)",
     )
     c.add_argument(
         "--output", metavar="PATH", help="write the report to this file instead of stdout"
     )
-    c.add_argument(
-        "--policy", metavar="PATH", help="policy file (not supported in this preview yet)"
-    )
-    c.add_argument("--fail-on", choices=tuple(_FAIL_ON), default="block", help=_FAIL_ON_HELP)
+    _policy_args(c)
     c.add_argument(
         "--offline",
         action="store_true",
@@ -106,7 +108,7 @@ def _parser() -> argparse.ArgumentParser:
     d.add_argument(
         "--output", metavar="PATH", help="write the report to this file instead of stdout"
     )
-    d.add_argument("--fail-on", choices=tuple(_FAIL_ON), default="block", help=_FAIL_ON_HELP)
+    _policy_args(d)
     d.add_argument(
         "--github-token-env", default="GITHUB_TOKEN", metavar="NAME", help=_GITHUB_ENV_HELP
     )
@@ -114,8 +116,26 @@ def _parser() -> argparse.ArgumentParser:
     e = sub.add_parser("explain", help="describe a rule")
     e.add_argument("rule_id", metavar="RULE", help="a rule ID, such as GRN-C003")
 
+    pol = sub.add_parser("policy", help="validate a policy file")
+    pol_sub = pol.add_subparsers(dest="policy_command", required=True)
+    pc = pol_sub.add_parser(
+        "check",
+        help="check a policy file and list its ignores",
+        description="Check a policy file and list its rule settings and ignores. With no\n"
+        "PATH, checks the file garnet check would read here.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pc.add_argument("path", nargs="?", metavar="PATH", help="the policy file")
+
     sub.add_parser("version", help="print the version")
     return p
+
+
+def _policy_args(p: argparse.ArgumentParser) -> None:
+    group = p.add_mutually_exclusive_group()
+    group.add_argument("--policy", metavar="PATH", help=_POLICY_HELP)
+    group.add_argument("--no-policy", action="store_true", help=_NO_POLICY_HELP)
+    p.add_argument("--fail-on", choices=tuple(_FAIL_ON), help=_FAIL_ON_HELP)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -132,8 +152,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _explain(args.rule_id)
         if args.command == "check":
             return _check(args)
+        if args.command == "policy":
+            return _policy_check(args.path)
         return _diff(args)
-    except (UsageError, LockfileError) as err:
+    except (UsageError, LockfileError, PolicyError) as err:
         print(f"garnet: {err}", file=sys.stderr)
         return 3
     except KeyboardInterrupt:
@@ -151,19 +173,33 @@ def _not_yet(flag: str) -> UsageError:
     return UsageError(f"{flag} isn't supported in this preview yet")
 
 
+def _policy(args: argparse.Namespace) -> Policy:
+    if args.no_policy:
+        return Policy()
+    return load_policy(Path(args.policy) if args.policy else None)
+
+
+def _fail_on(args: argparse.Namespace, policy: Policy) -> Severity:
+    if args.fail_on:
+        return _FAIL_ON[args.fail_on]
+    return policy.fail_on if policy.fail_on is not None else Severity.BLOCK
+
+
+def _today() -> date:
+    return datetime.now(UTC).date()
+
+
 def _check(args: argparse.Namespace) -> int:
     """``garnet check``: every dependency change between two lockfiles."""
-    if args.policy:
-        raise _not_yet("--policy")
     if args.offline or args.cache_dir:
         raise _not_yet("--offline/--cache-dir")
-    if args.format == "sarif":
-        raise _not_yet("--format sarif")
     if args.base and args.git_base:
         raise UsageError("use --base or --git-base, not both")
     if not args.base and not args.git_base:
         raise UsageError("give the trusted lockfile with --base PATH or --git-base REF")
     cwd = Path.cwd()
+    policy = _policy(args)
+    today = _today()
     heads = [Path(h) for h in args.head] if args.head else discover(cwd)
     if not heads:
         raise UsageError("no lockfiles found; pass --head PATH")
@@ -184,13 +220,19 @@ def _check(args: argparse.Namespace) -> int:
         unchecked += skipped
 
     token = os.environ.get(args.github_token_env) or None
-    results = evaluate(dedupe(changes), options=Options(github_token=token))
-    results += [unchecked_result(u.change, u.rule_id, u.detail) for u in unchecked]
-    rep = report(results)
+    options = Options(github_token=token, today=today)
+    results = evaluate(dedupe(changes), policy=policy, options=options)
+    results += [
+        unchecked_result(u.change, u.rule_id, u.detail, policy=policy, today=today)
+        for u in unchecked
+    ]
+    rep = report(results, policy=policy, today=today)
     if args.format == "json":
         out = to_json(rep)
     elif args.format == "markdown":
         out = _markdown(rep)
+    elif args.format == "sarif":
+        out = to_sarif(rep)
     else:
         out = to_text(rep, color=args.output is None and sys.stdout.isatty())
     if args.output:
@@ -198,7 +240,7 @@ def _check(args: argparse.Namespace) -> int:
             fh.write(out)
     else:
         sys.stdout.write(out)
-    return rep.exit_code(_FAIL_ON[args.fail_on])
+    return rep.exit_code(_fail_on(args, policy))
 
 
 def _markdown(rep: Report) -> str:
@@ -218,9 +260,12 @@ def _diff(args: argparse.Namespace) -> int:
     if eco != "pypi":
         print(f"garnet: unsupported ecosystem {eco!r}; 0.1 supports pypi", file=sys.stderr)
         return 3
+    policy = _policy(args)
+    today = _today()
     token = os.environ.get(args.github_token_env) or None
-    result = compare(eco, name, args.old, args.new, options=Options(github_token=token))
-    rep = report([result])
+    options = Options(github_token=token, today=today)
+    result = compare(eco, name, args.old, args.new, policy=policy, options=options)
+    rep = report([result], policy=policy, today=today)
     if args.format == "json":
         out = to_json(rep)
     else:
@@ -231,7 +276,30 @@ def _diff(args: argparse.Namespace) -> int:
             fh.write(out)
     else:
         sys.stdout.write(out)
-    return rep.exit_code(_FAIL_ON[args.fail_on])
+    return rep.exit_code(_fail_on(args, policy))
+
+
+def _policy_check(path: str | None) -> int:
+    """``garnet policy check``: validate a policy file and say what it does."""
+    policy = load_policy(Path(path) if path else None)
+    if policy.source is None:
+        where = path or "here"
+        print(f"No policy found {'in ' + where if path else where}; the defaults apply.")
+        return 0
+    expired = set(expired_ignores(policy, _today()))
+    print(escape(f"{policy.source}: valid (sha256 {policy.sha256})"))
+    if policy.default is not None:
+        print(f"  default for warn rules: {policy.default.label}")
+    if policy.fail_on is not None:
+        print(f"  fail_on: {'never' if policy.fail_on == Severity.OFF else policy.fail_on.label}")
+    for rule_id, severity in policy.rules.items():
+        print(f"  {rule_id}: {severity.label}")
+    for ignore in policy.ignores:
+        state = "EXPIRED, no longer applies" if ignore in expired else "applies"
+        print(escape(f"  ignore {describe(ignore)} ({state}): {ignore.reason}"))
+    if not policy.ignores:
+        print("  no ignores")
+    return 0
 
 
 def _explain(rule_id: str) -> int:
