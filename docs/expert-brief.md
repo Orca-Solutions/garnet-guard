@@ -16,7 +16,7 @@
 | Couldn't check | E001 to E005 | Reported as a finding, never as a pass. |
 
 **Evidence so far.**
-- **Replays:** three real 2026 compromises of trusted packages (lightning 2.6.2 and 2.6.3, elementary-data 0.23.3) each produce a warning without using the known-bad feed.
+- **Replays:** seven malicious releases from four real 2026 compromises of trusted packages (lightning 2.6.2 and 2.6.3, elementary-data 0.23.3, litellm 1.82.7 and 1.82.8, telnyx 4.87.1 and 4.87.2) each produce a warning without using the known-bad feed, with git tags as they stood when each release was uploaded.
 - **Clean updates:** across 974 updates of the top 100 PyPI packages, 12 warned (1.2%), and each of those warnings states something true about the release. The first run warned on 17 (1.7%). Five of its warnings made a false claim, and tuning since merged removes them. It also lowers one warning from a test file to info. No other result changed.
 - **Known gap:** in 33 updates (3.4%), a symlink inside an sdist made Garnet skip that sdist's content checks. It reports this as a coverage gap rather than a pass, and a fix is planned.
 - The method, every warning and its triage are public: [backtest/corpus-results/REPORT.md](../backtest/corpus-results/REPORT.md).

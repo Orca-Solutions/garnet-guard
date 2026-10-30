@@ -122,14 +122,15 @@ Two things the spec didn't anticipate:
 - `uv run ruff check .`, `ruff format --check .`, `mypy src` (strict) and `lint-imports` all pass.
 - `uv run python -m backtest`:
   - Replays lightning 2.6.2 and 2.6.3, each caught by GRN-C003 and GRN-T004.
-  - Replays elementary-data 0.23.3, caught by GRN-C001 and GRN-T004.
+  - Replays elementary-data 0.23.3, caught by GRN-C001. GRN-T004 fires only against today's tags: the attacker's `v0.23.3` tag existed on the day and was deleted later.
+  - Replays litellm 1.82.7 (GRN-C003) and 1.82.8 (GRN-C001, GRN-C003), and telnyx 4.87.1 and 4.87.2 (GRN-C003, GRN-T004).
   - Replays the deleted malicious files by URL and hash from files.pythonhosted.org.
   - The 20 clean updates in `backtest/clean.toml` produce no warnings from detection rules.
 - Known-bad lookups are off in the backtest on purpose, to show what Garnet Guard catches before any feed lists a release.
 
 **Caveats.**
 - GRN-T001 can't fire on these incidents, because neither project attested releases before the attack.
-- GRN-T004 is evaluated against the repository tags as they are now.
+- GRN-T004 is evaluated against the tags as they stood at upload: today's tags with the changes recorded in `backtest/incidents.toml` (`tags_on_the_day`). Tag changes nobody recorded aren't modelled.
 
 **Open tasks (month 1, see ROADMAP.md):**
 - lockfile parsers and `garnet check`

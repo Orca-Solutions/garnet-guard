@@ -6,7 +6,10 @@
     uv run python -m backtest corpus [npm] [DIR]  # run the clean corpus; see backtest/corpus.py
 
 Known-bad lookups (GRN-K001) are off: the question is what Garnet catches
-before any feed lists a release. Results go to backtest/results.json.
+before any feed lists a release. Incidents are replayed against the git tags
+as they stood when the release was uploaded (``tags_on_the_day`` in
+incidents.toml), and again against today's tags where those differ. Results
+go to backtest/results.json.
 """
 
 from __future__ import annotations
@@ -14,8 +17,10 @@ from __future__ import annotations
 import json
 import sys
 import tomllib
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from garnet_guard.ecosystems import npm
 from garnet_guard.ecosystems.pypi import RegistryFile, ReplayRelease
@@ -37,7 +42,15 @@ def _detected(result: ChangeResult) -> list[str]:
     )
 
 
-def _pypi_options(inc: dict[str, object]) -> Options:
+def _tags_then(inc: dict[str, Any]) -> dict[str, dict[str, str | None]]:
+    """The incident's tag changes since the upload, as ``Options.tags_then``."""
+    out: dict[str, dict[str, str | None]] = {}
+    for t in inc.get("tags_on_the_day", []):
+        out.setdefault(t["repo"], {})[t["tag"]] = None if t.get("absent") else t["sha"]
+    return out
+
+
+def _pypi_options(inc: dict[str, Any]) -> Options:
     """PyPI incidents: the removed files are still served by URL and hash."""
     files = inc["files"]
     assert isinstance(files, list)
@@ -55,10 +68,12 @@ def _pypi_options(inc: dict[str, object]) -> Options:
         source_repo=str(inc["source_repo"]),
         note="replayed: release removed from PyPI; files fetched by URL and hash, provenance not available",
     )
-    return Options(replay={str(inc["candidate"]): replay}, check_known_bad=False)
+    return Options(
+        replay={str(inc["candidate"]): replay}, check_known_bad=False, tags_then=_tags_then(inc)
+    )
 
 
-def _npm_options(inc: dict[str, object]) -> Options:
+def _npm_options(inc: dict[str, Any]) -> Options:
     """npm incidents: the registry record is gone, so facts come from write-ups."""
     scripts = inc.get("scripts", [])
     assert isinstance(scripts, list)
@@ -71,11 +86,21 @@ def _npm_options(inc: dict[str, object]) -> Options:
         source_repo=str(inc["source_repo"]),
         note=str(inc["note"]),
     )
-    return Options(npm_replay={str(inc["candidate"]): replay}, check_known_bad=False)
+    return Options(
+        npm_replay={str(inc["candidate"]): replay},
+        check_known_bad=False,
+        tags_then=_tags_then(inc),
+    )
 
 
 def run_incidents() -> list[dict[str, object]]:
-    incidents: list[dict[str, object]] = []
+    """Replay each incident against the tags as they stood on the day.
+
+    Where an incident records tags that changed since (``tags_on_the_day``),
+    it is replayed again against today's tags, so both results are on the
+    record.
+    """
+    incidents: list[dict[str, Any]] = []
     for name in ("incidents.toml", "npm-incidents.toml"):
         incidents += tomllib.loads((HERE / name).read_text())["incident"]
     rows = []
@@ -90,18 +115,24 @@ def run_incidents() -> list[dict[str, object]]:
         result = compare(eco, package, baseline, candidate, options=opts)
         rules = _detected(result)
         print(f"=== incident {inc['id']}: {inc['summary']}")
+        if opts.tags_then:
+            print("tags as of the upload:")
         print(to_text(report([result])))
-        rows.append(
-            {
-                "id": inc["id"],
-                "ecosystem": eco,
-                "baseline": baseline,
-                "candidate": candidate,
-                "caught": bool(rules),
-                "rules": rules,
-                "verdict": result.verdict.value,
-            }
-        )
+        row: dict[str, object] = {
+            "id": inc["id"],
+            "ecosystem": eco,
+            "baseline": baseline,
+            "candidate": candidate,
+            "caught": bool(rules),
+            "rules": rules,
+            "verdict": result.verdict.value,
+        }
+        if opts.tags_then:
+            today = compare(eco, package, baseline, candidate, options=replace(opts, tags_then={}))
+            print("tags as of today:")
+            print(to_text(report([today])))
+            row["rules_with_todays_tags"] = _detected(today)
+        rows.append(row)
     return rows
 
 
@@ -151,9 +182,10 @@ def main(argv: list[str]) -> int:
         out["clean_warn_rate"] = f"{warned}/{len(clean)}"
     print("\nSUMMARY")
     for r in out.get("incidents", []):  # type: ignore[union-attr]
-        print(
-            f"  incident {r['id']}: {'CAUGHT' if r['caught'] else 'MISSED'} by {', '.join(r['rules']) or 'nothing'}"
-        )
+        line = f"  incident {r['id']}: {'CAUGHT' if r['caught'] else 'MISSED'} by {', '.join(r['rules']) or 'nothing'}"
+        if "rules_with_todays_tags" in r:
+            line += f" (with today's tags: {', '.join(r['rules_with_todays_tags']) or 'nothing'})"
+        print(line)
     if "clean_warn_rate" in out:
         print(f"  clean updates with a warn from a detection rule: {out['clean_warn_rate']}")
     (HERE / "results.json").write_text(json.dumps(out, indent=2, sort_keys=True) + "\n")
