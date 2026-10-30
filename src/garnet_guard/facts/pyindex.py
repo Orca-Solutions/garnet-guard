@@ -226,12 +226,21 @@ class _Resolver:
         head, rest = parts[0], parts[1:]
         if head in self.aliases:
             return ".".join([self.aliases[head], *rest])
-        if head not in self.defined and head not in _BUILTINS:
+        if head in self.defined:
+            return None  # the module's own function, class or variable shadows the name
+        if head not in _BUILTINS:
             # A bare name after ``from subprocess import *`` may be subprocess.run.
             for mod in self.star_modules:
                 name = ".".join([mod, head, *rest])
                 if is_sensitive(name):
                     return name
+        root = func
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if rest and isinstance(root, ast.Name):
+            # ``requests.append(r)`` on a local list, or ``socket.settimeout`` on a
+            # local beside ``import socket as socket_``: the head is no module here.
+            return None
         return ".".join(parts)
 
 

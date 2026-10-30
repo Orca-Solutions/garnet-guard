@@ -433,6 +433,29 @@ def test_nested_function_started_on_a_thread_at_import_fires() -> None:
     )
 
 
+def test_module_the_trusted_version_could_not_parse_is_not_called_new() -> None:
+    # multiprocess 0.70.12.2: the trusted wheel was built for Python 2, so its
+    # copy of the module never parsed; the calls may be old.
+    base = {"demo/__init__.py": "", "demo/work.py": "import os\nprint 'py2'\nos.system('x')\n"}
+    cand = {"demo/__init__.py": "", "demo/work.py": "import os\nos.system('x')\n"}
+    result = run_checks(CHANGE, release("1.0", base), release("1.1", cand))
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert f.evidence[0].summary == "demo/work.py:2 calls os.system"
+    assert f.evidence[1].summary == (
+        "1.0 has demo/work.py too, but it couldn't be parsed, so these calls may not be new"
+    )
+
+
+def test_module_renamed_with_a_leading_underscore_is_the_same_module() -> None:
+    # html5lib 1.0 renamed inputstream.py to _inputstream.py.
+    body = "import socket\n\nsock = socket.socket()\n"
+    base = {"demo/__init__.py": "", "demo/inputstream.py": body}
+    cand = {"demo/__init__.py": "", "demo/_inputstream.py": body + "# 1.1\n"}
+    assert "GRN-C003" not in rules(release("1.0", base), release("1.1", cand))
+    worse = {"demo/__init__.py": "", "demo/_inputstream.py": body + "import os\nos.system('x')\n"}
+    assert "GRN-C003" in rules(release("1.0", base), release("1.1", worse))
+
+
 def test_function_in_another_module_that_nothing_calls_at_import_is_quiet() -> None:
     files = {
         "memos/__init__.py": "from memos import log\n",

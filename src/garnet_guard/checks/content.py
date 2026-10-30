@@ -244,9 +244,20 @@ def _moved_from(path: str, baseline: tuple[ModuleIndex, ...]) -> set[str]:
         n = 0
         while n < min(len(parts), len(other)) and parts[-1 - n] == other[-1 - n]:
             n += 1
+        if (
+            n == 0
+            and other[:-1] == parts[:-1]
+            and _public_name(other[-1]) == _public_name(parts[-1])
+        ):
+            n = len(parts)  # html5lib 1.0 renamed inputstream.py to _inputstream.py
         if n > best_len or (n == best_len and best is not None and m.path < best.path):
             best, best_len = m, n
     return {s.name for s in best.top_level_calls} if best is not None else set()
+
+
+def _public_name(filename: str) -> str:
+    """``_inputstream.py`` and ``inputstream.py`` are the same module renamed."""
+    return filename.lstrip("_")
 
 
 def is_test_path(path: str) -> bool:
@@ -297,14 +308,18 @@ def new_import_time_exec(
         return
     old = {m.module: {s.name for s in m.top_level_calls} for m in b.modules}
     old_hashes = {f.sha256 for f in b.files}
+    old_unparsed = set(b.unparsed)
     new_hash = {f.path: f.sha256 for f in c.files}
     live_tests = _live_test_modules(c)
     found: dict[bool, tuple[list[Evidence], set[str]]] = {False: ([], set()), True: ([], set())}
+    unread: list[str] = []  # trusted copies ast couldn't parse (a Python 2 wheel)
     for m in c.modules:
         if m.module in old:
             before = old[m.module]
         elif new_hash.get(m.path) in old_hashes:
             continue  # byte-identical to a baseline file: moved, not added
+        elif m.path in old_unparsed:
+            before = set()
         else:
             before = _moved_from(m.path, b.modules)
         test_only = is_test_path(m.path) and m.module not in live_tests
@@ -314,7 +329,9 @@ def new_import_time_exec(
                 continue
             origin = f" from {s.from_module}" if s.from_module else ""
             via = f" (in {s.via}(), reached at import{origin})" if s.via else ""
-            where = "new module " if m.module not in old else ""
+            where = "new module " if m.module not in old and m.path not in old_unparsed else ""
+            if m.path in old_unparsed and m.path not in unread:
+                unread.append(m.path)
             evidence.append(
                 Evidence(
                     "file",
@@ -345,6 +362,14 @@ def new_import_time_exec(
         else:
             title = f"{cand.version} adds import-time calls to sensitive APIs in {len(modules)} module(s)"
             note = ()
+        if unread:
+            note += (
+                Evidence(
+                    "note",
+                    f"{base.version} has {', '.join(sorted(unread))} too, but it couldn't be "
+                    "parsed, so these calls may not be new",
+                ),
+            )
         yield RawFinding(
             "GRN-C003",
             title,

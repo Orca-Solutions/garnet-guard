@@ -219,3 +219,25 @@ def test_nested_function_handed_to_a_call_is_followed() -> None:
         "handler = make()\n"
     )
     assert names(stored) == set()
+
+
+def test_a_dotted_name_needs_an_imported_head() -> None:
+    # curl-cffi 0.15.0: a local list called requests; oscrypto 0.17.3: a local
+    # socket beside ``import socket as socket_``.
+    assert names("def run():\n    requests = []\n    requests.append(1)\nrun()\n") == set()
+    assert (
+        names(
+            "import socket as socket_\ndef f(s):\n    socket = s\n    socket.settimeout(5)\nf(1)\n"
+        )
+        == set()
+    )
+    assert names("import os.path\nos.system('x')\n") == {"os.system"}
+    assert names("import socket as socket_\nsocket_.socket()\n") == {"socket.socket"}
+
+
+def test_a_module_level_definition_shadows_a_builtin() -> None:
+    # nltk 3.10.4 redos.py defines its own compile().
+    assert names("def compile(src, flags):\n    return src\n\ncompile('a', 0)\n") == set()
+    assert names("import re\ncompile = re.compile\ncompile('a')\n") == set()
+    assert names("class exec:\n    pass\n\nexec('a')\n") == set()
+    assert names("compile('a', 'b', 'exec')\n") == {"compile"}

@@ -16,6 +16,7 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 - When the trusted version ships only a wheel and the new one only an sdist (or the reverse), the content rules compare the two kinds with each other and say so, instead of comparing nothing.
 - GRN-C003 follows import-time calls into the package's own other modules, as deep as they go and through function-local imports, and names the module whose import started the chain. It also follows `sp = subprocess` style aliases and `getattr(sys.modules[__name__], "ctypes")`, the num2words 0.5.15 trick for reaching a module without naming it.
 - GRN-C003 follows a function defined inside another function when it is called or handed to a call there, the mrmustard 0.7.4 shape: a checker run at import that started a thread on a `_run` nested inside it.
+- GRN-C003 no longer makes four claims the top-1,000 PyPI corpus showed to be false: a dotted name whose first part is not an imported module (a local list called `requests`), a builtin shadowed by the module's own function or class (`def compile`), a module renamed with a leading underscore reported as new, and a module the trusted version had but couldn't parse reported as new (it now says the calls may not be new).
 
 ## 0.1.0a1
 

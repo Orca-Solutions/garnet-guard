@@ -29,9 +29,16 @@ module whose import started the chain. Calls are resolved through imports and si
 aliasing (`sp = subprocess`), `from os import *`, and `getattr(os, "system")`,
 `getattr(sys.modules[__name__], "ctypes")`, `__import__("os")` or
 `importlib.import_module("os")` with a literal name, by reading the source with `ast`;
-nothing is executed. A `base64` decode whose result reaches a sensitive call counts as a
-call of its own, so `exec(base64.b64decode(...))` is new even in a module that already used
-`exec`.
+nothing is executed. A dotted name counts only when its first part is a module the file
+imports (a local list called `requests` is not the `requests` library), and a function or
+class the module defines shadows a builtin of the same name. A `base64` decode whose result
+reaches a sensitive call counts as a call of its own, so `exec(base64.b64decode(...))` is
+new even in a module that already used `exec`.
+
+A module is new when the trusted version had no module of that name; a file that only moved
+or was renamed with a leading underscore is compared with the file it came from. When the
+trusted version has the file but it couldn't be parsed (a wheel built for Python 2), the
+calls are reported with a note that they may not be new, because Garnet couldn't compare.
 
 In test files (`tests/`, `test_*.py`, `conftest.py`) it reports at `info`, unless a non-test
 module imports the file (directly or through other test modules) or an entry point names it.
