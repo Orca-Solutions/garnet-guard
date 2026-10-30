@@ -9,7 +9,7 @@ What stands behind each rule ID, as of 2026-10-30 on `main`. Three kinds of evid
 - **Real attacks** (`python -m backtest`): the compromised releases in
   [backtest/incidents.toml](../backtest/incidents.toml), fetched by URL and hash from
   files.pythonhosted.org, which still serves files PyPI has removed (11 releases on `main`
-  today; #31 brings it to 26 releases of 15 packages).
+  today; #31 adds many more, from December 2024 on).
 - **Real routine updates**: the 974-update clean corpus
   ([backtest/corpus-results/REPORT.md](../backtest/corpus-results/REPORT.md)), the repository's
   own dependency bumps (the dogfood workflow), and a scan of the last 20 releases of the top 600
@@ -33,7 +33,7 @@ That is said in the table, not hidden.
 | GRN-T008 hash-mismatch | yes / yes | none | none | 0 | a real mismatch has not been seen; every download in the corpus matched the registry |
 | GRN-C001 new-pth-file | yes / yes | elementary-data 0.23.3, litellm 1.82.8; in #31 gpsea 0.9.14, pyphetools 0.9.120 and ppkt2synergy 0.1.1 (the Hades campaign), and embiggen 0.11.97 once #33 lands | none (no top-100 release added a `.pth`) | 0 | — |
 | GRN-C002 new-build-hook | yes / yes (PyPI: `setup.py` and the build backend; npm: install scripts) | memoryos 2.0.34 (#31); nx 21.5.0 and @ctrl/tinycolor 4.1.1 on npm, through install scripts | 5 in the corpus, every one an in-tree build backend or a version read in `setup.py` (accurate) | 5 warns, accurate; 7 with #33 (pycparser 2.19 and multidict 7.1.0 each added a build-time subprocess call, accurate) | a real PyPI attack through a `cmdclass` install hook, the classic shape |
-| GRN-C003 new-import-time-exec | yes / yes | lightning 2.6.2 and 2.6.3, litellm 1.82.7 and 1.82.8, telnyx 4.87.1 and 4.87.2, ultralytics 8.3.45 and 8.3.46; in #31 xinference 2.6.0–2.6.2, mistralai 2.4.6, guardrails-ai 0.10.1 and durabletask 1.4.1–1.4.3, and with #34 num2words 0.5.15 and 0.5.16 and memoryos 2.0.34 | requests 2.32.2, typing-inspection 0.1.0, wheel 0.45.0 (accurate) | 3 warns, accurate (unchanged by #32) | — |
+| GRN-C003 new-import-time-exec | yes / yes | lightning 2.6.2 and 2.6.3, litellm 1.82.7 and 1.82.8, telnyx 4.87.1 and 4.87.2, ultralytics 8.3.45 and 8.3.46; in #31 xinference 2.6.0–2.6.2, mistralai 2.4.6, guardrails-ai 0.10.1 and durabletask 1.4.1–1.4.3, with #34 num2words 0.5.15 and 0.5.16 and memoryos 2.0.34, and with #36 mrmustard 0.7.4 | requests 2.32.2, typing-inspection 0.1.0, wheel 0.45.0 (accurate) | 3 warns, accurate (unchanged by #32) | — |
 | GRN-K001 known-malicious | yes / yes | off in the backtest by design (the question is what Garnet catches before a feed lists a release) | none | n/a | the live OSV lookup has not been exercised in any recorded run; the cloud sandbox cannot reach api.osv.dev. Run `garnet diff` on a listed release from a machine that can |
 | GRN-E001 fetch-failed | yes / yes | the replays (provenance of a removed release is unknown) | 1 in the corpus (a tag lookup) | 1 | — |
 | GRN-E002 parse-failed | yes / yes | none | 32 in the corpus, 30 of them an sdist with a symlink, which `safe_archive` refuses | 32 | — |
@@ -50,7 +50,8 @@ rows now.
 Probing each rule with releases shaped like known attacks found seven evasions and one false
 alarm on `main` at `df8c6a2`. Each is fixed in a draft pull request with a regression test and
 the backtest delta: #32 for the five C003 shapes, #33 for `setup.py`, the sdist cases and the
-`.pth` false alarm. Two more shapes came from the real attacks below and are fixed in #34.
+`.pth` false alarm. Three more shapes came from the real attacks below and are fixed in #34
+and #36.
 
 | Shape | Rule | What happened | Fix |
 |---|---|---|---|
@@ -66,12 +67,12 @@ the backtest delta: #32 for the five C003 shapes, #33 for `setup.py`, the sdist 
 
 ## What the real attacks show
 
-Twenty-six malicious releases of fifteen packages are replayed in #31 (lightning,
-elementary-data, litellm, telnyx, ultralytics, num2words, xinference, mistralai, guardrails-ai,
-durabletask, memoryos, gpsea, pyphetools, ppkt2synergy and embiggen), each against the facts of
-its day. On `main` 24 of the 26 get a warning; with #32, #33 and #34, 25 do. Three of them
-showed a content rule seeing less than it should, with a trust rule or nothing carrying the
-result:
+#31 replays real malicious releases against the facts of their day: 26 releases of 15
+packages when this page was written (lightning, elementary-data, litellm, telnyx, ultralytics,
+num2words, xinference, mistralai, guardrails-ai, durabletask, memoryos, gpsea, pyphetools,
+ppkt2synergy and embiggen), and it keeps growing, so #31 carries the current count. Of those
+26, `main` warns on 24; with #32, #33 and #34, on 25. Four releases showed a content rule
+seeing less than it should, with a trust rule or nothing carrying the result:
 
 - **embiggen 0.11.97** is missed on `main`. The trusted 0.11.96 is an sdist and the malicious
   release a wheel, so the content rules compared nothing and the new `embiggen-setup.pth` went
@@ -83,6 +84,10 @@ result:
   through the package's own modules before `_stage0.trigger()` starts a bundled binary, and
   GRN-C003 stopped at the first module. #34 follows the chain: `memos/_stage0.py:22 calls
   subprocess.Popen (in trigger(), reached at import from memos/api/client.py)`.
+- **mrmustard 0.7.4** (added to #31 later) is missed on `main` and still on #34: the package
+  links no repository, so GRN-T004 has nothing to check, and the payload is a `_run()` defined
+  inside the function called at import, which GRN-C003 could not see. #36 follows it:
+  `mrmustard/__init__.py:227 calls subprocess.check_output (in _run(), reached at import)`.
 
 The one that no rule sees:
 
