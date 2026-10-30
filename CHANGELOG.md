@@ -6,6 +6,7 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 
 ### Added
 
+- GRN-C007 code-not-in-source: a Python file in the new version's wheel (the sdist when there is no wheel) is not the file at the release's git tag, and it has calls that run processes, load code or use the network which the source file doesn't. The source tree is read over GitHub's git protocol on plain HTTPS (`ecosystems/gittree.py`): one request per tagged release, no token, no REST rate limit, and submodules hosted on GitHub are followed one level. It reports ultralytics 8.3.42 (Dec 2024), whose payload was injected by a poisoned CI cache and never committed, with 0 warnings on the 974-update clean corpus. `net.Http.post` sends raw bytes for it.
 - npm: `garnet diff npm:<name> <old> <new>` compares two npm releases. It reads the registry's package document, npm provenance (verified with Sigstore, including the older `intoto` log-entry format that sigstore-python no longer accepts), git tags, OSV advisories and the tarball's `package.json`. The trust rules, GRN-K001 and GRN-T008 (Subresource Integrity) apply to npm; GRN-C002 reports an added or changed `preinstall`, `install` or `postinstall` script (not `prepare`, which npm doesn't run for a published tarball); GRN-T004 also accepts `<name>@X` tags. The backtest replays chalk 5.6.1, debug 4.4.2, nx 21.5.0 and @ctrl/tinycolor 4.1.1 from recorded registry facts, and `python -m backtest corpus npm` runs the top-200 npm clean corpus. npm lockfiles are not read yet.
 
 ## 0.1.0a1

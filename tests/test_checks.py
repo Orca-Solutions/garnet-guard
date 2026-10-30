@@ -1,7 +1,16 @@
 from dataclasses import replace
 
 from garnet_guard.engine import run_checks
-from garnet_guard.models import Change, FactError, Severity, TagInfo, Verdict
+from garnet_guard.models import (
+    CallSite,
+    Change,
+    FactError,
+    Severity,
+    SourceMatch,
+    TagInfo,
+    UnsourcedFile,
+    Verdict,
+)
 from tests.builders import prov, release
 
 CHANGE = Change("pypi", "demo", "1.0", "1.1")
@@ -249,3 +258,60 @@ def test_unparseable_new_file_is_e002() -> None:
     base = release("1.0", {"demo/__init__.py": INIT})
     cand = release("1.1", {"demo/__init__.py": INIT, "demo/x.py": "print 'py2'\n"})
     assert "GRN-E002" in rules(base, cand)
+
+
+# GRN-C007
+DL_PAYLOAD = "import subprocess\n\ndef run(cmd):\n    return subprocess.Popen(cmd)\n"
+
+
+def with_source_match(facts, *unmatched, matched: int = 1, unchecked=()):
+    art = facts.artifacts[0]
+    match = SourceMatch(
+        repo="o/r",
+        tag=f"v{facts.version}",
+        commit="c" * 40,
+        prefix="src/",
+        matched=matched,
+        unmatched=tuple(unmatched),
+        unchecked=tuple(unchecked),
+    )
+    return replace(facts, artifacts=(replace(art, source_match=match),))
+
+
+def test_code_not_in_source_fires_on_a_sensitive_call_the_source_lacks() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    cand = with_source_match(
+        release("1.1", {"demo/__init__.py": INIT, "demo/dl.py": DL_PAYLOAD}),
+        UnsourcedFile("demo/dl.py", True, (CallSite("subprocess.Popen", 4, "run"),)),
+    )
+    result = run_checks(CHANGE, base, cand)
+    finding = next(f for f in result.findings if f.rule_id == "GRN-C007")
+    assert finding.severity == Severity.WARN
+    assert "not in github.com/o/r at tag v1.1" in finding.title
+    assert finding.evidence[0].kind == "tag"
+    assert finding.evidence[1].path == "demo/dl.py" and finding.evidence[1].line == 4
+    assert "subprocess.Popen (in run())" in finding.evidence[1].summary
+    assert finding.evidence[1].url == "https://github.com/o/r/blob/" + "c" * 40 + "/src/demo/dl.py"
+
+
+def test_code_not_in_source_quiet_for_generated_files_without_sensitive_calls() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    cand = with_source_match(
+        release("1.1", {"demo/__init__.py": INIT, "demo/_version.py": "v = 1\n"}),
+        UnsourcedFile("demo/_version.py", False, ()),
+    )
+    assert "GRN-C007" not in rules(base, cand)
+
+
+def test_code_not_in_source_quiet_when_trusted_version_carried_the_same_call() -> None:
+    unsourced = UnsourcedFile("demo/dl.py", False, (CallSite("subprocess.Popen", 4, "run"),))
+    base = with_source_match(release("1.0", {"demo/dl.py": DL_PAYLOAD}), unsourced)
+    cand = with_source_match(release("1.1", {"demo/dl.py": DL_PAYLOAD}), unsourced)
+    assert "GRN-C007" not in rules(base, cand)
+    gained = UnsourcedFile("demo/dl.py", False, (*unsourced.calls, CallSite("os.system", 9)))
+    assert "GRN-C007" in rules(base, with_source_match(release("1.1", {}), gained))
+
+
+def test_code_not_in_source_quiet_without_a_comparison() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    assert "GRN-C007" not in rules(base, release("1.1", {"demo/dl.py": DL_PAYLOAD}))

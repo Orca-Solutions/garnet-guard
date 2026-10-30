@@ -89,3 +89,25 @@ def test_run_package_records_every_finding(tmp_path: Path) -> None:
     summary = corpus.summarize(rows)
     assert summary["updates_warned"] == 1
     assert summary["warns_by_rule"] == {"GRN-C001": {"updates": 1, "packages": 1}}
+
+
+def test_cache_round_trips_source_match(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from garnet_guard.models import CallSite, SourceMatch, UnsourcedFile
+
+    rel = release("1.0", {"demo/__init__.py": "import os\n"})
+    match = SourceMatch(
+        repo="o/r",
+        tag="v1.0",
+        commit="c" * 40,
+        prefix="src/",
+        matched=1,
+        unmatched=(UnsourcedFile("demo/dl.py", True, (CallSite("os.system", 3, "run"),)),),
+        unchecked=("demo/vendored/x.py",),
+    )
+    rel = replace(rel, artifacts=(replace(rel.artifacts[0], source_match=match),))
+    cache = corpus.FactCache(tmp_path)
+    cache.put(rel)
+    assert cache.get("pypi", "demo", "1.0") == rel
+    assert rel.artifacts[0].modules[0].blob_sha1  # recorded at inspection, survives the cache

@@ -44,6 +44,7 @@ ALL_CHECKS: tuple[tuple[str, CheckFn, frozenset[str]], ...] = (
     ("GRN-C001", content.new_pth_file, PYPI),
     ("GRN-C002", content.new_build_hook, BOTH),
     ("GRN-C003", content.new_import_time_exec, PYPI),
+    ("GRN-C007", content.code_not_in_source, PYPI),
     ("GRN-K001", known_malicious, BOTH),
     ("GRN-E002", content.unparsed_changed, PYPI),
 )

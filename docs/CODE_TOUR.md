@@ -52,12 +52,16 @@ Every run goes through the same five stages, whichever command started it.
    registry's package document, the release's attestations and the tarball. Both look up
    the project's git tags (`ecosystems/github.py`) and malware advisories
    (`ecosystems/osv.py`), and verify attestations (`ecosystems/provenance.py` for PEP 740,
-   `ecosystems/npm_provenance.py` for npm provenance). A failure in any step is recorded on
-   the facts as an error naming the rules it kept from running.
+   `ecosystems/npm_provenance.py` for npm provenance). When a PyPI release has a matching tag,
+   `ecosystems/gittree.py` reads the repository's file list at that commit over the same git
+   endpoint as the tag lookup, and `ecosystems/source.py` compares the wheel's Python files
+   with it. A failure in any step is recorded on the facts as an error naming the rules it
+   kept from running.
 3. **Read the files.** `facts/inventory.py` lists every file in an archive with its size,
    hash and kind. `facts/pyindex.py` parses each Python file with `ast` (Python's own
    parser, which reads code as a tree without running it) and records the sensitive calls
-   that run at import time. `facts/npmmeta.py` reads an npm tarball's file list and the
+   that run at import time, every sensitive call anywhere in the file, and the id git would
+   give the file's bytes. `facts/npmmeta.py` reads an npm tarball's file list and the
    install-time scripts in its `package.json`.
 4. **Judge.** `checks/` holds one function per rule. Each takes the baseline facts and the
    candidate facts and returns findings. Checks do no network or file access at all, so a
@@ -80,7 +84,7 @@ results describe what users will see.
 | [`workspace.py`](../src/garnet_guard/workspace.py) | Finds lockfiles, reads the base version from git, refuses symlinked lockfiles, and turns lockfile differences into `Change` records. |
 | [`lockfiles/`](../src/garnet_guard/lockfiles/) | One parser per lockfile format (`uv.lock`, `poetry.lock`, `pylock.toml`, `requirements*.txt`) and the code that compares two lists of pins. |
 | [`engine.py`](../src/garnet_guard/engine.py) | Runs the stages in order: fetch facts in parallel, run every check, turn errors into findings, sort, decide the verdict. |
-| [`ecosystems/`](../src/garnet_guard/ecosystems/) | Everything fetched about a release: PyPI and npm registry metadata and files, attestations, git tags, OSV advisories. |
+| [`ecosystems/`](../src/garnet_guard/ecosystems/) | Everything fetched about a release: PyPI and npm registry metadata and files, attestations, git tags, the repository's files at the tag (read from a git packfile, no `git` needed), OSV advisories. |
 | [`net.py`](../src/garnet_guard/net.py) | The only code that uses the network. HTTPS only, a short list of allowed hosts, size caps, timeouts and retries. |
 | [`safe_archive.py`](../src/garnet_guard/safe_archive.py) | The only code that opens zip and tar archives. Reads them in memory, never extracts to disk, and rejects dangerous entries. |
 | [`facts/`](../src/garnet_guard/facts/) | Describes what an archive contains, what its Python code does at import time, and which npm scripts run at install, without running anything. |

@@ -77,3 +77,25 @@ def test_function_passed_to_a_call_or_decorator_is_reached() -> None:
         ("subprocess.run", "b"),
         ("os.system", "deco"),
     }
+
+
+def test_sensitive_calls_anywhere_names_the_enclosing_function() -> None:
+    from garnet_guard.facts.pyindex import sensitive_calls
+
+    src = (
+        "import subprocess as sp\n"
+        "import demo.helpers\n"
+        "class Model:\n"
+        "    def __init__(self):\n"
+        "        sp.Popen(['x'])\n"
+        "def dl():\n"
+        "    demo.helpers.run()\n"
+        "    return sp.run(['y'])\n"
+        "sp.call(['z'])\n"
+    )
+    calls = sensitive_calls(src.encode(), own=frozenset({"demo"}))
+    assert [(c.name, c.line, c.via) for c in calls] == [
+        ("subprocess.Popen", 5, "__init__"),
+        ("subprocess.run", 8, "dl"),
+        ("subprocess.call", 9, None),
+    ]

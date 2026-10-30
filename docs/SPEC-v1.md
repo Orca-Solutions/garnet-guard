@@ -131,6 +131,7 @@ Default severities are what applies with no policy file.
 | GRN-C004 | new-binary | diff | The candidate adds a native executable or shared library that is not a compiled extension module of a package path present in the baseline, or the release changes from pure-Python to containing binaries. | warn |
 | GRN-C005 | obfuscated-blob | diff | A changed file gains a string or bytes literal over 2,048 characters with Shannon entropy over 4.5 bits per character, or any such literal passed to `exec`, `eval`, `compile`, `base64.*decode`, `zlib.decompress` or `marshal.loads`. | warn |
 | GRN-C006 | sdist-wheel-mismatch | diff | The selected wheel contains a `.py` or `.pth` file with no counterpart in the sdist, when the baseline had none. | warn |
+| GRN-C007 | code-not-in-source | diff | A Python file in the candidate's wheel (the sdist when there is no wheel) is not byte-identical to the file at the candidate's matched git tag, and it has a §6.3 sensitive call the source file lacks (every sensitive call counts when the path is absent at the tag). Calls the baseline already carried outside its source at the same path don't count. Files under a submodule Garnet can't read are reported as GRN-E001. | warn |
 | GRN-K001 | known-malicious | absolute | OSV lists a `MAL-` advisory affecting the candidate version. | block |
 | GRN-E001 | fetch-failed | absolute | Data needed for a rule couldn't be fetched. The finding names which rules were not evaluated. | warn |
 | GRN-E002 | parse-failed | absolute | An artifact or file couldn't be parsed. | warn |
@@ -142,7 +143,7 @@ Rule IDs are permanent. A rule may change default severity only in a minor relea
 
 ### 6.3 Sensitive call set
 
-For GRN-C002 and GRN-C003, a call is sensitive if it resolves (through imports and simple aliasing, without executing code) to any of: `exec`, `eval`, `compile`, `__import__`, `importlib.import_module` with a non-literal argument, `os.system`, `os.popen`, `os.exec*`, `os.spawn*`, `subprocess.*`, `pty.spawn`, `ctypes.*`, `socket.*`, `urllib.request.*`, `http.client.*`, `httpx.*`, `requests.*`, `aiohttp.*`, `base64.*decode` followed by any of the above, `marshal.loads`, `pickle.loads`. The list is versioned with the rule and MUST be shown by `garnet explain`.
+For GRN-C002, GRN-C003 and GRN-C007, a call is sensitive if it resolves (through imports and simple aliasing, without executing code) to any of: `exec`, `eval`, `compile`, `__import__`, `importlib.import_module` with a non-literal argument, `os.system`, `os.popen`, `os.exec*`, `os.spawn*`, `subprocess.*`, `pty.spawn`, `ctypes.*`, `socket.*`, `urllib.request.*`, `http.client.*`, `httpx.*`, `requests.*`, `aiohttp.*`, `base64.*decode` followed by any of the above, `marshal.loads`, `pickle.loads`. The list is versioned with the rule and MUST be shown by `garnet explain`.
 
 ### 6.4 Findings
 

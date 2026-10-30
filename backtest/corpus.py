@@ -31,7 +31,7 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 
 from garnet_guard import __version__, models
-from garnet_guard.ecosystems import github, npm, pypi
+from garnet_guard.ecosystems import github, gittree, npm, pypi
 from garnet_guard.engine import run_checks
 from garnet_guard.models import Change, ChangeResult, Limits, ReleaseFacts, Severity
 from garnet_guard.net import Http, NetError
@@ -42,7 +42,7 @@ CORPUS = {"pypi": HERE / "corpus.json", "npm": HERE / "corpus-npm.json"}
 RESULTS = {"pypi": HERE / "corpus-results", "npm": HERE / "corpus-results-npm"}
 NOT_DETECTION = {"GRN-K001", "GRN-E001", "GRN-E002", "GRN-E003"}
 RELEASES_PER_PACKAGE = 11  # 11 releases give 10 updates per package
-CACHE_FORMAT = 3
+CACHE_FORMAT = 4
 
 
 def _ecosystem(argv: list[str]) -> tuple[str, list[str]]:
@@ -218,7 +218,8 @@ def fetch_package(
                 return npm.release_facts(package, v, nctx, advisories=False)
 
         else:
-            pctx = pypi.FetchContext(http=http, limits=Limits(), tags=tags)
+            trees = gittree.TreeLookup(http)
+            pctx = pypi.FetchContext(http=http, limits=Limits(), tags=tags, trees=trees)
 
             def fetch(v: str) -> ReleaseFacts:
                 return pypi.release_facts(package, v, pctx, advisories=False)

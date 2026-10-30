@@ -214,7 +214,7 @@ class FileEntry:
 
 @dataclass(frozen=True)
 class CallSite:
-    """A sensitive call (``subprocess.Popen``) that runs at import time."""
+    """A sensitive call (``subprocess.Popen``) and the function it sits in."""
 
     name: str
     line: int
@@ -229,6 +229,8 @@ class ModuleIndex:
     path: str
     top_level_calls: tuple[CallSite, ...]
     imports: tuple[str, ...]
+    blob_sha1: str = ""  # the id git gives these bytes, to compare with the source tree
+    sensitive_calls: tuple[CallSite, ...] = ()  # §6.3 calls anywhere in the module
 
 
 @dataclass(frozen=True)
@@ -237,6 +239,30 @@ class PthFile:
 
     path: str
     exec_lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class UnsourcedFile:
+    """A Python file in a release that is not byte-for-byte in the repository at
+    the release's tag, and the sensitive calls it has that the source doesn't."""
+
+    path: str
+    in_source: bool  # True: the path exists at the tag with other content; False: absent
+    calls: tuple[CallSite, ...]
+
+
+@dataclass(frozen=True)
+class SourceMatch:
+    """How a release's Python files compare with its repository at the matched
+    tag (GRN-C007). ``prefix`` is the directory they live under there."""
+
+    repo: str
+    tag: str
+    commit: str
+    prefix: str
+    matched: int  # files byte-identical to the source
+    unmatched: tuple[UnsourcedFile, ...]
+    unchecked: tuple[str, ...] = ()  # files under a submodule Garnet couldn't read
 
 
 @dataclass(frozen=True)
@@ -262,6 +288,7 @@ class ArtifactFacts:
     unparsed: tuple[str, ...] = ()  # .py files ast couldn't parse
     wheel_tag: str | None = None
     entry_points: tuple[str, ...] = ()  # modules named by entry points
+    source_match: SourceMatch | None = None  # None: not compared (no tag, or a fetch error)
     # npm: the registry's Subresource Integrity string ("sha512-…") and the
     # one computed from the download (GRN-T008), and the package.json scripts
     # that run on the installing machine, as sorted (name, command) pairs.

@@ -335,3 +335,69 @@ def unparsed_changed(
                 for p in bad[:MAX_EVIDENCE]
             ),
         )
+
+
+def _source_matched(rel: ReleaseFacts) -> ArtifactFacts | None:
+    """The artifact whose Python files were compared with the source tree."""
+    return next((a for a in rel.content if a.source_match is not None), None)
+
+
+def code_not_in_source(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-C007: a Python file in the release isn't the one at the release's
+    tag, and it has sensitive calls the source file doesn't.
+
+    Files that differ from the source are common (a generated version
+    module, Cython output) and have no such calls, so they stay quiet. A
+    call the trusted version already carried outside its source, at the same
+    path, isn't new either.
+    """
+    if base is None:
+        return
+    c = _source_matched(cand)
+    if c is None or c.source_match is None:
+        return
+    sm = c.source_match
+    before: dict[str, set[str]] = {}
+    b = _source_matched(base)
+    if b is not None and b.source_match is not None:
+        before = {u.path: {s.name for s in u.calls} for u in b.source_match.unmatched}
+    evidence: list[Evidence] = []
+    files = 0
+    for u in sm.unmatched:
+        new = [s for s in u.calls if s.name not in before.get(u.path, set())]
+        if not new:
+            continue
+        files += 1
+        at = sm.prefix + u.path
+        for s in new:
+            via = f" (in {s.via}())" if s.via else ""
+            where = f"differs from {at} at {sm.tag}" if u.in_source else f"has no {at} at {sm.tag}"
+            evidence.append(
+                Evidence(
+                    "file",
+                    f"{u.path}:{s.line} calls {s.name}{via}; the source {where}",
+                    path=u.path,
+                    line=s.line,
+                    url=f"https://github.com/{sm.repo}/blob/{sm.commit}/{at}"
+                    if u.in_source
+                    else None,
+                )
+            )
+    if not evidence:
+        return
+    head = Evidence(
+        "tag",
+        f"{cand.version} → tag {sm.tag} at {sm.commit[:12]} in github.com/{sm.repo}; "
+        f"{sm.matched} Python file(s) match the source, {len(sm.unmatched)} don't",
+        url=f"https://github.com/{sm.repo}/tree/{sm.tag}",
+    )
+    more = len(evidence) - MAX_EVIDENCE
+    tail = (Evidence("note", f"and {more} more call site(s)"),) if more > 0 else ()
+    yield RawFinding(
+        "GRN-C007",
+        f"{cand.version} contains code that is not in github.com/{sm.repo} at tag {sm.tag} "
+        f"({files} file(s))",
+        (head, *evidence[:MAX_EVIDENCE], *tail),
+    )
