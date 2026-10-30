@@ -295,3 +295,62 @@ def test_sensitive_calls_anywhere_names_the_enclosing_function() -> None:
         ("subprocess.run", 8, "dl"),
         ("subprocess.call", 9, None),
     ]
+
+
+# Set 2026-10-c: one line per name added, written the way code imports it.
+WIDENED = [
+    ("import os\nos.fork()\n", "os.fork"),
+    ("import os\nos.forkpty()\n", "os.forkpty"),
+    ("import os\nos.startfile('x')\n", "os.startfile"),
+    ("import pty\npty.fork()\n", "pty.fork"),
+    ("import asyncio\nasyncio.create_subprocess_exec('x')\n", "asyncio.create_subprocess_exec"),
+    ("import asyncio\nasyncio.create_subprocess_shell('x')\n", "asyncio.create_subprocess_shell"),
+    ("from multiprocessing import Process\nProcess(target=print)\n", "multiprocessing.Process"),
+    ("import _winapi\n_winapi.CreateProcess(None, 'x')\n", "_winapi.CreateProcess"),
+    ("import _posixsubprocess\n_posixsubprocess.fork_exec()\n", "_posixsubprocess.fork_exec"),
+    ("import runpy\nrunpy.run_path('x.py')\n", "runpy.run_path"),
+    ("import zipimport\nzipimport.zipimporter('x.zip')\n", "zipimport.zipimporter"),
+    (
+        "import importlib.util as u\nu.spec_from_file_location('m', 'x.py')\n",
+        "importlib.util.spec_from_file_location",
+    ),
+    (
+        "from importlib.util import spec_from_loader\nspec_from_loader('m', None)\n",
+        "importlib.util.spec_from_loader",
+    ),
+    (
+        "from importlib.machinery import SourceFileLoader\nSourceFileLoader('m', 'x.py')\n",
+        "importlib.machinery.SourceFileLoader",
+    ),
+    (
+        "import importlib.machinery\nimportlib.machinery.SourcelessFileLoader('m', 'x.pyc')\n",
+        "importlib.machinery.SourcelessFileLoader",
+    ),
+    ("import types\ntypes.FunctionType(None, {})\n", "types.FunctionType"),
+    ("from types import CodeType\nCodeType()\n", "types.CodeType"),
+    ("import asyncio\nasyncio.open_connection('h', 1)\n", "asyncio.open_connection"),
+    ("import urllib3\nurllib3.PoolManager()\n", "urllib3.PoolManager"),
+    ("import urllib3\nurllib3.request('GET', 'u')\n", "urllib3.request"),
+    ("import ftplib\nftplib.FTP('h')\n", "ftplib.FTP"),
+    ("import smtplib\nsmtplib.SMTP('h')\n", "smtplib.SMTP"),
+    ("import xmlrpc.client\nxmlrpc.client.ServerProxy('u')\n", "xmlrpc.client.ServerProxy"),
+    ("import webbrowser\nwebbrowser.open('u')\n", "webbrowser.open"),
+]
+
+
+def test_widened_set_names_each_call() -> None:
+    for src, name in WIDENED:
+        assert names(src) == {name}, src
+
+
+def test_widened_set_leaves_common_calls_alone() -> None:
+    # Calls packages make at import every day, which stay out of the set.
+    for src in (
+        "import importlib.util\nimportlib.util.find_spec('numpy')\n",
+        "import importlib.util\nimportlib.util.module_from_spec(None)\n",
+        "import urllib3\nurllib3.disable_warnings()\n",
+        "import multiprocessing\nmultiprocessing.cpu_count()\n",
+        "import types\ntypes.SimpleNamespace()\n",
+        "import os\nos.getpid()\n",
+    ):
+        assert names(src) == set(), src

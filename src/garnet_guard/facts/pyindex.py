@@ -41,7 +41,7 @@ from dataclasses import dataclass
 
 from ..models import CallSite
 
-SENSITIVE_SET_VERSION = "2026-10-b"
+SENSITIVE_SET_VERSION = "2026-10-c"
 
 # SPEC §6.3. Exact names, and prefixes that match a module and everything in it.
 _EXACT = frozenset(
@@ -55,6 +55,28 @@ _EXACT = frozenset(
         "pty.spawn",
         "marshal.loads",
         "pickle.loads",
+        # 2026-10-c: processes started without subprocess.
+        "os.fork",
+        "os.forkpty",
+        "os.startfile",
+        "pty.fork",
+        "asyncio.create_subprocess_exec",
+        "asyncio.create_subprocess_shell",
+        "multiprocessing.Process",
+        "_winapi.CreateProcess",
+        # 2026-10-c: code loaded from a file or built from a code object.
+        "importlib.util.spec_from_file_location",
+        "importlib.util.spec_from_loader",
+        "types.FunctionType",
+        "types.CodeType",
+        # 2026-10-c: network connections outside the HTTP clients above.
+        "asyncio.open_connection",
+        "urllib3.PoolManager",
+        "urllib3.ProxyManager",
+        "urllib3.HTTPConnectionPool",
+        "urllib3.HTTPSConnectionPool",
+        "urllib3.connection_from_url",
+        "urllib3.request",
     }
 )
 _PREFIXES = (
@@ -62,13 +84,26 @@ _PREFIXES = (
     "os.spawn",
     "os.posix_spawn",
     "subprocess.",
+    "_posixsubprocess.",
     "ctypes.",
+    "runpy.",
+    "zipimport.",
+    "importlib.machinery.SourceFileLoader",
+    "importlib.machinery.SourcelessFileLoader",
+    "importlib.machinery.ExtensionFileLoader",
     "socket.",
     "urllib.request.",
     "http.client.",
     "httpx.",
     "requests.",
     "aiohttp.",
+    "ftplib.",
+    "smtplib.",
+    "poplib.",
+    "imaplib.",
+    "telnetlib.",
+    "xmlrpc.client.",
+    "webbrowser.",
 )
 _BUILTINS = frozenset(dir(builtins))
 
