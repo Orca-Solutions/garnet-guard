@@ -197,6 +197,23 @@ _DOCS: tuple[RuleDoc, ...] = (
         "release, needs a look before the update merges.",
     ),
     RuleDoc(
+        "GRN-C010",
+        "new-startup-file",
+        "diff",
+        W,
+        "The new version's wheel adds a file that runs or installs outside the package: a "
+        "sitecustomize.py or usercustomize.py in site-packages, a script under .data/scripts/, or "
+        "a file under .data/data/. It is a warning for the startup modules, for a script named "
+        "like a common command and for files under etc/; other scripts and data files are info.",
+        "Python imports sitecustomize and usercustomize at every start, like a .pth file, so their "
+        "code runs in every Python process in the environment whether or not anything imports the "
+        "package. Scripts become commands on PATH, and files under etc/ are read as "
+        "configuration by other tools.",
+        "Open the file the evidence names. A library rarely needs to run at Python startup or to "
+        "install a command named like pip or git. Find the commit that added it in the "
+        "project's repository; if nothing there explains it, don't merge.",
+    ),
+    RuleDoc(
         "GRN-C011",
         "new-js-capability",
         "diff",

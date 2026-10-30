@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 import re
 from collections.abc import Iterator
 from datetime import datetime
@@ -809,6 +810,125 @@ def new_dependency(
         title,
         tuple(evidence[:MAX_EVIDENCE]) + _compare_note(b, c),
         lowered_to=None if flagged else Severity.INFO,
+    )
+
+
+# GRN-C010: files that run without the package being imported. Python imports
+# ``sitecustomize`` and ``usercustomize`` from site-packages at every start; a
+# wheel's ``.data/scripts/`` files become commands on PATH, and ``.data/data/``
+# files land under the environment's prefix, where other tools read their
+# configuration (``etc/jupyter/``).
+_STARTUP_MODULES = frozenset({"sitecustomize.py", "usercustomize.py"})
+_DATA_DIR = re.compile(r"^[^/]+\.data/(scripts|data)/(.+)$")
+# Windows runs a command named git from git.exe, git.cmd, git.bat or git.com.
+_WINDOWS_RUNNABLE = frozenset({"bat", "cmd", "com", "exe"})
+_COMMANDS = frozenset(
+    {
+        "bash",
+        "cat",
+        "cp",
+        "curl",
+        "docker",
+        "env",
+        "gcc",
+        "git",
+        "gpg",
+        "grep",
+        "kubectl",
+        "ls",
+        "make",
+        "mv",
+        "node",
+        "npm",
+        "npx",
+        "openssl",
+        "pip",
+        "pip3",
+        "pipx",
+        "poetry",
+        "pytest",
+        "python",
+        "python3",
+        "rm",
+        "scp",
+        "sh",
+        "ssh",
+        "sudo",
+        "tar",
+        "tox",
+        "uv",
+        "uvx",
+        "wget",
+        "which",
+        "zsh",
+    }
+)
+
+
+def _startup_kind(path: str) -> tuple[str, str] | None:
+    """(where, name) for a wheel file that runs or installs outside the package."""
+    site = _site_name(path)
+    if site in _STARTUP_MODULES:
+        return "site-packages", site
+    m = _DATA_DIR.match(path)
+    if m:
+        return m.group(1), m.group(2)
+    return None
+
+
+def new_startup_file(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-C010: the candidate's wheel adds a file that runs, or installs,
+    outside the package: ``sitecustomize.py`` or ``usercustomize.py`` in
+    site-packages, a script under ``.data/scripts/``, or a file under
+    ``.data/data/``.
+
+    The startup modules, scripts named like a common command, and data files
+    under ``etc/`` keep the rule's severity; other scripts and data files are
+    reported at info. Wheels only: an sdist installs what its build decides.
+    """
+    if base is None:
+        return
+    b, c = _pair(base, cand)
+    if b is None or c is None or not (b.inspected and c.inspected):
+        return
+    if not (b.filename.endswith(".whl") and c.filename.endswith(".whl")):
+        return
+    old = {k for f in b.files if (k := _startup_kind(f.path)) is not None}
+    evidence: list[Evidence] = []
+    loud = 0
+    for f in c.files:
+        k = _startup_kind(f.path)
+        if k is None or k in old:
+            continue
+        where, name = k
+        if where == "site-packages":
+            why = "Python imports it from site-packages at every start"
+            loud += 1
+        elif where == "scripts":
+            command = posixpath.basename(name)
+            why = f"installs as the command {command}"
+            stem, dot, ext = command.lower().rpartition(".")
+            usual = stem if dot and ext in _WINDOWS_RUNNABLE else command.lower()
+            if usual in _COMMANDS:
+                why += f", which can run instead of the usual {usual}"
+                loud += 1
+        else:
+            why = f"installs as <prefix>/{name}"
+            if name.startswith("etc/"):
+                why += ", where other tools read their configuration"
+                loud += 1
+        evidence.append(
+            Evidence("file", f"{f.path}: {why} ({f.size:,} bytes)", path=f.path, sha256=f.sha256)
+        )
+    if not evidence:
+        return
+    yield RawFinding(
+        "GRN-C010",
+        f"{cand.version} adds {len(evidence)} file(s) that run or install outside the package",
+        tuple(evidence[:MAX_EVIDENCE]) + _compare_note(b, c),
+        lowered_to=None if loud else Severity.INFO,
     )
 
 

@@ -606,6 +606,46 @@ def _rows() -> list[Row]:
         eco=NPM,
     )
 
+    # GRN-C010 new-startup-file
+    fires(
+        "GRN-C010",
+        "a sitecustomize.py in site-packages",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "sitecustomize.py": "import demo\n"}),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C010",
+        "a script named like a common command",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "demo-1.1.data/scripts/pip": "#!/bin/sh\n"}),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C010",
+        "a new data file, listed at info",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "demo-1.1.data/data/share/demo/logo.svg": "<svg/>"}),
+        Verdict.PASS,
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C010",
+        "the same script as before",
+        release("1.0", {**PKG, "demo-1.0.data/scripts/demo-run": "#!/bin/sh\n"}),
+        release("1.1", {**PKG, "demo-1.1.data/scripts/demo-run": "#!/bin/sh\necho 1\n"}),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C010",
+        "sitecustomize.py inside the package folder",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "demo/sitecustomize.py": ""}),
+        eco=PYPI,
+    )
+
     # GRN-C011 new-js-capability: the JavaScript an npm package loads gains a
     # process, network or eval use, or obfuscated names (the chalk 5.6.1 shape).
     fires(
