@@ -14,6 +14,7 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 - GRN-C002 reads the whole of `setup.py`, not only what runs at import, so a `cmdclass` install hook that runs a command is reported (with the function it sits in). When the trusted version shipped no sdist, every build-time call in the new sdist is new; when the trusted sdist exists but couldn't be read, GRN-E001 reports that instead.
 - GRN-C001 compares `.pth` files by where they land in `site-packages`: a file under `<name>-<version>.data/purelib/` is the same file release after release, a `.pth` deeper in the package (which Python never reads) is ignored, and a renamed `.pth` with the same `import` lines is not new. Modules under `.data/purelib/` keep their names across versions for GRN-C003.
 - When the trusted version ships only a wheel and the new one only an sdist (or the reverse), the content rules compare the two kinds with each other and say so, instead of comparing nothing.
+- GRN-C003 follows import-time calls into the package's own other modules, as deep as they go and through function-local imports, and names the module whose import started the chain. It also follows `sp = subprocess` style aliases and `getattr(sys.modules[__name__], "ctypes")`, the num2words 0.5.15 trick for reaching a module without naming it.
 
 ## 0.1.0a1
 

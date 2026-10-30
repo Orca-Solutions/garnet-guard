@@ -11,12 +11,17 @@ The same goes for lambdas it calls or passes, classes it instantiates (their
 A function that is only returned or stored is not followed.
 Code under ``if __name__ == "__main__":`` is skipped.
 
-Names are resolved through imports and simple aliasing, ``from x import *``
-of a sensitive module, ``getattr(x, "name")`` with a literal name, and
-``__import__("x")`` or ``importlib.import_module("x")`` with a literal name.
-A ``base64.*decode`` whose result reaches a sensitive call is reported with
-that call, so ``exec(base64.b64decode(...))`` is new even where ``exec``
-was already used.
+Calls into the package's own other modules are reported as ``calls_out``
+(``memos.log.get_logger``), and ``scan_module`` can start at such a function
+instead of the module body, so the inventory can follow a chain of calls
+across modules.
+
+Names are resolved through imports and simple aliasing (``sp = subprocess``),
+``from x import *`` of a sensitive module, ``getattr(x, "name")`` with a
+literal name, and ``__import__("x")`` or ``importlib.import_module("x")``
+with a literal name. A ``base64.*decode`` whose result reaches a sensitive
+call is reported with that call, so ``exec(base64.b64decode(...))`` is new
+even where ``exec`` was already used.
 """
 
 from __future__ import annotations
@@ -24,7 +29,8 @@ from __future__ import annotations
 import ast
 import builtins
 import warnings
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Container, Iterable, Iterator, Mapping
+from dataclasses import dataclass
 
 from ..models import CallSite
 
@@ -123,10 +129,12 @@ def _import_literal(call: ast.Call) -> str | None:
     return None
 
 
-def _dotted(node: ast.expr) -> list[str] | None:
+def _dotted(node: ast.expr, modules: Container[str] = ()) -> list[str] | None:
     """``a.b.c`` as ``["a", "b", "c"]``, or None if it isn't a plain dotted name.
 
-    ``getattr(a, "b").c`` and ``__import__("a").b`` read the same way.
+    ``getattr(a, "b").c`` and ``__import__("a").b`` read the same way. So does
+    ``getattr(<anything>, "m")`` when ``m`` names a module the file imported:
+    num2words 0.5.15 wrote ``getattr(sys.modules[__name__], "ctypes")``.
     """
     parts: list[str] = []
     while True:
@@ -136,6 +144,8 @@ def _dotted(node: ast.expr) -> list[str] | None:
         elif isinstance(node, ast.Call) and (attr := _getattr_literal(node)) is not None:
             parts.append(attr)
             node = node.args[0]
+            if attr in modules and not isinstance(node, (ast.Name, ast.Attribute, ast.Call)):
+                return list(reversed(parts))
         else:
             break
     if isinstance(node, ast.Name):
@@ -166,26 +176,36 @@ class _Resolver:
                 else:
                     top = a.name.split(".")[0]
                     self.aliases[top] = top
-        else:
-            if node.level:
-                # Relative imports don't alias outside names; record what they
-                # load so callers can tell which of the package's modules run.
-                base = self._relative_base(node.level)
-                if base is not None:
-                    mod = ".".join(p for p in (base, node.module or "") if p)
-                    self.imports.add(mod)
-                    self.imports.update(f"{mod}.{a.name}" for a in node.names if a.name != "*")
+            return
+        if node.level:
+            # A relative import names one of the package's own modules; record
+            # what it loads, and alias the names so calls into it can be followed.
+            base = self._relative_base(node.level)
+            if base is None:
                 return
+            mod = ".".join(p for p in (base, node.module or "") if p)
+        else:
             mod = node.module or ""
-            self.imports.add(mod)
-            for a in node.names:
-                if a.name == "*":
-                    if mod:
-                        self.star_modules.append(mod)
-                    continue
-                self.aliases[a.asname or a.name] = f"{mod}.{a.name}" if mod else a.name
+        self.imports.add(mod)
+        for a in node.names:
+            if a.name == "*":
                 if mod:
-                    self.imports.add(f"{mod}.{a.name}")  # may be a submodule
+                    self.star_modules.append(mod)
+                continue
+            self.aliases[a.asname or a.name] = f"{mod}.{a.name}" if mod else a.name
+            if mod:
+                self.imports.add(f"{mod}.{a.name}")  # may be a submodule
+
+    def note_assignment(self, node: ast.Assign) -> None:
+        """``sp = subprocess`` or ``ct = getattr(..., "ctypes")`` aliases the name."""
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            return
+        parts = _dotted(node.value, self.module_names())
+        if parts is None:
+            return
+        head = parts[0]
+        if head in self.aliases:
+            self.aliases[node.targets[0].id] = ".".join([self.aliases[head], *parts[1:]])
 
     def _relative_base(self, level: int) -> str | None:
         if self.package is None:
@@ -195,8 +215,12 @@ class _Resolver:
             return None
         return ".".join(parts[: len(parts) - (level - 1)])
 
+    def module_names(self) -> set[str]:
+        """Names bound to a module by a plain ``import m``."""
+        return {k for k, v in self.aliases.items() if "." not in v}
+
     def resolve(self, func: ast.expr) -> str | None:
-        parts = _dotted(func)
+        parts = _dotted(func, self.module_names())
         if not parts:
             return None
         head, rest = parts[0], parts[1:]
@@ -340,19 +364,32 @@ def _decoded_inputs(
     return sorted(set(out))
 
 
-def index_module(
+@dataclass(frozen=True)
+class ModuleScan:
+    """What one module runs, from its body or from one of its callables."""
+
+    calls: tuple[CallSite, ...]  # sensitive calls reached
+    imports: tuple[str, ...]  # modules the file imports
+    calls_out: tuple[str, ...]  # the package's own callables it calls, dotted
+
+
+def scan_module(
     source: bytes,
     *,
     path: str = "<module>",
     own: frozenset[str] = frozenset(),
     module: str | None = None,
-) -> tuple[tuple[CallSite, ...], tuple[str, ...]]:
-    """Return (import-time call sites, imports). Raises SyntaxError/ValueError.
+    entry: str | None = None,
+) -> ModuleScan:
+    """Index what runs at import, or what runs when ``entry`` is called.
 
-    ``own`` names the release's own top-level packages; calls into them are
-    not sensitive even if the names collide (the ``requests`` package calling
-    its own ``requests.adapters``). ``module`` is the dotted module name, used
-    to resolve relative imports into the imports list.
+    Raises SyntaxError/ValueError. ``own`` names the release's own top-level
+    packages; calls into them are not sensitive even if the names collide
+    (the ``requests`` package calling its own ``requests.adapters``) and are
+    returned as ``calls_out`` instead. ``module`` is the dotted module name,
+    used to resolve relative imports. ``entry`` is a function, ``Class``
+    (instantiation) or ``Class.method`` defined in the module; an unknown
+    entry runs nothing.
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # package source triggers SyntaxWarnings
@@ -374,6 +411,7 @@ def index_module(
 
     reachable = _reachable(tree)
     calls: list[CallSite] = []
+    calls_out: set[str] = set()
     seen: set[str] = set()
     decoded: dict[str, str] = {}  # name → the base64 decode it was assigned from
 
@@ -383,7 +421,9 @@ def index_module(
             if isinstance(node, ast.Call):
                 args = [node.func, *node.args, *(k.value for k in node.keywords)]
                 name = resolver.resolve(node.func)
-                if name is not None and name.split(".")[0] not in own and is_sensitive(name, node):
+                if name is not None and name.split(".")[0] in own:
+                    calls_out.add(name)
+                elif name is not None and is_sensitive(name, node):
                     calls.append(CallSite(name=name, line=node.lineno, via=via))
                     for decode in _decoded_inputs(args[1:], resolver, decoded):
                         calls.append(CallSite(name=f"{decode} → {name}", line=node.lineno, via=via))
@@ -393,6 +433,7 @@ def index_module(
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 reached += _local_refs(node.decorator_list, reachable)
             elif isinstance(node, ast.Assign):
+                resolver.note_assignment(node)
                 for decode in _decoded_inputs([node.value], resolver, decoded):
                     decoded.update((t.id, decode) for t in node.targets if isinstance(t, ast.Name))
         for key in reached:
@@ -400,9 +441,27 @@ def index_module(
                 seen.add(key)
                 scan(reachable[key], key)
 
-    scan(tree.body, None)
+    if entry is None:
+        scan(tree.body, None)
+    elif entry in reachable:
+        seen.add(entry)
+        scan(reachable[entry], entry)
     uniq = sorted(set(calls), key=lambda c: (c.line, c.name, c.via or ""))
-    return tuple(uniq), tuple(sorted(i for i in resolver.imports if i))
+    return ModuleScan(
+        tuple(uniq), tuple(sorted(i for i in resolver.imports if i)), tuple(sorted(calls_out))
+    )
+
+
+def index_module(
+    source: bytes,
+    *,
+    path: str = "<module>",
+    own: frozenset[str] = frozenset(),
+    module: str | None = None,
+) -> tuple[tuple[CallSite, ...], tuple[str, ...]]:
+    """Return (import-time call sites, imports). Raises SyntaxError/ValueError."""
+    scan = scan_module(source, path=path, own=own, module=module)
+    return scan.calls, scan.imports
 
 
 def module_name(path: str) -> str:

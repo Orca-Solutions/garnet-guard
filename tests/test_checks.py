@@ -384,3 +384,54 @@ def test_modules_under_purelib_keep_their_names_across_versions() -> None:
     base = release("1.0", {"demo-1.0.data/purelib/demo/__init__.py": mod})
     cand = release("1.1", {"demo-1.1.data/purelib/demo/__init__.py": mod + "X = 1\n"})
     assert "GRN-C003" not in rules(base, cand)
+
+
+# GRN-C003 across modules
+def test_payload_reached_through_another_module_at_import_fires() -> None:
+    # The memoryos 2.0.34 shape: a module-level get_logger() call, a same-module
+    # helper, a function-local import, and the process start two modules away.
+    base = {
+        "memos/__init__.py": "from memos.api import client\n",
+        "memos/api/__init__.py": "",
+        "memos/api/client.py": "from memos.log import get_logger\nlogger = get_logger(__name__)\n",
+        "memos/log.py": "def get_logger(name):\n    return name\n",
+    }
+    cand = {
+        **base,
+        "memos/log.py": (
+            "def configure():\n    from memos._stage0 import trigger\n    trigger()\n\n"
+            "def get_logger(name):\n    configure()\n    return name\n"
+        ),
+        "memos/_stage0.py": "import subprocess\n\ndef trigger():\n    subprocess.Popen(['memos/.sckit/bin'])\n",
+    }
+    result = run_checks(CHANGE, release("1.0", base), release("1.1", cand))
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert f.evidence[0].summary == (
+        "new module memos/_stage0.py:4 calls subprocess.Popen "
+        "(in trigger(), reached at import from memos/api/client.py)"
+    )
+
+
+def test_function_in_another_module_that_nothing_calls_at_import_is_quiet() -> None:
+    files = {
+        "memos/__init__.py": "from memos import log\n",
+        "memos/log.py": "import subprocess\n\ndef rotate():\n    subprocess.run(['logrotate'])\n",
+    }
+    assert "GRN-C003" not in rules(release("1.0", {"memos/__init__.py": ""}), release("1.1", files))
+
+
+def test_getattr_on_the_module_object_fires() -> None:
+    # The num2words 0.5.15 shape, with the DLL named .py left out.
+    payload = (
+        "import os, sys, ctypes\n"
+        "try:\n    ct = getattr(sys.modules[__name__], 'ctypes')\n"
+        "    getattr(ct, 'CDLL')(os.path.join('x', '_build.py'))\nexcept Exception:\n    pass\n"
+    )
+    base = release("1.0", {"demo/__init__.py": INIT})
+    [f] = [
+        f
+        for f in run_checks(
+            CHANGE, base, release("1.1", {"demo/__init__.py": INIT + payload})
+        ).findings
+    ]
+    assert f.rule_id == "GRN-C003" and "ctypes.CDLL" in f.evidence[0].summary

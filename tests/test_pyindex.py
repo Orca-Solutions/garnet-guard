@@ -137,3 +137,54 @@ def test_base64_decode_feeding_a_sensitive_call_is_its_own_entry() -> None:
     }
     # Decoding on its own is not sensitive.
     assert names("import base64\nprint(base64.b64decode('x'))\n") == set()
+
+
+def test_assignment_aliases_and_getattr_on_a_module_object() -> None:
+    from garnet_guard.facts.pyindex import scan_module
+
+    assert names("import subprocess\nsp = subprocess\nsp.run(['x'])\n") == {"subprocess.run"}
+    assert names("import os\nrun = os.system\nrun('x')\n") == {"os.system"}
+    # num2words 0.5.15: the module reached through sys.modules, then CDLL through getattr.
+    src = (
+        "import os, sys, ctypes\n"
+        "try:\n"
+        "    ct = getattr(sys.modules[__name__], 'ctypes')\n"
+        "    lib = getattr(ct, 'CDLL')(os.path.join('here', '_build.py'))\n"
+        "    getattr(lib, 'main')()\n"
+        "except Exception:\n"
+        "    pass\n"
+    )
+    assert names(src) == {"ctypes.CDLL"}
+    # Only a module the file imported is read that way.
+    assert names("import sys\nx = getattr(sys.modules[__name__], 'ctypes')\nx.CDLL('a')\n") == set()
+    assert scan_module(b"import os\nclass K:\n    pass\n", entry="missing").calls == ()
+
+
+def test_calls_into_own_package_are_reported_not_flagged() -> None:
+    from garnet_guard.facts.pyindex import scan_module
+
+    src = b"from memos.log import get_logger\nfrom . import util\nlogger = get_logger(__name__)\nutil.setup()\n"
+    scan = scan_module(
+        src, own=frozenset({"memos"}), module="memos.api.client", path="memos/api/client.py"
+    )
+    assert scan.calls == ()
+    assert scan.calls_out == ("memos.api.util.setup", "memos.log.get_logger")
+
+
+def test_scan_from_an_entry_follows_the_chain_inside_the_module() -> None:
+    from garnet_guard.facts.pyindex import scan_module
+
+    src = (
+        b"import subprocess\n"
+        b"def configure():\n"
+        b"    from memos._stage0 import trigger\n"
+        b"    trigger()\n"
+        b"def get_logger(name):\n"
+        b"    configure()\n"
+        b"    return name\n"
+        b"def unused():\n"
+        b"    subprocess.run(['x'])\n"
+    )
+    scan = scan_module(src, own=frozenset({"memos"}), module="memos.log", entry="get_logger")
+    assert scan.calls == () and scan.calls_out == ("memos._stage0.trigger",)
+    assert scan_module(src, own=frozenset({"memos"}), module="memos.log").calls_out == ()

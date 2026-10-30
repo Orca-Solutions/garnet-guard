@@ -312,7 +312,8 @@ def new_import_time_exec(
         for s in m.top_level_calls:
             if s.name in before:
                 continue
-            via = f" (in {s.via}(), reached at import)" if s.via else ""
+            origin = f" from {s.from_module}" if s.from_module else ""
+            via = f" (in {s.via}(), reached at import{origin})" if s.via else ""
             where = "new module " if m.module not in old else ""
             evidence.append(
                 Evidence(
