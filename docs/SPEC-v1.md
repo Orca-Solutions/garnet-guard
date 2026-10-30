@@ -227,7 +227,7 @@ The schema is published with each release. Within 1.x, fields may be added but n
 
 ### 9.3 SARIF
 
-SARIF 2.1.0. One `run`, tool name `garnet`, one `rule` per rule ID. Results are located on the lockfile line that pins the candidate version. Severity maps `block` → `error`, `warn` → `warning`, `info` → `note`. Suppressed findings carry a SARIF `suppressions` entry.
+SARIF 2.1.0. One `run`, tool name `Garnet Guard` (GitHub shows it as the check run name and on inline alerts), one `rule` per rule ID. Results are located on the lockfile line that pins the candidate version. Severity maps `block` → `error`, `warn` → `warning`, `info` → `note`. Suppressed findings carry a SARIF `suppressions` entry.
 
 ### 9.4 PR comment
 
