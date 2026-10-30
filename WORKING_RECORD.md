@@ -2,6 +2,20 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-30: npm lockfiles
+
+**State.** `garnet check` and the Action read the npm lockfiles SPEC §3.1 lists: `package-lock.json` and `npm-shrinkwrap.json` (lockfileVersion 2 and 3, `lockfiles/npm_lock.py`), `yarn.lock` (classic and Berry, read line by line, `lockfiles/yarn.py`) and `pnpm-lock.yaml` (lockfile 6 and 9, `lockfiles/pnpm.py`). `workspace.changes_for` takes the ecosystem from the lockfile format, `discover` and `action/run.sh` list the four file names, and the example workflows trigger on them. A package resolved from git, a local path, a bundle or a URL outside the registry is a GRN-E005 finding, as are an entry without a version and a name that isn't an npm package name, so nothing in a lockfile is passed without being read. Several versions of one package in a lockfile (nested `node_modules`) are compared per version, as §3.2 says.
+
+`pyyaml` is a new runtime dependency for pnpm-lock.yaml (ADR-0016). The loader is the safe loader with aliases refused, so a lockfile from a pull request can't expand into memory; pnpm never writes aliases. YAML and JSON errors are reported by position only, like the TOML ones.
+
+**Verification.**
+- `uv run pytest` (274 tests), ruff, mypy (strict) and `lint-imports` pass. `tests/test_npm_lockfiles.py` covers each format with scoped names, nested duplicates, aliases (`string-width-cjs`), peer suffixes, git, path, bundled, private-registry and version-less entries, the refused lockfile versions, a YAML alias, position-only errors, detection by name and content, `changes_for` with and without a base, `dedupe` across ecosystems, `discover`, and `garnet check` on a package-lock.json with evaluation faked.
+- The fixtures are hand-written in the shape each tool writes; no real lockfile from a project is checked in.
+
+**Open tasks.** semver ranges for `[[ignore]]` versions on npm (ignores match npm versions exactly until then); yarn.lock and pnpm-lock.yaml record no registry, so a private registry set in `.npmrc` shows as GRN-E001 (not on npmjs.org) rather than GRN-E005; `bin` diffs and a JavaScript content rule, as before.
+
+**Review dispositions.** None yet.
+
 ## 2026-10-30: SARIF tool name is "Garnet Guard"
 
 **State.** The SARIF driver name was `garnet`, which GitHub shows as the code scanning check run's name and at the top of each inline alert ("garnet / ..."). It read like one of GitHub's own checks. It is now `Garnet Guard`. Code scanning tracks alerts by tool name, so alerts uploaded under `garnet` (one so far, #9 on PR #25's merge ref) stay under the old name and aren't matched to new ones.

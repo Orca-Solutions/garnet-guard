@@ -16,8 +16,26 @@ PYPI_INDEXES = frozenset(
     }
 )
 PYPI_FILE_HOST = "https://files.pythonhosted.org/"
+NPM_REGISTRIES = frozenset({"https://registry.npmjs.org/", "https://registry.yarnpkg.com/"})
 
-Format = Literal["uv.lock", "poetry.lock", "pylock.toml", "requirements.txt"]
+Format = Literal[
+    "uv.lock",
+    "poetry.lock",
+    "pylock.toml",
+    "requirements.txt",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+]
+ECOSYSTEM: dict[str, str] = {
+    "uv.lock": "pypi",
+    "poetry.lock": "pypi",
+    "pylock.toml": "pypi",
+    "requirements.txt": "pypi",
+    "package-lock.json": "npm",
+    "yarn.lock": "npm",
+    "pnpm-lock.yaml": "npm",
+}
 
 
 class LockfileError(Exception):
@@ -42,16 +60,41 @@ def toml_error(err: ValueError) -> LockfileError:
 class Pin:
     """One package entry in a lockfile.
 
-    ``source`` is "pypi" for packages Garnet can check, "unpinned" for a
-    requirements line without ``==`` (GRN-E004), and "unsupported" for git,
-    path, URL or private-index sources (GRN-E005), with ``detail`` saying why.
+    ``source`` is "pypi" or "npm" for packages Garnet can check, "unpinned"
+    for a requirements line without ``==`` (GRN-E004), and "unsupported" for
+    git, path, URL or private-index sources (GRN-E005), with ``detail`` saying
+    why.
     """
 
-    package: str  # PEP 503 normalized
+    package: str  # PEP 503 normalized for PyPI; as written for npm
     version: str | None
     line: int
-    source: Literal["pypi", "unpinned", "unsupported"] = "pypi"
+    source: Literal["pypi", "npm", "unpinned", "unsupported"] = "pypi"
     detail: str | None = None
+
+    @property
+    def checkable(self) -> bool:
+        """True for a package from a registry Garnet reads."""
+        return self.source in ("pypi", "npm")
+
+
+_NPM_NAME = re.compile(r"^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$", re.IGNORECASE)
+
+
+def npm_pin(package: str, version: str | None, line: int, *, why: str | None = None) -> Pin:
+    """An npm entry: checkable when it names a registry package with a version.
+
+    ``why`` says why it isn't (git, a path, a URL outside the registry). An
+    entry whose name isn't an npm package name, or that has no version, is
+    unsupported too, so the report says so rather than Garnet failing on it.
+    """
+    if why is None and not (_NPM_NAME.match(package) and len(package) <= 214):
+        why = "not an npm package name"
+    if why is None and not version:
+        why = "no version"
+    if why is None:
+        return Pin(package, version, line, "npm")
+    return Pin(package, version or None, line, "unsupported", why)
 
 
 _REQ_NAME = re.compile(r"requirements[^/\\]*\.(txt|in)$", re.IGNORECASE)
@@ -70,6 +113,12 @@ def detect(name: str, data: bytes) -> Format:
         return "uv.lock"
     if base == "poetry.lock":
         return "poetry.lock"
+    if base in ("package-lock.json", "npm-shrinkwrap.json"):
+        return "package-lock.json"
+    if base == "yarn.lock":
+        return "yarn.lock"
+    if base == "pnpm-lock.yaml":
+        return "pnpm-lock.yaml"
     if _PYLOCK_NAME.match(base):
         return "pylock.toml"
     if _REQ_NAME.search(base) or base.endswith(".txt"):
@@ -81,12 +130,18 @@ def detect(name: str, data: bytes) -> Format:
         return "uv.lock"
     if b"[[package]]" in head:
         return "poetry.lock"
+    if b'"lockfileVersion"' in head:
+        return "package-lock.json"
+    if b"lockfileVersion:" in head:
+        return "pnpm-lock.yaml"
+    if b"# yarn lockfile v1" in head or b"__metadata:" in head:
+        return "yarn.lock"
     raise LockfileError(f"unsupported lockfile: {base}")
 
 
 def parse(name: str, data: bytes, *, format: Format | None = None) -> list[Pin]:
     """Every package entry in a lockfile. Raises ``LockfileError``."""
-    from . import pylock, requirements, toml_locks
+    from . import npm_lock, pnpm, pylock, requirements, toml_locks, yarn
 
     fmt = format or detect(name, data)
     try:
@@ -99,4 +154,10 @@ def parse(name: str, data: bytes, *, format: Format | None = None) -> list[Pin]:
         return toml_locks.parse_poetry(text)
     if fmt == "pylock.toml":
         return pylock.parse(text)
+    if fmt == "package-lock.json":
+        return npm_lock.parse(text)
+    if fmt == "yarn.lock":
+        return yarn.parse(text)
+    if fmt == "pnpm-lock.yaml":
+        return pnpm.parse(text)
     return requirements.parse(text)

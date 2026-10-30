@@ -152,7 +152,7 @@ The exit code is 0 below `--fail-on` (default: the policy's `fail_on`, else `blo
 
 ## Ecosystems
 
-Python first (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt). npm is checked by `garnet diff npm:<name> <old> <new>` (provenance, tags, install scripts, OSV); the npm lockfile parsers (package-lock, pnpm-lock, yarn.lock) follow.
+PyPI (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt) and npm (package-lock.json, npm-shrinkwrap.json, yarn.lock, pnpm-lock.yaml). An npm release is checked for provenance, tags, install scripts and OSV advisories; `garnet diff npm:<name> <old> <new>` compares two releases directly.
 
 ## Project
 
