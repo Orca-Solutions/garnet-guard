@@ -16,7 +16,17 @@ import pytest
 
 from garnet_guard.checks import ALL_CHECKS
 from garnet_guard.engine import run_checks
-from garnet_guard.models import Change, FactError, Limits, ReleaseFacts, Severity, Verdict
+from garnet_guard.models import (
+    CallSite,
+    Change,
+    FactError,
+    Limits,
+    ReleaseFacts,
+    Severity,
+    SourceMatch,
+    UnsourcedFile,
+    Verdict,
+)
 from tests.builders import prov, release
 
 CHANGE = Change("pypi", "demo", "1.0", "1.1")
@@ -81,6 +91,13 @@ def _npm(version: str, scripts: dict[str, str] | None = None) -> ReleaseFacts:
 def _downloaded(rel: ReleaseFacts, sha256: str) -> ReleaseFacts:
     arts = tuple(replace(a, inspected=True, downloaded_sha256=sha256) for a in rel.artifacts)
     return replace(rel, artifacts=arts)
+
+
+def _sourced(rel: ReleaseFacts, *unmatched: UnsourcedFile) -> ReleaseFacts:
+    """A release whose wheel was compared with the tree at its tag (GRN-C007 facts)."""
+    match = SourceMatch("o/r", f"v{rel.version}", "c" * 40, "", 1, unmatched)
+    art = replace(rel.artifacts[0], source_match=match)
+    return replace(rel, artifacts=(art, *rel.artifacts[1:]))
 
 
 def _rows() -> list[Row]:
@@ -384,6 +401,59 @@ def _rows() -> list[Row]:
                 + "import os\n\nif __name__ == '__main__':\n    os.system('ls')\n"
             },
         ),
+    )
+
+    # GRN-C007 code-not-in-source
+    # The ultralytics 8.3.42 shape: the build wrote a file the tag doesn't have.
+    dl_payload = "import subprocess\n\ndef run(cmd):\n    return subprocess.Popen(cmd)\n"
+    injected = UnsourcedFile("demo/dl.py", True, (CallSite("subprocess.Popen", 4, "run"),))
+    fires(
+        "GRN-C007",
+        "published file differs from the tag and gains a process call",
+        release("1.0", PKG),
+        _sourced(release("1.1", {**PKG, "demo/dl.py": dl_payload}), injected),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C007",
+        "published file is absent from the tag and runs a process",
+        release("1.0", PKG),
+        _sourced(
+            release("1.1", {**PKG, "demo/dl.py": dl_payload}),
+            UnsourcedFile("demo/dl.py", False, (CallSite("subprocess.Popen", 4, "run"),)),
+        ),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C007",
+        "generated file without sensitive calls",
+        release("1.0", PKG),
+        _sourced(
+            release("1.1", {**PKG, "demo/_version.py": "v = '1.1'\n"}),
+            UnsourcedFile("demo/_version.py", False, ()),
+        ),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C007",
+        "trusted version carried the same call outside its source",
+        _sourced(release("1.0", {**PKG, "demo/dl.py": dl_payload}), injected),
+        _sourced(release("1.1", {**PKG, "demo/dl.py": dl_payload}), injected),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C007",
+        "every file matches the tag",
+        release("1.0", PKG),
+        _sourced(release("1.1", PKG)),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C007",
+        "no comparison was made",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "demo/dl.py": dl_payload}),
+        eco=PYPI,
     )
 
     # GRN-K001 known-malicious
