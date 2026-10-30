@@ -188,3 +188,34 @@ def test_scan_from_an_entry_follows_the_chain_inside_the_module() -> None:
     scan = scan_module(src, own=frozenset({"memos"}), module="memos.log", entry="get_logger")
     assert scan.calls == () and scan.calls_out == ("memos._stage0.trigger",)
     assert scan_module(src, own=frozenset({"memos"}), module="memos.log").calls_out == ()
+
+
+def test_nested_function_handed_to_a_call_is_followed() -> None:
+    # The mrmustard 0.7.4 shape: a module-level call runs a function that
+    # defines _run inside itself and starts it on a thread.
+    src = (
+        "import threading\n\n"
+        "def _check():\n"
+        "    def _run():\n"
+        "        import subprocess, urllib.request\n"
+        "        subprocess.check_output(['uname', '-a'])\n"
+        "        urllib.request.urlopen('https://example.invalid/x')\n"
+        "    threading.Thread(target=_run, daemon=True).start()\n\n"
+        "_check()\n"
+    )
+    assert names(src) == {"subprocess.check_output", "urllib.request.urlopen"}
+    # Two functions nesting the same name are followed separately.
+    twice = (
+        "import os, socket\n\n"
+        "def a():\n    def _go():\n        os.system('x')\n    _go()\n\n"
+        "def b():\n    def _go():\n        socket.socket()\n    _go()\n\n"
+        "a()\nb()\n"
+    )
+    assert names(twice) == {"os.system", "socket.socket"}
+    # A nested function that is only returned does not run.
+    stored = (
+        "import os\n\n"
+        "def make():\n    def _go():\n        os.system('x')\n    return _go\n\n"
+        "handler = make()\n"
+    )
+    assert names(stored) == set()

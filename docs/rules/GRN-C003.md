@@ -19,7 +19,9 @@ status: implemented
 Code that runs when a module is imported gains a call in the
 [sensitive call set](#sensitive-call-set). That covers module top-level code and what it runs:
 functions it calls or hands to another call, lambdas it calls, classes it instantiates (their
-`__init__`) and methods it calls on them, including code reached from `__init__.py`. A call
+`__init__`) and methods it calls on them, including code reached from `__init__.py`. A
+function defined inside one of those and handed to a call is followed too (mrmustard 0.7.4
+called a checker at import that started a thread on a `_run` defined inside it). A call
 into one of the package's own other modules is followed there, as deep as it goes
 (memoryos 2.0.34 ran `get_logger()` at module level, which called a helper, which imported
 `_stage0` and ran the function that started a bundled binary), and the finding names the

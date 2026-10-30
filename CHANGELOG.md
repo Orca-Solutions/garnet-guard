@@ -15,6 +15,7 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 - GRN-C001 compares `.pth` files by where they land in `site-packages`: a file under `<name>-<version>.data/purelib/` is the same file release after release, a `.pth` deeper in the package (which Python never reads) is ignored, and a renamed `.pth` with the same `import` lines is not new. Modules under `.data/purelib/` keep their names across versions for GRN-C003.
 - When the trusted version ships only a wheel and the new one only an sdist (or the reverse), the content rules compare the two kinds with each other and say so, instead of comparing nothing.
 - GRN-C003 follows import-time calls into the package's own other modules, as deep as they go and through function-local imports, and names the module whose import started the chain. It also follows `sp = subprocess` style aliases and `getattr(sys.modules[__name__], "ctypes")`, the num2words 0.5.15 trick for reaching a module without naming it.
+- GRN-C003 follows a function defined inside another function when it is called or handed to a call there, the mrmustard 0.7.4 shape: a checker run at import that started a thread on a `_run` nested inside it.
 
 ## 0.1.0a1
 
