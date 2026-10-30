@@ -44,7 +44,7 @@ Malware feeds caught these only after the fact. Cooldowns only buy time. pip and
 | Signal | Example |
 |---|---|
 | **Trust downgrade** | The new release has no provenance attestation when the old one did, was built by a different repo or workflow, or has no matching git tag. |
-| **Risky content change** | A new `.pth` file, new build hooks, new import-time `exec`/`subprocess`/network code, new obfuscated blobs or binaries, a new dependency that is new to the registry. |
+| **Risky content change** | A new `.pth` file, new build hooks, new import-time `exec`/`subprocess`/network code, code that isn't at the release's git tag, a new dependency that is new to the registry. |
 | **Known bad** | The release matches an OSV / OpenSSF malicious-package advisory. |
 
 Garnet never runs the code it inspects. It downloads both releases and reads them statically.
