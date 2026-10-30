@@ -60,6 +60,34 @@ def test_monorepo_directory_tag_must_name_the_package() -> None:
     assert match_tag(tags, "utils-extra", "2.8.1") is None
 
 
+def test_sibling_package_tag_is_not_this_package() -> None:
+    # Real tag names: TooTallNate/proxy-agents tags socks-proxy-agent and
+    # proxy-agent, and has no tag for socks-proxy-agent 8.0.0.
+    tags = {"proxy-agent@8.0.0": "a", "proxy-agent@8.0.1": "b", "socks-proxy-agent@8.0.1": "c"}
+    assert match_tag(tags, "socks-proxy-agent", "8.0.0", npm=True) is None
+    assert match_tag(tags, "socks-proxy-agent", "8.0.1", npm=True).name == "socks-proxy-agent@8.0.1"
+    assert match_tag(tags, "proxy-agent", "8.0.0", npm=True).name == "proxy-agent@8.0.0"
+
+
+def test_short_name_needs_a_folder_or_double_equals_prefix() -> None:
+    tags = {"agent@1.0.0": "a", "agent-1.0.0": "b", "agent_1.0.0": "c"}
+    assert match_tag(tags, "socks-proxy-agent", "1.0.0", npm=True) is None
+    assert (
+        match_tag({"agent/1.0.0": "d"}, "socks-proxy-agent", "1.0.0", npm=True).name
+        == "agent/1.0.0"
+    )
+    assert (
+        match_tag({"@ctrl/tinycolor@4.2.2": "e"}, "@ctrl/tinycolor", "4.2.2", npm=True).name
+        == "@ctrl/tinycolor@4.2.2"
+    )
+
+
+def test_short_name_is_ignored_when_the_full_name_is_tagged() -> None:
+    tags = {"utils/v2.8.1": "a", "eslint-module-utils-v2.8.0": "b"}
+    assert match_tag(tags, "eslint-module-utils", "2.8.1") is None
+    assert match_tag(tags, "eslint-module-utils", "2.8.0").name == "eslint-module-utils-v2.8.0"
+
+
 def _pkt(line: str) -> bytes:
     data = line.encode() + b"\n"
     return f"{len(data) + 4:04x}".encode() + data

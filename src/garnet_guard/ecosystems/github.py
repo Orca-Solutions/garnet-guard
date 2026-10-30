@@ -9,7 +9,7 @@ repositories. One request per repository covers every version.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Container, Iterator, Mapping
 
 from packaging.version import InvalidVersion, Version
 
@@ -101,33 +101,48 @@ _SEPARATORS = ("-", "_", "==", "/")
 _RELEASE_WORDS = frozenset({"release"})
 
 
-def _package_names(package: str) -> set[str]:
-    """The names a tag prefix may use for the package, lowercased, ``_`` as ``-``.
+def _norm(name: str) -> str:
+    return name.lower().replace("_", "-")
 
-    The name without its npm scope, and each run of its trailing hyphenated
-    words, since monorepos tag a package by its folder: ``eslint-module-utils``
-    is tagged ``utils/v2.8.1``, ``eslint-import-resolver-node``
-    ``resolvers/node/v0.3.3`` and ``langgraph-prebuilt`` ``prebuilt==1.0.11``.
+
+def _package_names(package: str) -> tuple[str, set[str]]:
+    """The package's name without its npm scope, and its shorter folder names.
+
+    Both lowercased, ``_`` as ``-``. The shorter names are the runs of its
+    trailing hyphenated words, since monorepos tag a package by its folder:
+    ``eslint-module-utils`` is tagged ``utils/v2.8.1``,
+    ``eslint-import-resolver-node`` ``resolvers/node/v0.3.3`` and
+    ``langgraph-prebuilt`` ``prebuilt==1.0.11``.
     """
-    words = package.rpartition("/")[2].lower().replace("_", "-").split("-")
-    return {"-".join(words[i:]) for i in range(len(words)) if words[i]}
+    words = _norm(package.rpartition("/")[2]).split("-")
+    return "-".join(words), {"-".join(words[i:]) for i in range(1, len(words)) if words[i]}
 
 
-def _readings(name: str, *, npm: bool) -> Iterator[tuple[str, str]]:
-    """Each (prefix, rest) split of a tag name at a separator, and ("", name)."""
-    yield "", name
+def _readings(name: str, *, npm: bool) -> Iterator[tuple[str, str, str]]:
+    """Each (prefix, separator, rest) split of a tag name, and ("", "", name)."""
+    yield "", "", name
     for sep in (*_SEPARATORS, *(("@",) if npm else ())):
         start = name.find(sep, 1)
         while start != -1:
-            yield name[:start], name[start + len(sep) :]
+            yield name[:start], sep, name[start + len(sep) :]
             start = name.find(sep, start + 1)
 
 
-def _names_package(prefix: str, names: set[str]) -> bool:
+def _names_package(prefix: str, sep: str, full: str, short: Container[str]) -> bool:
+    """Does a tag prefix name this package (or a release)?
+
+    ``-``, ``_`` and ``@`` prefixes must use the full name (``@`` may keep
+    the npm scope); a folder (``/``) or ``==`` prefix may use a shorter
+    name from ``short``.
+    """
     if not prefix:
         return True
-    last = prefix.rpartition("/")[2].lower().replace("_", "-")
-    return last in names or last in _RELEASE_WORDS
+    if sep == "@":
+        return _norm(prefix).rpartition("/")[2] == full
+    last = _norm(prefix.rpartition("/")[2])
+    if last == full or last in _RELEASE_WORDS:
+        return True
+    return sep in ("/", "==") and last in short
 
 
 def _as_version(text: str) -> Version | None:
@@ -148,21 +163,31 @@ def match_tag(
     """SPEC GRN-T004: a tag whose name is the version, alone or after a prefix.
 
     The version is ``X`` or ``vX``. The prefix, before a ``-``, ``_``, ``==``
-    or ``/`` (and ``@`` for npm), must name the package (see
-    ``_package_names``) or be ``release``: ``2.6.1``, ``v1.18.0``,
-    ``lightning-2.6.1``, ``release-v1.0.0``, ``api/v1.4.1``. ``X`` alone wins,
-    then an exact name, in sorted order; otherwise X is compared as a PEP 440
-    version, so tag ``2026.01.04`` matches release ``2026.1.4``.
+    or ``/`` (and ``@`` for npm), must name the package or be ``release``
+    (see ``_names_package``): ``2.6.1``, ``v1.18.0``, ``lightning-2.6.1``,
+    ``release-v1.0.0``, ``api/v1.4.1``. A shorter folder name counts only if
+    no tag uses the full name. ``X`` alone wins, then an exact name, in
+    sorted order; otherwise X is compared as a PEP 440 version, so tag
+    ``2026.01.04`` matches release ``2026.1.4``.
     """
-    names = _package_names(package)
+    full, short = _package_names(package)
     for name in (version, f"v{version}"):
         if name in tags:
             return TagInfo(name=name, sha=tags[name], repo=repo)
+    # A repository that tags the package by its full name tags other packages
+    # by the shorter ones: TooTallNate/proxy-agents has socks-proxy-agent@8.0.1
+    # and proxy-agent@8.0.1.
+    if any(
+        p and _norm(p.rpartition("/")[2]) == full and rest.lstrip("vV")[:1].isdigit()
+        for name in tags
+        for p, _, rest in _readings(name, npm=npm)
+    ):
+        short = set()
     wanted = _as_version(version)
     loose: str | None = None
     for name in sorted(tags):
-        for prefix, rest in _readings(name, npm=npm):
-            if not _names_package(prefix, names):
+        for prefix, sep, rest in _readings(name, npm=npm):
+            if not _names_package(prefix, sep, full, short):
                 continue
             rest = rest[1:] if rest[:1] in ("v", "V") else rest
             if rest == version:
