@@ -218,7 +218,8 @@ class CallSite:
 
     name: str
     line: int
-    via: str | None = None  # local function the call was reached through
+    via: str | None = None  # function in this module the call was reached through
+    from_module: str | None = None  # path of the module whose import started the chain
 
 
 @dataclass(frozen=True)

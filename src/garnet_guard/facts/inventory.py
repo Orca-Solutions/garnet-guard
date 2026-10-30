@@ -5,11 +5,12 @@ from __future__ import annotations
 import hashlib
 import re
 import tomllib
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 
 from ..models import CallSite, FactError, FileEntry, FileKind, Limits, ModuleIndex, PthFile
 from ..safe_archive import ArchiveError, LimitExceeded, open_archive
-from .pyindex import index_build_script, index_module, module_name
+from .pyindex import index_build_script, module_name, scan_module
 
 _NATIVE_EXT = (".so", ".pyd", ".dylib", ".dll", ".exe")
 _SITE_PREFIX = re.compile(r"^[^/]+\.data/(purelib|platlib)/")
@@ -92,6 +93,8 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
     ``FactError``s in the result.
     """
     result = Inspection()
+    sources: dict[str, bytes] = {}  # module → source, for calls across modules
+    calls_out: dict[str, tuple[str, ...]] = {}  # module → own callables it calls at import
     try:
         reader = open_archive(data, filename, limits)
         entries = reader.entries()
@@ -129,16 +132,19 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                     if sdist and rel == "setup.py":
                         result.setup_py_calls = index_build_script(body)
                         continue
-                    calls, imports = index_module(body, path=rel, own=own, module=mod)
+                    scan = scan_module(body, path=rel, own=own, module=mod)
                 except (SyntaxError, ValueError, RecursionError):
                     result.unparsed.append(rel)
                     continue
-                result.modules.append(ModuleIndex(mod, rel, calls, imports))
+                result.modules.append(ModuleIndex(mod, rel, scan.calls, scan.imports))
+                sources[mod] = body
+                calls_out[mod] = scan.calls_out
             elif sdist and rel == "pyproject.toml":
                 result.build_backend = _build_backend(body)
                 result.entry_points |= _pyproject_entry_points(body)
             elif not sdist and rel.endswith(".dist-info/entry_points.txt") and rel.count("/") == 1:
                 result.entry_points |= entry_point_modules(body)
+        _follow_calls_out(result, sources, calls_out, own)
     except LimitExceeded as err:
         result.errors.append(FactError("GRN-E003", f"{filename}: {err}", ("GRN-C001", "GRN-C003")))
     except ArchiveError as err:
@@ -148,6 +154,61 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
     result.pth_files.sort(key=lambda p: p.path)
     result.unparsed.sort()
     return result
+
+
+def _callee(name: str, modules: Mapping[str, bytes]) -> tuple[str, str] | None:
+    """Split ``pkg.mod.Class.method`` into the longest module known and the rest."""
+    parts = name.split(".")
+    for n in range(len(parts) - 1, 0, -1):
+        mod = ".".join(parts[:n])
+        if mod in modules:
+            return mod, ".".join(parts[n:])
+    return None
+
+
+def _follow_calls_out(
+    result: Inspection,
+    sources: Mapping[str, bytes],
+    calls_out: Mapping[str, tuple[str, ...]],
+    own: frozenset[str],
+) -> None:
+    """Follow import-time calls into the package's other modules.
+
+    memoryos 2.0.34 ran ``get_logger()`` at module level in most modules; that
+    function called ``configure_logging()``, which imported ``_stage0`` and
+    ran its ``trigger()``, which started a bundled binary. Each callable is
+    scanned once; its sensitive calls are added to the module that holds
+    them, marked with the module whose import started the chain.
+    """
+    by_module = {m.module: i for i, m in enumerate(result.modules)}
+    pending = sorted((callee, mod) for mod, names in calls_out.items() for callee in names)
+    seen: set[tuple[str, str]] = set()
+    extra: dict[str, list[CallSite]] = {}
+    while pending:
+        name, origin = pending.pop(0)
+        target = _callee(name, sources)
+        if target is None or target in seen:
+            continue
+        seen.add(target)
+        mod, entry = target
+        index = result.modules[by_module[mod]]
+        try:
+            scan = scan_module(sources[mod], path=index.path, own=own, module=mod, entry=entry)
+        except (SyntaxError, ValueError, RecursionError):
+            continue
+        origin_path = result.modules[by_module[origin]].path
+        extra.setdefault(mod, []).extend(
+            replace(c, from_module=origin_path if origin != mod else None) for c in scan.calls
+        )
+        pending.extend((callee, origin) for callee in scan.calls_out)
+    for mod, calls in extra.items():
+        i = by_module[mod]
+        index = result.modules[i]
+        merged = sorted(
+            set(index.top_level_calls) | set(calls),
+            key=lambda c: (c.line, c.name, c.via or "", c.from_module or ""),
+        )
+        result.modules[i] = replace(index, top_level_calls=tuple(merged))
 
 
 def _build_backend(pyproject: bytes) -> str | None:

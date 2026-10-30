@@ -19,12 +19,17 @@ status: implemented
 Code that runs when a module is imported gains a call in the
 [sensitive call set](#sensitive-call-set). That covers module top-level code and what it runs:
 functions it calls or hands to another call, lambdas it calls, classes it instantiates (their
-`__init__`) and methods it calls on them, including code reached from `__init__.py`. Calls are
-resolved through imports and simple aliasing, `from os import *`, and `getattr(os, "system")`,
-`__import__("os")` or `importlib.import_module("os")` with a literal name, by reading the
-source with `ast`; nothing is executed. A `base64` decode whose result reaches a sensitive
-call counts as a call of its own, so `exec(base64.b64decode(...))` is new even in a module
-that already used `exec`.
+`__init__`) and methods it calls on them, including code reached from `__init__.py`. A call
+into one of the package's own other modules is followed there, as deep as it goes
+(memoryos 2.0.34 ran `get_logger()` at module level, which called a helper, which imported
+`_stage0` and ran the function that started a bundled binary), and the finding names the
+module whose import started the chain. Calls are resolved through imports and simple
+aliasing (`sp = subprocess`), `from os import *`, and `getattr(os, "system")`,
+`getattr(sys.modules[__name__], "ctypes")`, `__import__("os")` or
+`importlib.import_module("os")` with a literal name, by reading the source with `ast`;
+nothing is executed. A `base64` decode whose result reaches a sensitive call counts as a
+call of its own, so `exec(base64.b64decode(...))` is new even in a module that already used
+`exec`.
 
 In test files (`tests/`, `test_*.py`, `conftest.py`) it reports at `info`, unless a non-test
 module imports the file (directly or through other test modules) or an entry point names it.
