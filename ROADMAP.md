@@ -79,6 +79,8 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 **After launch (0.3 to 1.0):**
 
 - [ ] GRN-C005 obfuscation and indirect lookups of sensitive APIs [#54](https://github.com/orca-solutions/garnet-guard/issues/54)
+- [ ] A listed call reached by reference: passed to another call (`Thread(target=os.system)`) or assigned to another name (`json.dumps = subprocess.Popen`) [#91](https://github.com/orca-solutions/garnet-guard/issues/91)
+- [ ] Measure exception and value classes under the sensitive set's network prefixes (`httpx.TooManyRedirects`, `socket.error`) [#92](https://github.com/orca-solutions/garnet-guard/issues/92)
 - [ ] Import-time hook installation (`sys.meta_path`, `settrace`, `builtins`, metaclasses) [#55](https://github.com/orca-solutions/garnet-guard/issues/55)
 - [ ] A release published from a different ref or trigger than the trusted one [#56](https://github.com/orca-solutions/garnet-guard/issues/56)
 - [ ] Release workflow changed between the two attested commits (`info`) [#57](https://github.com/orca-solutions/garnet-guard/issues/57)
