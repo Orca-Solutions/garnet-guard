@@ -118,12 +118,25 @@ any code, to one of these ([SPEC §6.3](../SPEC-v1.md#63-sensitive-call-set)):
 
 - `exec`, `eval`, `compile`, `__import__`
 - `importlib.import_module` with a non-literal argument
-- `os.system`, `os.popen`, `os.exec*`, `os.spawn*`, `pty.spawn`
-- `subprocess.*`
+- code loaded from a file or built from a code object: `runpy.*`, `zipimport.*`,
+  `importlib.util.spec_from_file_location`, `importlib.util.spec_from_loader`,
+  `importlib.machinery.SourceFileLoader`, `SourcelessFileLoader` and `ExtensionFileLoader`,
+  `types.FunctionType`, `types.CodeType`
+- `os.system`, `os.popen`, `os.exec*`, `os.spawn*`, `os.posix_spawn*`, `os.fork`, `os.forkpty`,
+  `os.startfile`, `pty.spawn`, `pty.fork`
+- `subprocess.*`, `_posixsubprocess.*`, `asyncio.create_subprocess_exec`,
+  `asyncio.create_subprocess_shell`, `multiprocessing.Process`, `_winapi.CreateProcess`
 - `ctypes.*`
-- `socket.*`, `urllib.request.*`, `http.client.*`, `httpx.*`, `requests.*`, `aiohttp.*`
+- `socket.*`, `asyncio.open_connection`, `urllib.request.*`, `http.client.*`, `httpx.*`,
+  `requests.*`, `aiohttp.*`, `urllib3`'s pool managers and `urllib3.request`, `ftplib.*`,
+  `smtplib.*`, `poplib.*`, `imaplib.*`, `telnetlib.*`, `xmlrpc.client.*`, `webbrowser.*`
 - `base64.*decode` followed by any of the above
 - `marshal.loads`, `pickle.loads`
+
+Set `2026-10-c` (October 30, 2026) added the file loaders, the process calls outside
+`subprocess` and the network clients outside the HTTP libraries. Calls packages make at import
+for ordinary reasons stay out: `importlib.util.find_spec` and `module_from_spec`,
+`urllib3.disable_warnings`, `multiprocessing.cpu_count`.
 
 The set is versioned with the rule. `garnet explain GRN-C002` prints the set your version uses.
 
