@@ -49,7 +49,10 @@ def lost_provenance(
             f"{len(missing)} file(s) in {cand.version} have no attestation; every file of {base.version} had one",
             tuple(
                 Evidence(
-                    "attestation", f"{a.filename}: no attestation", path=a.filename, sha256=a.sha256
+                    "attestation",
+                    f"{a.filename}: no attestation",
+                    path=a.filename,
+                    sha256=a.sha256 or None,
                 )
                 for a in missing
             )
@@ -238,14 +241,19 @@ def invalid_attestation(
 def hash_mismatch(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
-    """GRN-T008: a downloaded file doesn't match the registry's SHA-256, in either release."""
+    """GRN-T008: a downloaded file doesn't match the registry's hash, in either release.
+
+    PyPI publishes a SHA-256 per file; npm publishes a Subresource Integrity
+    string (``sha512-…``) per tarball. Either mismatch fires.
+    """
     for rel in (cand, base):
         if rel is None:
             continue
         bad = [
             a
             for a in rel.artifacts
-            if a.downloaded_sha256 and a.downloaded_sha256 != a.sha256.lower()
+            if (a.downloaded_sha256 and a.sha256 and a.downloaded_sha256 != a.sha256.lower())
+            or (a.downloaded_integrity and a.integrity and a.downloaded_integrity != a.integrity)
         ]
         if bad:
             yield RawFinding(
@@ -254,7 +262,8 @@ def hash_mismatch(
                 tuple(
                     Evidence(
                         "file",
-                        f"{a.filename}: expected {a.sha256}, got {a.downloaded_sha256}",
+                        f"{a.filename}: expected {a.integrity or a.sha256}, "
+                        f"got {a.downloaded_integrity or a.downloaded_sha256}",
                         path=a.filename,
                         sha256=a.downloaded_sha256,
                     )

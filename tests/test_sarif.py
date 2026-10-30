@@ -56,7 +56,7 @@ def test_report_is_valid_sarif_and_follows_the_spec() -> None:
     assert log["version"] == "2.1.0"
     (run,) = log["runs"]
     driver = run["tool"]["driver"]
-    assert driver["name"] == "garnet"
+    assert driver["name"] == "Garnet Guard"
     assert [r["id"] for r in driver["rules"]] == sorted(DOCS)
     assert {r["ruleId"] for r in run["results"]} >= {"GRN-T001", "GRN-T004"}
     for r in run["results"]:

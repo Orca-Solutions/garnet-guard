@@ -1,0 +1,40 @@
+{
+  "updates": 1809,
+  "packages": 200,
+  "updates_warned": 33,
+  "warn_rate": 0.0182,
+  "packages_with_a_warn": 30,
+  "warns_by_rule": {
+    "GRN-T004": {
+      "updates": 25,
+      "packages": 24
+    },
+    "GRN-T001": {
+      "updates": 5,
+      "packages": 4
+    },
+    "GRN-T002": {
+      "updates": 2,
+      "packages": 2
+    },
+    "GRN-T003": {
+      "updates": 1,
+      "packages": 1
+    }
+  },
+  "updates_with_coverage_gaps": 14,
+  "coverage_gaps_by_rule": {
+    "GRN-E001": 12,
+    "GRN-E002": 2
+  },
+  "garnet_version": "0.1.0.dev0",
+  "ecosystem": "npm",
+  "corpus": {
+    "selected_on": "2026-10-29",
+    "rule": "last 11 final, non-deprecated releases by version",
+    "top_list": {
+      "source": "https://github.com/wooorm/npm-high-impact (lib/top.js: package names ordered by weekly downloads)",
+      "package_version": "npm-high-impact 1.13.0"
+    }
+  }
+}

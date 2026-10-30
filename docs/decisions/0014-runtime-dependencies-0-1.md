@@ -18,6 +18,8 @@ Two modules installed by `pypi-attestations` are imported directly:
 
 Neither one adds a package to the install.
 
+**Amendment (2026-10-29, npm support).** `sigstore` is now a declared dependency (`sigstore>=4.5.1,<5`), because npm provenance is verified with it directly rather than through `pypi-attestations`. One more module it installs is imported directly, again without adding a package: `rfc8785` canonicalizes a Rekor log entry for its signed-timestamp check. The Fulcio certificate chain is validated with `cryptography`'s X.509 verifier, as `sigstore`'s own verifier does from 4.5.1 (4.5.0 used pyOpenSSL, which 4.5.1 dropped; hence the lower bound, which also brings `cryptography>=47`). Both are used only for attestations in npm's older `intoto` log-entry format, which `sigstore` 4.x refuses; `ecosystems/npm_provenance.py` says what that path checks and what it doesn't. The upper bound on `sigstore` is there because that path reaches into `sigstore._internal`.
+
 Tags come from GitHub's public git ref advertisement (`github.com/<repo>.git/info/refs`) instead of the REST API. That needs no token, avoids the 60-requests-per-hour limit, follows rename redirects and costs one request per repository. So `github.com` joins the hosts allowlist in `net.py`.
 
 ## Consequences

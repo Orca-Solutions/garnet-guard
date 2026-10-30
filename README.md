@@ -103,6 +103,16 @@ We fed the original malicious files from the 2026 PyPI compromises through `garn
 | telnyx 4.87.0 → 4.87.2 | warn | GRN-C003 `subprocess`, `urllib.request` reached at import in `telnyx/_client.py`; GRN-T004 no tag `v4.87.2` |
 | 20 clean updates ([list](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/clean.toml)) | 0 warn | none |
 
+The same replay covers the npm account takeovers of August and September 2025. npm deletes the tarball of a removed version, so these use the registry facts the public write-ups recorded (provenance present or not, the `package.json` scripts) and fetch the previous release and the repository's tags live. The malicious tarballs were not inspected.
+
+| Release | Result | Rules that fired |
+|---|---|---|
+| chalk 5.6.0 → 5.6.1 | warn | GRN-T004 no tag `v5.6.1` where `v5.6.0` exists |
+| debug 4.4.1 → 4.4.2 | warn | GRN-T004 no tag `4.4.2` |
+| nx 21.4.1 → 21.5.0 | warn | GRN-T001 21.4.1 had provenance, 21.5.0 has none; GRN-C002 `postinstall` became `node telemetry.js`; GRN-T004 no tag |
+| @ctrl/tinycolor 4.1.0 → 4.1.1 | warn | GRN-C002 new `postinstall` running `node bundle.js`; GRN-T004 no tag |
+| 1,809 updates of the top 200 npm packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-npm/REPORT.md)) | 33 warn (1.8%) | GRN-T004 25, GRN-T001 5, GRN-T002 2, GRN-T003 1 |
+
 Limits, stated plainly:
 - GRN-T001 (lost provenance) couldn't fire in any case, because none of these projects signed its releases before the attack.
 - GRN-T004 uses the git tags as they stood when each release was uploaded, recorded with evidence in [incidents.toml](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml). Against today's tags it would also report elementary-data 0.23.3 (the attacker's tag was deleted later) and miss telnyx 4.87.1 (Telnyx tagged its own 4.87.1 that evening).
@@ -110,17 +120,19 @@ Limits, stated plainly:
 - In telnyx 4.87.1 a typo stopped the payload from running. GRN-C003 reads code; it reports what the module calls at import, not whether the call would succeed.
 - The litellm 1.82.7 and telnyx 4.87.1 sdists aren't replayed, because no public source gives their URLs. The wheels are, and content rules compare wheels.
 - Twenty clean updates is a small sample. The month-2 backtest covers the last ~20 releases of the top ~500 PyPI packages.
+- chalk and debug are reported by the missing tag alone: they never used provenance, and the one changed file, `index.js`, is gone from the registry. A JavaScript content rule is still to come.
 
 Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightning](https://snyk.io/blog/lightning-pypi-compromise-bun-based-credential-stealer), [CSA on elementary-data](https://labs.cloudsecurityalliance.org/research/csa-research-note-pypi-elementarydata-supply-chain-20260429/), [PyPI's incident report on litellm and telnyx](https://blog.pypi.org/posts/2026-04-02-incident-report-litellm-telnyx-supply-chain-attack/), and the files from DataDog's malicious-software-packages dataset.
 
 ## Try it today (0.1 preview)
 
-`garnet diff` compares two releases of one PyPI package, and `garnet check` compares two lockfiles:
+`garnet diff` compares two releases of one PyPI or npm package, and `garnet check` compares two lockfiles:
 
 ```sh
 pip install --pre garnet-guard   # or run it without installing: uvx garnet-guard check --git-base main
 garnet diff requests 2.32.4 2.32.5
 garnet diff pypi:lightning 2.6.4 2.6.5 --format json
+garnet diff npm:chalk 5.6.0 5.6.2
 garnet check --git-base main   # every lockfile here, against the same files on main
 garnet check --base old/uv.lock --head uv.lock
 garnet policy check            # validate garnet.toml and list its ignores
@@ -140,7 +152,7 @@ The exit code is 0 below `--fail-on` (default: the policy's `fail_on`, else `blo
 
 ## Ecosystems
 
-Python first (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt). npm (package-lock, pnpm-lock, yarn.lock) follows.
+Python first (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt). npm is checked by `garnet diff npm:<name> <old> <new>` (provenance, tags, install scripts, OSV); the npm lockfile parsers (package-lock, pnpm-lock, yarn.lock) follow.
 
 ## Project
 

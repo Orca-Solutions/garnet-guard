@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: orca-solutions/garnet-guard@ebad42af74ee9ef7f16555d57da5d8cc58ed363f # main, 2026-10-29
+      - uses: orca-solutions/garnet-guard@69c8e01d6ad51d7716fb9f9729e87bc2d21eda2b # main, 2026-10-30
         with:
           fail-on: block
           sarif: true

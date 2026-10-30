@@ -26,6 +26,7 @@ dependencies = [
     "httpx>=0.28.1",
     "packaging>=26.3",
     "pypi-attestations>=0.0.30",
+    "sigstore>=4.5.1,<5",
 ]
 
 [build-system]

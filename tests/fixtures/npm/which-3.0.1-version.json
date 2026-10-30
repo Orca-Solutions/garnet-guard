@@ -1,0 +1,46 @@
+{
+ "_npmUser": {
+  "email": "npm-cli+bot@github.com",
+  "name": "npm-cli-ops"
+ },
+ "bugs": {
+  "url": "https://github.com/npm/node-which/issues"
+ },
+ "dist": {
+  "attestations": {
+   "provenance": {
+    "predicateType": "https://slsa.dev/provenance/v0.2"
+   },
+   "url": "https://registry.npmjs.org/-/npm/v1/attestations/which@3.0.1"
+  },
+  "fileCount": 5,
+  "integrity": "sha512-XA1b62dzQzLfaEOSQFTCOd5KFf/1VSzZo7/7TUjnya6u0vGGKzU96UQBZTAThCb2j4/xjBAyii1OhRLJEivHvg==",
+  "npm-signature": "-----BEGIN PGP SIGNATURE-----\r\nVersion: OpenPGP.js v4.10.10\r\nComment: https://openpgpjs.org\r\n\r\nwsFzBAEBCAAGBQJkT/gKACEJED1NWxICdlZqFiEECWMYAoorWMhJKdjhPU1b\r\nEgJ2VmpTNg/+IDsC0m3rf6gIdl6zjkaZW5nCmvFyEUYivv6WyN1k764WUfTS\r\nbdFxblAgWB/KAwXBjkoP8dB01tXnjb1nRZ6fW5DugSyLqzyqW1M/GBNtcKb4\r\nVNpV3mMA+MIYgLEt5vgr/ib4qlojCP2VY3nG94jz6nC3kUakyIeLV1Y7uoam\r\n8ThhJ851pExgrm+aYGoPQodXTNLmX0AVqqYasiHlqTCoT1MErMTfnmqOMZKw\r\nc0sBGY3FzShn7d1QLrRG+MG6HIaLKCyScVaXgKy3Hi5XQUKqAsflmf+G/rsS\r\nnWHWDN+oEyqBh1xjcQDIoypQhYMpQa5XkyyydS1S/tmHCF+gsnIMCQAKoOxH\r\nV3SxnGcl4MPxI6ZtBG8EWkzdnwoIahaluHCbwC0BdWj5knwtNJaHJnVfxtEg\r\nIPr/lXZuTNO+VoFirtnffnxHLKhI1wXnwERQacPMyhMM2IoBdoNZUOv822dd\r\nPGEExizanItj+SqTkjZeEWNOnT88MYwaCmTsM7KeoV1ZJWDJHI+908lTi4or\r\ny9w+x/vtH9Ht+wXtZEB7i38USm9zI2ufc17InG0+6aXLf87ld8QAZ95hMQ3v\r\n8CCYveXghwPHy+RYag2J8KBbuezdvArRYq2M+ZaT+pGSI9YVe/4HzOenf1B6\r\nAzyooAreoW8tMu9ZH2kHC7A8HQCYHjboipM=\r\n=tL1V\r\n-----END PGP SIGNATURE-----\r\n",
+  "shasum": "89f1cd0c23f629a8105ffe69b8172791c87b4be1",
+  "signatures": [
+   {
+    "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+    "sig": "MEUCIF5YrHptjJ0We7XmwbnTxb5OEVDIUL7xowQs9rxe3XmSAiEAnVztR4rc6WzHFxwSQTEOe/b2vIBDi7grxnKjb6DbTcs="
+   }
+  ],
+  "tarball": "https://registry.npmjs.org/which/-/which-3.0.1.tgz",
+  "unpackedSize": 7472
+ },
+ "gitHead": "261e1cfb6792c1ffacd055b21aa4111c8cb3571e",
+ "homepage": "https://github.com/npm/node-which#readme",
+ "name": "which",
+ "repository": {
+  "type": "git",
+  "url": "git+https://github.com/npm/node-which.git"
+ },
+ "scripts": {
+  "lint": "eslint \"**/*.js\"",
+  "lintfix": "npm run lint -- --fix",
+  "postlint": "template-oss-check",
+  "posttest": "npm run lint",
+  "snap": "tap",
+  "template-oss-apply": "template-oss-apply --force",
+  "test": "tap"
+ },
+ "version": "3.0.1"
+}

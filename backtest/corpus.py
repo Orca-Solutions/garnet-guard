@@ -1,7 +1,9 @@
-"""Clean-corpus backtest: the last releases of the top PyPI packages.
+"""Clean-corpus backtest: the last releases of the top PyPI and npm packages.
 
-    uv run python -m backtest select     # pick versions, write corpus.json
-    uv run python -m backtest corpus     # run every consecutive update in corpus.json
+    uv run python -m backtest select           # pick versions, write corpus.json
+    uv run python -m backtest corpus           # run every consecutive update in corpus.json
+    uv run python -m backtest select npm       # the same for npm (corpus-npm.json)
+    uv run python -m backtest corpus npm       # results go to corpus-results-npm/
 
 Every update in the corpus is a legitimate release, so every warn from a
 detection rule is either a false positive or a real finding worth a look.
@@ -29,17 +31,25 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 
 from garnet_guard import __version__, models
-from garnet_guard.ecosystems import github, pypi
+from garnet_guard.ecosystems import github, npm, pypi
 from garnet_guard.engine import run_checks
 from garnet_guard.models import Change, ChangeResult, Limits, ReleaseFacts, Severity
 from garnet_guard.net import Http, NetError
 
 HERE = Path(__file__).parent
-TOP = HERE / "top-pypi-100.json"
-CORPUS = HERE / "corpus.json"
+TOP = {"pypi": HERE / "top-pypi-100.json", "npm": HERE / "top-npm-200.json"}
+CORPUS = {"pypi": HERE / "corpus.json", "npm": HERE / "corpus-npm.json"}
+RESULTS = {"pypi": HERE / "corpus-results", "npm": HERE / "corpus-results-npm"}
 NOT_DETECTION = {"GRN-K001", "GRN-E001", "GRN-E002", "GRN-E003"}
 RELEASES_PER_PACKAGE = 11  # 11 releases give 10 updates per package
-CACHE_FORMAT = 1
+CACHE_FORMAT = 3
+
+
+def _ecosystem(argv: list[str]) -> tuple[str, list[str]]:
+    """``npm`` as the first argument selects that ecosystem; PyPI otherwise."""
+    if argv and argv[0] in ("pypi", "npm"):
+        return argv[0], argv[1:]
+    return "pypi", argv
 
 
 # --- Choosing versions ---------------------------------------------------
@@ -66,27 +76,55 @@ def pick_versions(releases: dict[str, list[dict[str, Any]]], count: int) -> list
     return [raw for _, raw in keep[-count:]]
 
 
+def pick_npm_versions(packument: dict[str, Any], count: int) -> list[str]:
+    """The last ``count`` final, non-deprecated versions of an npm package.
+
+    A version with a pre-release part (``1.0.0-beta.1``) is skipped, as npm's
+    own semver ranges skip it. Order is by semver.
+    """
+    keep: list[tuple[tuple[int, ...], str]] = []
+    for raw, doc in (packument.get("versions") or {}).items():
+        core, _, pre = raw.partition("-")
+        parts = core.split(".")
+        if pre or len(parts) != 3 or not all(p.isdigit() for p in parts):
+            continue
+        if isinstance(doc, dict) and doc.get("deprecated"):
+            continue
+        keep.append((tuple(int(p) for p in parts), raw))
+    keep.sort()
+    return [raw for _, raw in keep[-count:]]
+
+
 def select(argv: list[str]) -> int:
-    top = json.loads(TOP.read_text())
+    eco, argv = _ecosystem(argv)
+    top = json.loads(TOP[eco].read_text())
     count = int(argv[0]) if argv else len(top["projects"])
     packages: list[dict[str, Any]] = []
     with Http() as http:
         for name in top["projects"][:count]:
-            norm = pypi.normalize(name)
-            resp = http.get(f"https://pypi.org/pypi/{norm}/json", max_bytes=512 * 1024 * 1024)
+            if eco == "npm":
+                norm = npm.normalize(name)
+                resp = http.get(npm.registry_url(norm), max_bytes=npm.PACKUMENT_MAX_BYTES)
+            else:
+                norm = pypi.normalize(name)
+                resp = http.get(f"https://pypi.org/pypi/{norm}/json", max_bytes=512 * 1024 * 1024)
             if resp.status != 200:
                 print(f"select: {norm}: HTTP {resp.status}", file=sys.stderr)
                 return 3
-            versions = pick_versions(resp.json().get("releases", {}), RELEASES_PER_PACKAGE)
+            if eco == "npm":
+                versions = pick_npm_versions(resp.json(), RELEASES_PER_PACKAGE)
+            else:
+                versions = pick_versions(resp.json().get("releases", {}), RELEASES_PER_PACKAGE)
             packages.append({"package": norm, "versions": versions})
             print(f"{norm}: {' '.join(versions)}")
     out = {
+        "ecosystem": eco,
         "selected_on": datetime.now().astimezone().date().isoformat(),
-        "rule": f"last {RELEASES_PER_PACKAGE} final, non-yanked releases by version",
-        "top_list": {"source": top["source"], "last_update": top["last_update"]},
+        "rule": f"last {RELEASES_PER_PACKAGE} final, non-{'deprecated' if eco == 'npm' else 'yanked'} releases by version",
+        "top_list": {k: top[k] for k in ("source", "last_update", "package_version") if k in top},
         "packages": packages,
     }
-    CORPUS.write_text(json.dumps(out, indent=2) + "\n")
+    CORPUS[eco].write_text(json.dumps(out, indent=2) + "\n")
     return 0
 
 
@@ -111,7 +149,10 @@ def decode(tp: Any, data: Any) -> Any:
         inner = [a for a in typing.get_args(tp) if a is not type(None)]
         return decode(inner[0], data) if len(inner) == 1 else data
     if origin is tuple:
-        return tuple(decode(typing.get_args(tp)[0], x) for x in data)
+        args = typing.get_args(tp)
+        if len(args) == 2 and args[1] is Ellipsis:
+            return tuple(decode(args[0], x) for x in data)
+        return tuple(decode(a, x) for a, x in zip(args, data, strict=True))
     if origin is typing.Literal:
         return data
     if tp is datetime:
@@ -128,18 +169,18 @@ class FactCache:
     def __init__(self, root: Path) -> None:
         self.root = root / f"v{CACHE_FORMAT}-garnet-{__version__}"
 
-    def _path(self, package: str, version: str) -> Path:
-        return self.root / package / f"{version}.json"
+    def _path(self, ecosystem: str, package: str, version: str) -> Path:
+        return self.root / ecosystem / package / f"{version}.json"
 
-    def get(self, package: str, version: str) -> ReleaseFacts | None:
-        p = self._path(package, version)
+    def get(self, ecosystem: str, package: str, version: str) -> ReleaseFacts | None:
+        p = self._path(ecosystem, package, version)
         if not p.exists():
             return None
         facts: ReleaseFacts = decode(ReleaseFacts, json.loads(p.read_text()))
         return facts
 
     def put(self, facts: ReleaseFacts) -> None:
-        p = self._path(facts.package, facts.version)
+        p = self._path(facts.ecosystem, facts.package, facts.version)
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(encode(facts), sort_keys=True))
@@ -155,12 +196,12 @@ def _transient(facts: ReleaseFacts) -> bool:
 
 
 def fetch_package(
-    package: str, versions: list[str], cache: FactCache, *, workers: int = 3
+    ecosystem: str, package: str, versions: list[str], cache: FactCache, *, workers: int = 3
 ) -> dict[str, ReleaseFacts]:
     out: dict[str, ReleaseFacts] = {}
     todo = []
     for v in versions:
-        hit = cache.get(package, v)
+        hit = cache.get(ecosystem, package, v)
         if hit is not None:
             out[v] = hit
         else:
@@ -168,12 +209,22 @@ def fetch_package(
     if not todo:
         return out
     with Http() as http:
-        ctx = pypi.FetchContext(http=http, limits=Limits(), tags=github.TagLookup(http))
+        tags = github.TagLookup(http)
 
-        def fetch(v: str) -> ReleaseFacts:
-            return pypi.release_facts(package, v, ctx, advisories=False)
+        if ecosystem == "npm":
+            nctx = npm.FetchContext(http=http, limits=Limits(), tags=tags)
 
-        # The first release warms the tag cache, so the rest don't each fetch it.
+            def fetch(v: str) -> ReleaseFacts:
+                return npm.release_facts(package, v, nctx, advisories=False)
+
+        else:
+            pctx = pypi.FetchContext(http=http, limits=Limits(), tags=tags)
+
+            def fetch(v: str) -> ReleaseFacts:
+                return pypi.release_facts(package, v, pctx, advisories=False)
+
+        # The first release warms the tag (and packument) cache, so the rest
+        # don't each fetch it.
         got = [fetch(todo[0])]
         with ThreadPoolExecutor(max_workers=workers) as pool:
             got += list(pool.map(fetch, todo[1:]))
@@ -198,13 +249,17 @@ def finding_rows(result: ChangeResult) -> list[dict[str, Any]]:
 
 
 def run_package(
-    package: str, versions: list[str], cache: FactCache, log: Callable[[str], None]
+    ecosystem: str,
+    package: str,
+    versions: list[str],
+    cache: FactCache,
+    log: Callable[[str], None],
 ) -> list[dict[str, Any]]:
     t0 = time.monotonic()
-    facts = fetch_package(package, versions, cache)
+    facts = fetch_package(ecosystem, package, versions, cache)
     rows: list[dict[str, Any]] = []
     for old, new in zip(versions, versions[1:], strict=False):
-        result = run_checks(Change("pypi", package, old, new), facts[old], facts[new])
+        result = run_checks(Change(ecosystem, package, old, new), facts[old], facts[new])
         findings = finding_rows(result)
         warn_rules = sorted(
             {
@@ -256,15 +311,23 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _version_key(v: str) -> tuple[int, Version | str]:
+    try:
+        return (1, Version(v))
+    except InvalidVersion:
+        return (0, v)
+
+
 def corpus(argv: list[str]) -> int:
-    out_dir = Path(argv[0]) if argv else HERE / "corpus-results"
+    eco, argv = _ecosystem(argv)
+    out_dir = Path(argv[0]) if argv else RESULTS[eco]
     cache_root = Path(
         os.environ.get(
             "GARNET_BACKTEST_CACHE", Path.home() / ".cache" / "garnet-guard" / "backtest"
         )
     )
     cache = FactCache(cache_root)
-    spec = json.loads(CORPUS.read_text())
+    spec = json.loads(CORPUS[eco].read_text())
     workers = int(os.environ.get("GARNET_BACKTEST_WORKERS", "4"))
 
     def log(msg: str) -> None:
@@ -272,7 +335,7 @@ def corpus(argv: list[str]) -> int:
 
     def one(p: dict[str, Any]) -> list[dict[str, Any]]:
         try:
-            return run_package(p["package"], p["versions"], cache, log)
+            return run_package(eco, p["package"], p["versions"], cache, log)
         except NetError as err:
             log(f"{p['package']}: FAILED {err}")
             raise
@@ -280,10 +343,12 @@ def corpus(argv: list[str]) -> int:
     with ThreadPoolExecutor(max_workers=workers) as pool:
         per_pkg = list(pool.map(one, spec["packages"]))
     rows = sorted(
-        (r for rs in per_pkg for r in rs), key=lambda r: (r["package"], Version(r["candidate"]))
+        (r for rs in per_pkg for r in rs),
+        key=lambda r: (r["package"], _version_key(r["candidate"])),
     )
     summary = summarize(rows)
     summary["garnet_version"] = __version__
+    summary["ecosystem"] = eco
     summary["corpus"] = {k: spec[k] for k in ("selected_on", "rule", "top_list")}
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "updates.json").write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n")
