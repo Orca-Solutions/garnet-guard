@@ -125,7 +125,9 @@ any code, to one of these ([SPEC §6.3](../SPEC-v1.md#63-sensitive-call-set)):
   `types.FunctionType` and its alias `types.LambdaType`, `types.CodeType`
 - `os.system`, `os.popen`, `os.exec*`, `os.spawn*`, `os.posix_spawn*`, `os.fork`, `os.forkpty`,
   `os.startfile`, `pty.spawn`, `pty.fork`
-- `subprocess.*`, `_posixsubprocess.*`, `asyncio.create_subprocess_exec`,
+- `subprocess.*` except the exception and result classes `CalledProcessError`,
+  `CompletedProcess`, `SubprocessError` and `TimeoutExpired`, and the function
+  `list2cmdline`, which start nothing; `_posixsubprocess.*`, `asyncio.create_subprocess_exec`,
   `asyncio.create_subprocess_shell`, `multiprocessing.Process`, the `SpawnProcess`,
   `ForkProcess` and `ForkServerProcess` classes in `multiprocessing.context`,
   `_winapi.CreateProcess`, `distutils.spawn.spawn` and the same function in `distutils.util`,
@@ -157,7 +159,10 @@ as the code writes it.
 
 Set `2026-10-c` (October 30, 2026) added the file loaders, the process calls outside
 `subprocess`, more network clients (`asyncio` streams, `urllib3`, mail, FTP, telnet, XML-RPC and
-the browser), and the modules that define or import listed names. Left out, because packages
+the browser), and the modules that define or import listed names. It also stopped counting
+`subprocess`'s exception and result classes and `list2cmdline`, which set `2026-10-b` matched
+through `subprocess.*`: building them or quoting a command line starts nothing, and a test
+helper raising `CalledProcessError` warned in the top-1,000 PyPI corpus. Left out, because packages
 make these calls at import for ordinary reasons: `importlib.util.find_spec` and
 `module_from_spec`, `urllib3.disable_warnings`, `multiprocessing.cpu_count`,
 `distutils.spawn.find_executable`. Not in the set, because no corpus run has measured what they

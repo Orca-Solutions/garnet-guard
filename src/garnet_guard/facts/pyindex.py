@@ -134,6 +134,18 @@ _PREFIXES = (
     "xmlrpc.client.",
     "webbrowser.",
 )
+# 2026-10-c: names under a prefix above that build a value and start nothing:
+# subprocess's exception and result classes, and the function that quotes a
+# command line without running it.
+_INERT = frozenset(
+    {
+        "subprocess.CalledProcessError",
+        "subprocess.CompletedProcess",
+        "subprocess.SubprocessError",
+        "subprocess.TimeoutExpired",
+        "subprocess.list2cmdline",
+    }
+)
 # 2026-10-c: modules that define what a module above re-exports, or that
 # re-export it, so a name under them is the same object: ``posix.system is
 # os.system``. An empty target is the bare name: ``builtins.exec is exec``.
@@ -166,13 +178,21 @@ def sensitive_set() -> tuple[str, ...]:
     return (
         *sorted(_EXACT),
         "importlib.import_module (non-literal argument)",
-        *(p + "*" for p in _PREFIXES),
+        *(_prefix_line(p) for p in _PREFIXES),
         "base64.*decode (when the result reaches one of the above)",
         *(
             f"{twin}.<name>, counted as {' or '.join(_under(t, '<name>') for t in targets)}"
             for twin, targets in sorted(_SAME_AS.items())
         ),
     )
+
+
+def _prefix_line(prefix: str) -> str:
+    """``prefix*``, naming the names under it that ``_INERT`` leaves out."""
+    out = sorted(n[len(prefix) :] for n in _INERT if n.startswith(prefix))
+    if not out:
+        return prefix + "*"
+    return f"{prefix}* except {', '.join(out[:-1])} and {out[-1]}, which start nothing"
 
 
 def _under(module: str, name: str) -> str:
@@ -273,7 +293,7 @@ def _listed(name: str, call: ast.Call | None) -> bool:
         if call is None:
             return True
         return not (call.args and isinstance(call.args[0], ast.Constant))
-    return any(name.startswith(p) for p in _PREFIXES)
+    return name not in _INERT and any(name.startswith(p) for p in _PREFIXES)
 
 
 def _own(name: str, own: Container[str], project: str | None, call: ast.Call | None = None) -> bool:
