@@ -44,7 +44,7 @@ Malware feeds caught these only after the fact. Cooldowns only buy time. pip and
 | Signal | Example |
 |---|---|
 | **Trust downgrade** | The new release has no provenance attestation when the old one did, was built by a different repo or workflow, or has no matching git tag. |
-| **Risky content change** | A new `.pth` file, new build hooks, new import-time `exec`/`subprocess`/network code, new obfuscated blobs or binaries. |
+| **Risky content change** | A new `.pth` file, new build hooks, new import-time `exec`/`subprocess`/network code, code that isn't at the release's git tag, a new dependency that is new to the registry. |
 | **Known bad** | The release matches an OSV / OpenSSF malicious-package advisory. |
 
 Garnet never runs the code it inspects. It downloads both releases and reads them statically.
@@ -119,7 +119,7 @@ We fed the original malicious files from 36 compromised PyPI packages (47 malici
 | 20 clean updates ([list](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/clean.toml)) | | 0 warn | none |
 | 9,439 updates of the top 1,000 PyPI packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-pypi-1000/REPORT.md)) | | 220 flagged for a look (2.3%); none makes a false claim | GRN-C003 65, GRN-C002 57, GRN-T004 49, GRN-T001 18, GRN-T003 16, GRN-T002 14, GRN-C001 3 |
 
-The same replay covers the npm account takeovers of August and September 2025. npm deletes the tarball of a removed version, so these use the registry facts the public write-ups recorded (provenance present or not, the `package.json` scripts) and fetch the previous release and the repository's tags live. The malicious tarballs were not inspected.
+The same replay covers the npm account takeovers of August and September 2025, and event-stream 3.3.6 (2018), which added a dependency that later carried the payload. npm deletes the tarball of a removed version, so these use the registry facts the public write-ups recorded (provenance present or not, the `package.json` scripts and dependencies) and fetch the previous release and the repository's tags live. The malicious tarballs were not inspected.
 
 | Release | Result | Rules that fired |
 |---|---|---|
@@ -127,6 +127,7 @@ The same replay covers the npm account takeovers of August and September 2025. n
 | debug 4.4.1 → 4.4.2 | warn | GRN-T004 no tag `4.4.2` |
 | nx 21.4.1 → 21.5.0 | warn | GRN-T001 21.4.1 had provenance, 21.5.0 has none; GRN-C002 `postinstall` became `node telemetry.js`; GRN-T004 no tag |
 | @ctrl/tinycolor 4.1.0 → 4.1.1 | warn | GRN-C002 new `postinstall` running `node bundle.js`; GRN-T004 no tag |
+| event-stream 3.3.5 → 3.3.6 | warn | GRN-C008 new dependency `flatmap-stream`, first released 35 days earlier |
 | 8,742 updates of the top 1,000 npm packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-npm-1000/REPORT.md)) | 146 flagged for a look (1.7%); none makes a false claim | GRN-T004 89, GRN-T001 48, GRN-T002 3, GRN-C002 3, GRN-T003 2, GRN-T005 1 |
 
 Limits, stated plainly:

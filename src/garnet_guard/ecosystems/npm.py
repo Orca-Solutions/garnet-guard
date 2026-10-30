@@ -13,7 +13,15 @@ from typing import Any
 from urllib.parse import quote, urlsplit
 
 from ..facts.npmmeta import inspect_tarball
-from ..models import ArtifactFacts, FactError, FileProvenance, Limits, ReleaseFacts
+from ..models import (
+    ArtifactFacts,
+    DependencyProfile,
+    FactError,
+    FileProvenance,
+    Limits,
+    ReleaseFacts,
+    Requirement,
+)
 from ..net import Http, NetError
 from . import github, osv
 from .npm_provenance import verify_provenance
@@ -39,6 +47,11 @@ class ReplayRelease:
     scripts: tuple[tuple[str, str], ...]
     source_repo: str | None
     note: str
+    # The package.json dependencies the write-ups reported, and what the
+    # registry showed about the new ones on the day (GRN-C008). ``None``
+    # requirements means the write-ups didn't say, so nothing is compared.
+    requirements: tuple[Requirement, ...] | None = None
+    dependency_profiles: tuple[DependencyProfile, ...] = ()
 
 
 @dataclass
@@ -259,7 +272,13 @@ def release_facts(
 
     # Content facts.
     if replay is not None:
-        art = replace(art, inspected=True, install_scripts=replay.scripts)
+        art = replace(
+            art,
+            inspected=True,
+            install_scripts=replay.scripts,
+            requirements=replay.requirements or (),
+            requirements_read=replay.requirements is not None,
+        )
     else:
         art, errs = _inspect(ctx, dist, art)
         errors.extend(errs)
@@ -311,6 +330,8 @@ def release_facts(
         advisories_checked=advisories_checked,
         errors=tuple(errors),
         notes=tuple(notes),
+        dependencies=replay.dependency_profiles if replay is not None else (),
+        owners=maintainers(doc),
     )
 
 
@@ -346,8 +367,71 @@ def _inspect(
     name = posixpath.basename(urlsplit(url).path) or art.filename
     ins = inspect_tarball(name, data, ctx.limits)
     return (
-        replace(art, inspected=True, files=tuple(ins.files), install_scripts=ins.scripts),
+        replace(
+            art,
+            inspected=True,
+            files=tuple(ins.files),
+            install_scripts=ins.scripts,
+            requirements=ins.requirements,
+            requirements_read=ins.requirements_read,
+        ),
         ins.errors,
+    )
+
+
+def _table(doc: dict[str, Any], key: str) -> dict[str, Any]:
+    """A packument table, or an empty one when the key is missing or malformed."""
+    value = doc.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def maintainers(doc: Any) -> tuple[str, ...]:
+    """The npm accounts a packument or version document lists as maintainers."""
+    people = doc.get("maintainers") if isinstance(doc, dict) else None
+    if not isinstance(people, list):
+        return ()
+    return tuple(
+        sorted(
+            {
+                str(m["name"])
+                for m in people
+                if isinstance(m, dict) and isinstance(m.get("name"), str)
+            }
+        )
+    )
+
+
+def package_profile(ctx: FetchContext, package: str) -> DependencyProfile:
+    """What the registry says about a package (GRN-C008): when it was created,
+    how many versions it has, and the repository its latest version names.
+    Raises ``NetError``; a name the registry doesn't know is ``on_registry=False``,
+    and so is one it couldn't hold (a ``package.json`` key that isn't an npm name),
+    which is never sent to the registry.
+    """
+    try:
+        name = normalize(package)
+    except ValueError:
+        name = ""
+    if name != package:
+        return DependencyProfile(package, on_registry=False)
+    pack = packument(ctx, name)
+    if pack is None:
+        return DependencyProfile(name, on_registry=False)
+    times, versions = _table(pack, "time"), _table(pack, "versions")
+    created = _parse_time(times.get("created"))
+    if created is None:
+        stamps = [t for v in versions if (t := _parse_time(times.get(v)))]
+        created = min(stamps) if stamps else None
+    latest = _table(pack, "dist-tags").get("latest")
+    doc = versions.get(latest) if isinstance(latest, str) else None
+    return DependencyProfile(
+        name,
+        on_registry=True,
+        first_release_at=created,
+        releases=len(versions),
+        source_repo=source_repo(doc) if isinstance(doc, dict) else None,
+        latest_version=latest if isinstance(latest, str) else None,
+        owners=maintainers(pack),
     )
 
 

@@ -11,6 +11,7 @@ fails when a rule is registered for an ecosystem without a firing and a quiet ro
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -19,9 +20,11 @@ from garnet_guard.engine import run_checks
 from garnet_guard.models import (
     CallSite,
     Change,
+    DependencyProfile,
     FactError,
     Limits,
     ReleaseFacts,
+    Requirement,
     Severity,
     SourceMatch,
     UnsourcedFile,
@@ -98,6 +101,44 @@ def _sourced(rel: ReleaseFacts, *unmatched: UnsourcedFile) -> ReleaseFacts:
     match = SourceMatch("o/r", f"v{rel.version}", "c" * 40, "", 1, unmatched)
     art = replace(rel.artifacts[0], source_match=match)
     return replace(rel, artifacts=(art, *rel.artifacts[1:]))
+
+
+UPLOADED = datetime(2026, 9, 1, tzinfo=UTC)
+
+
+def _metadata(version: str, *requires: str, metadata_version: str = "2.1") -> str:
+    lines = [f"Metadata-Version: {metadata_version}", "Name: demo", f"Version: {version}"]
+    return "\n".join([*lines, *(f"Requires-Dist: {r}" for r in requires)]) + "\n"
+
+
+def _depends(version: str, *requires: str) -> ReleaseFacts:
+    """A PyPI release whose wheel METADATA declares ``requires``, uploaded on ``UPLOADED``."""
+    rel = release(
+        version, {**PKG, f"demo-{version}.dist-info/METADATA": _metadata(version, *requires)}
+    )
+    arts = tuple(replace(a, uploaded_at=UPLOADED) for a in rel.artifacts)
+    return replace(rel, artifacts=arts)
+
+
+def _npm_depends(version: str, *deps: tuple[str, str]) -> ReleaseFacts:
+    """An npm release whose package.json ``dependencies`` are ``deps``."""
+    rel = _npm(version)
+    reqs = tuple(Requirement(name, f"{name}@{rng}") for name, rng in deps)
+    art = replace(rel.artifacts[0], uploaded_at=UPLOADED, requirements=reqs, requirements_read=True)
+    return replace(rel, artifacts=(art,))
+
+
+def _profiled(rel: ReleaseFacts, *profiles: DependencyProfile) -> ReleaseFacts:
+    return replace(rel, dependencies=profiles)
+
+
+def _profile(name: str, age_days: int | None, releases: int = 1) -> DependencyProfile:
+    """A registry profile; ``age_days`` None means the registry has no such package."""
+    if age_days is None:
+        return DependencyProfile(name, on_registry=False)
+    return DependencyProfile(
+        name, True, UPLOADED - timedelta(days=age_days), releases, source_repo=f"{name}/{name}"
+    )
 
 
 def _rows() -> list[Row]:
@@ -454,6 +495,74 @@ def _rows() -> list[Row]:
         release("1.0", PKG),
         release("1.1", {**PKG, "demo/dl.py": dl_payload}),
         eco=PYPI,
+    )
+
+    # GRN-C008 new-dependency
+    # The event-stream 3.3.6 shape: an added dependency first published weeks before.
+    fires(
+        "GRN-C008",
+        "new dependency first published weeks before the release",
+        _depends("1.0", "requests>=2"),
+        _profiled(
+            _depends("1.1", "requests>=2", "streamhelper>=0.1"), _profile("streamhelper", 35)
+        ),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C008",
+        "new dependency the registry doesn't have",
+        _depends("1.0", "requests>=2"),
+        _profiled(_depends("1.1", "requests>=2", "streamhelper"), _profile("streamhelper", None)),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C008",
+        "new established dependency, listed at info",
+        _depends("1.0", "requests>=2"),
+        _profiled(_depends("1.1", "requests>=2", "idna>=3"), _profile("idna", 3000, 40)),
+        Verdict.PASS,
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C008",
+        "same dependencies with a new version range",
+        _depends("1.0", "requests>=2"),
+        _depends("1.1", "requests>=2.31"),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C008",
+        "new dependency only behind an extra",
+        _depends("1.0", "requests>=2"),
+        _depends("1.1", "requests>=2", 'pytest; extra == "test"'),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C008",
+        "an old sdist PKG-INFO that doesn't state dependencies",
+        _sdist("1.0", {**SRC, "PKG-INFO": _metadata("1.0", metadata_version="1.2")}),
+        _sdist("1.1", {**SRC, "PKG-INFO": _metadata("1.1", "requests>=2", metadata_version="1.2")}),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C008",
+        "npm: new dependency first published weeks before the release",
+        _npm_depends("1.0", ("through", "~2.3.1")),
+        _profiled(
+            _npm_depends("1.1", ("through", "~2.3.1"), ("streamhelper", "^0.1.0")),
+            _profile("streamhelper", 35),
+        ),
+        Verdict.WARN,
+        eco=NPM,
+    )
+    quiet(
+        "GRN-C008",
+        "npm: same dependencies",
+        _npm_depends("1.0", ("through", "~2.3.1")),
+        _npm_depends("1.1", ("through", "~2.3.4")),
+        eco=NPM,
     )
 
     # GRN-K001 known-malicious

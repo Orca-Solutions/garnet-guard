@@ -33,9 +33,18 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 
 from garnet_guard import __version__, models
+from garnet_guard.checks.content import new_requirement_names
 from garnet_guard.ecosystems import github, gittree, npm, pypi
 from garnet_guard.engine import run_checks
-from garnet_guard.models import Change, ChangeResult, Limits, ReleaseFacts, Severity
+from garnet_guard.models import (
+    Change,
+    ChangeResult,
+    DependencyProfile,
+    FactError,
+    Limits,
+    ReleaseFacts,
+    Severity,
+)
 from garnet_guard.net import Http, NetError
 
 HERE = Path(__file__).parent
@@ -48,7 +57,7 @@ FIRST = {
 }
 NOT_DETECTION = {"GRN-K001", "GRN-E001", "GRN-E002", "GRN-E003"}
 RELEASES_PER_PACKAGE = 11  # 11 releases give 10 updates per package
-CACHE_FORMAT = 4
+CACHE_FORMAT = 6
 
 
 def _ecosystem(argv: list[str]) -> tuple[str, int, list[str]]:
@@ -214,6 +223,80 @@ class FactCache:
         tmp.replace(p)
 
 
+class ProfileCache:
+    """Registry profiles of new dependencies (GRN-C008), one JSON file per name.
+
+    A profile says how old a package is as of the day it was fetched, so it is
+    cached with the facts and a rerun sees the same answer.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root / f"v{CACHE_FORMAT}-garnet-{__version__}" / "profiles"
+
+    def _path(self, ecosystem: str, name: str) -> Path:
+        return self.root / ecosystem / f"{name.replace('/', '__')}.json"
+
+    def get(self, ecosystem: str, name: str) -> DependencyProfile | None:
+        p = self._path(ecosystem, name)
+        if not p.exists():
+            return None
+        profile: DependencyProfile = decode(DependencyProfile, json.loads(p.read_text()))
+        return profile
+
+    def put(self, ecosystem: str, profile: DependencyProfile) -> None:
+        p = self._path(ecosystem, profile.name)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(encode(profile), sort_keys=True))
+        tmp.replace(p)
+
+
+def with_profiles(
+    ecosystem: str, base: ReleaseFacts, cand: ReleaseFacts, cache: ProfileCache
+) -> ReleaseFacts:
+    """The candidate with a registry profile for each dependency the baseline
+    didn't declare, as ``engine.with_dependency_profiles`` does, cached on disk."""
+    names = new_requirement_names(base, cand)
+    if not names:
+        return cand
+    profiles: list[DependencyProfile] = []
+    errors: list[FactError] = []
+    todo: list[str] = []
+    for name in names:
+        hit = cache.get(ecosystem, name)
+        if hit is None:
+            todo.append(name)
+        else:
+            profiles.append(hit)
+    if todo:
+        with Http() as http:
+            tags = github.TagLookup(http)
+            for name in todo:
+                try:
+                    if ecosystem == "npm":
+                        nctx = npm.FetchContext(http=http, limits=Limits(), tags=tags)
+                        profile = npm.package_profile(nctx, name)
+                    else:
+                        pctx = pypi.FetchContext(
+                            http=http, limits=Limits(), tags=tags, trees=gittree.TreeLookup(http)
+                        )
+                        profile = pypi.package_profile(pctx, name)
+                except NetError as err:
+                    errors.append(
+                        FactError(
+                            "GRN-E001",
+                            f"registry lookup for dependency {name}: {err}",
+                            ("GRN-C008",),
+                        )
+                    )
+                    continue
+                cache.put(ecosystem, profile)
+                profiles.append(profile)
+    return dataclasses.replace(
+        cand, dependencies=tuple(profiles), errors=cand.errors + tuple(errors)
+    )
+
+
 def _transient(facts: ReleaseFacts) -> bool:
     """Don't cache a release whose facts are missing because a request failed."""
     return any(e.code == "GRN-E001" for e in facts.errors)
@@ -285,9 +368,11 @@ def run_package(
 ) -> list[dict[str, Any]]:
     t0 = time.monotonic()
     facts = fetch_package(ecosystem, package, versions, cache)
+    profiles = ProfileCache(cache.root.parent)
     rows: list[dict[str, Any]] = []
     for old, new in zip(versions, versions[1:], strict=False):
-        result = run_checks(Change(ecosystem, package, old, new), facts[old], facts[new])
+        cand = with_profiles(ecosystem, facts[old], facts[new], profiles)
+        result = run_checks(Change(ecosystem, package, old, new), facts[old], cand)
         findings = finding_rows(result)
         warn_rules = sorted(
             {
