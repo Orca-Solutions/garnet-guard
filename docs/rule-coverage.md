@@ -51,7 +51,12 @@ Probing each rule with releases shaped like known attacks found seven evasions a
 alarm on `main` at `df8c6a2`. Each is fixed in a draft pull request with a regression test and
 the backtest delta: #32 for the five C003 shapes, #33 for `setup.py`, the sdist cases and the
 `.pth` false alarm. Three more shapes came from the real attacks below and are fixed in #34
-and #36.
+and #36. The top-1,000 PyPI corpus (9,439 updates, run by the clean-package thread) then showed
+four false GRN-C003 claims (a local list called `requests`, a package's own `compile()`, a
+file renamed with a leading underscore, a trusted copy that couldn't be parsed) and three
+kinds of warning a reviewer cannot act on (a function handed to a call that may never run it,
+a chain that starts in a test file, sdist files outside the package); #38 fixes the four and
+moves the three to `info`.
 
 | Shape | Rule | What happened | Fix |
 |---|---|---|---|
