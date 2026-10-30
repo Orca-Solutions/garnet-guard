@@ -2,6 +2,21 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-30: Clean corpus grows to the top 1,000 PyPI and npm packages
+
+**State.** `python -m backtest select|corpus [pypi|npm] [SIZE]` runs the clean corpus for up to the top 1,000 packages of each registry (lists frozen as `backtest/top-pypi-1000.json` and `top-npm-1000.json`; the old top-100 and top-200 files were their first rows), in worker processes. Defaults stay at 100 and 200 so a rule PR's backtest delta stays quick. Results, with every warning triaged:
+
+- PyPI, 9,439 updates of 975 packages: 220 flagged for a look (2.3%), none a false claim. `backtest/corpus-results-pypi-1000/REPORT.md`. Run on main plus the rule-testing branches up to `claude/project-thread-sm89m3-claims` at `dae4777` (PR #38), so the number matches the rules about to ship; on this branch alone the content-rule counts differ.
+- npm, 8,742 updates of 989 packages: 146 flagged for a look (1.7%), none a false claim. `backtest/corpus-results-npm-1000/REPORT.md`.
+
+The wider runs found false claims, fixed here or on the rule-testing branch: GRN-T004 missed 16 tags (monorepo folders `utils/v2.8.1`, `release-v1.0.0`, `prebuilt==1.0.11`, `azure-mgmt-core_1.1.0`); GRN-T001 said "no attestation" for whatwg-url 17.1.1, whose attestation is listed but not served (HTTP 404); GRN-C003 made 13 (unimported names read as modules, a module's own `compile`, renames and unparsed files as new modules, handed functions as reached at import). A first version of the wider tag matcher took a sibling package's tag (`proxy-agent@8.0.0` for socks-proxy-agent 8.0.0); a shorter folder name now counts only after `/` or `==` and only in a repository that never tags the full name. The top-200 npm report's triage of trace-mapping, whatwg-url and uuid was wrong and now carries a correction.
+
+**Verification.** `uv run pytest`, ruff, mypy (strict) and `lint-imports` pass. `uv run python -m backtest incidents`: all 11 caught, as on main; the 51-release replay on PR #31's branch with these tag changes gives the same result as without them. Each warning was checked independently: tags with `git ls-remote`, provenance with the registries' attestation endpoints, build hooks by reading both sdists, and every GRN-C003 evidence line read back from the release files with `ast`.
+
+**Open tasks.** Merge after the rule-testing PRs (#32, #33, #34, #36 and #38 at `dae4777` or later) so main's rules match the published PyPI number. The rule-testing thread fixed the GRN-C003 points this run raised, the last in `dae4777` (a top-level `test/` folder counts as test files, which moved ply 3.6 to info). One stays as a known imprecision: in new copies of `six` the cited line is the Python 2 definition of `exec_`, and Python 3 runs the builtin through the same name a few lines later.
+
+**Review dispositions.** None yet.
+
 ## 2026-10-30: SARIF tool name is "Garnet Guard"
 
 **State.** The SARIF driver name was `garnet`, which GitHub shows as the code scanning check run's name and at the top of each inline alert ("garnet / ..."). It read like one of GitHub's own checks. It is now `Garnet Guard`. Code scanning tracks alerts by tool name, so alerts uploaded under `garnet` (one so far, #9 on PR #25's merge ref) stay under the old name and aren't matched to new ones.
@@ -20,7 +35,7 @@ Two things the spec didn't anticipate:
 **Verification.**
 - `uv run pytest` (257 tests), ruff, mypy (strict) and `lint-imports` pass. `tests/test_npm.py` verifies three recorded real bundles offline: nx 21.4.1 (`intoto` entry), which 3.0.1 (2023, no inclusion proof) and @ctrl/tinycolor 4.2.2 (`dsse` entry), plus tampering, wrong-version and wrong-digest cases.
 - `uv run python -m backtest incidents`: all seven incidents caught. The four npm ones (`backtest/npm-incidents.toml`): chalk 5.6.1 and debug 4.4.2 by GRN-T004; nx 21.5.0 by GRN-T001, GRN-T004 and GRN-C002 (`postinstall` → `node telemetry.js`); @ctrl/tinycolor 4.1.1 by GRN-C002 (new `postinstall node bundle.js`) and GRN-T004. npm deletes removed tarballs, so these replay from registry facts recorded from the cited write-ups, with the baseline fetched live; the tarballs are not inspected.
-- `uv run python -m backtest corpus npm`, the last 11 releases of the 200 most downloaded npm packages (`backtest/top-npm-200.json`, 1,809 updates): 33 warned (1.8%): GRN-T004 25, GRN-T001 5, GRN-T002 2, GRN-T003 1. Triage in `backtest/corpus-results-npm/REPORT.md`. Before the two fixes above the run showed 54 (3.0%), with 18 `prepare` warns and 3 wrong GRN-T007 blocks on 2023 bundles.
+- `uv run python -m backtest corpus npm`, the last 11 releases of the 200 most downloaded npm packages (then `backtest/top-npm-200.json`, now the first 200 of `top-npm-1000.json`; 1,809 updates): 33 warned (1.8%): GRN-T004 25, GRN-T001 5, GRN-T002 2, GRN-T003 1. Triage in `backtest/corpus-results-npm/REPORT.md`. Before the two fixes above the run showed 54 (3.0%), with 18 `prepare` warns and 3 wrong GRN-T007 blocks on 2023 bundles.
 - The cloud container reaches registry.npmjs.org and github.com, so both npm backtests ran there; api.osv.dev stays unreachable, which the replay doesn't need.
 
 **Open tasks.** npm lockfile parsers (package-lock.json v2/v3, yarn.lock, pnpm-lock.yaml, the last needing `pyyaml` and an ADR); `bin` diffs; a JavaScript content rule (GRN-C005 obfuscated-blob would have had something to say about chalk's index.js); SPEC §6.2 wording for `prepare`.
@@ -116,6 +131,8 @@ Two things the spec didn't anticipate:
   - Replays lightning 2.6.2 and 2.6.3, each caught by GRN-C003 and GRN-T004.
   - Replays elementary-data 0.23.3, caught by GRN-C001. GRN-T004 fires only against today's tags: the attacker's `v0.23.3` tag existed on the day and was deleted later.
   - Replays litellm 1.82.7 (GRN-C003) and 1.82.8 (GRN-C001, GRN-C003), and telnyx 4.87.1 and 4.87.2 (GRN-C003, GRN-T004).
+  - 2026-10-30: adds 19 more malicious releases from 11 packages (ultralytics, num2words, xinference, mistralai, guardrails-ai, durabletask, memoryos and four Hades-campaign packages). 24 of the 26 releases warn on the day. ultralytics 8.3.42 (attested and tagged by the project's own hijacked workflow, payload not at import) and embiggen 0.11.97 (sdist-only baseline, wheel-only release, so content rules found nothing to compare and passed silently) get nothing. ultralytics 8.3.45/8.3.46 are the first replays where GRN-T001 fires, using `attested = false` recorded from PyPI's analysis.
+  - 2026-10-30, second pass: adds 21 more releases from 21 packages whose files come from the `package_integrity` hashes in ossf/malicious-packages (no PyPI snapshot, so no `uploaded_at`): 20 Hades-campaign packages and mrmustard 0.7.4. 44 of the 47 PyPI releases warn on the day; mrmustard 0.7.4 is a third miss (GRN-C003 doesn't follow a nested function handed to `threading.Thread`). Nine packages link no repository in their metadata, so `source_repo` is absent and GRN-T004 can't run for them. With the four npm takeovers, 48 of 51 warn.
   - Replays the deleted malicious files by URL and hash from files.pythonhosted.org.
   - The 20 clean updates in `backtest/clean.toml` produce no warnings from detection rules.
 - Known-bad lookups are off in the backtest on purpose, to show what Garnet Guard catches before any feed lists a release.

@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import tomllib
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 
 from ..models import CallSite, FactError, FileEntry, FileKind, Limits, ModuleIndex, PthFile
 from ..safe_archive import ArchiveError, LimitExceeded, open_archive
-from .pyindex import index_module, module_name, sensitive_calls
+from .pyindex import ModuleScan, index_build_script, module_name, scan_module, sensitive_calls
 
 _NATIVE_EXT = (".so", ".pyd", ".dylib", ".dll", ".exe")
+_SITE_PREFIX = re.compile(r"^[^/]+\.data/(purelib|platlib)/")
 _NATIVE_MAGIC = (b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
 _SCRIPT_EXT = (".sh", ".bash", ".bat", ".cmd", ".ps1", ".js", ".mjs", ".cjs", ".vbs")
 
@@ -59,6 +62,16 @@ def _strip_prefix(paths: list[str]) -> str:
     return ""
 
 
+def site_path(path: str) -> str:
+    """Where a wheel file lands relative to site-packages.
+
+    ``demo-1.1.data/purelib/demo.pth`` installs as ``demo.pth``; the folder
+    name carries the version, so comparing releases by it would see every
+    file as new.
+    """
+    return _SITE_PREFIX.sub("", path)
+
+
 def exec_lines(pth: bytes) -> tuple[str, ...]:
     """Lines of a .pth file that the site module executes."""
     out = []
@@ -86,6 +99,9 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
     ``FactError``s in the result.
     """
     result = Inspection()
+    sources: dict[str, bytes] = {}  # module → source, for calls across modules
+    calls_out: dict[str, tuple[str, ...]] = {}  # module → own callables it calls at import
+    handed_out: dict[str, tuple[tuple[str, str], ...]] = {}  # module → own callables it hands on
     try:
         reader = open_archive(data, filename, limits)
         entries = reader.entries()
@@ -100,8 +116,12 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
             body = reader.read(entry.path)
             kind = _kind(rel, body[:4])
             result.files.append(FileEntry(rel, len(body), hashlib.sha256(body).hexdigest(), kind))
+            site = rel if sdist else site_path(rel)
             if kind == "pth":
-                result.pth_files.append(PthFile(rel, exec_lines(body)))
+                # In a wheel only a .pth that lands in site-packages itself runs:
+                # at the wheel root or at the root of .data/purelib or platlib.
+                if sdist or "/" not in site:
+                    result.pth_files.append(PthFile(rel, exec_lines(body)))
             elif kind == "py":
                 if len(body) > limits.max_py_file_bytes:
                     result.errors.append(
@@ -113,25 +133,29 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                         )
                     )
                     continue
-                mod_path = rel[4:] if sdist and rel.startswith("src/") else rel
+                mod_path = site[4:] if sdist and site.startswith("src/") else site
                 mod = module_name(mod_path)
                 try:
-                    calls, imports = index_module(body, path=rel, own=own, module=mod)
+                    if sdist and rel == "setup.py":
+                        result.setup_py_calls = index_build_script(body)
+                        continue
+                    scan = scan_module(body, path=rel, own=own, module=mod)
+                    anywhere = sensitive_calls(body, path=rel, own=own)
                 except (SyntaxError, ValueError, RecursionError):
                     result.unparsed.append(rel)
                     continue
-                if sdist and rel == "setup.py":
-                    result.setup_py_calls = calls
-                else:
-                    anywhere = sensitive_calls(body, path=rel, own=own)
-                    result.modules.append(
-                        ModuleIndex(mod, rel, calls, imports, git_blob_id(body), anywhere)
-                    )
+                result.modules.append(
+                    ModuleIndex(mod, rel, scan.calls, scan.imports, git_blob_id(body), anywhere)
+                )
+                sources[mod] = body
+                calls_out[mod] = scan.calls_out
+                handed_out[mod] = scan.handed_out
             elif sdist and rel == "pyproject.toml":
                 result.build_backend = _build_backend(body)
                 result.entry_points |= _pyproject_entry_points(body)
             elif not sdist and rel.endswith(".dist-info/entry_points.txt") and rel.count("/") == 1:
                 result.entry_points |= entry_point_modules(body)
+        _follow_calls_out(result, sources, calls_out, handed_out, own)
     except LimitExceeded as err:
         result.errors.append(FactError("GRN-E003", f"{filename}: {err}", ("GRN-C001", "GRN-C003")))
     except ArchiveError as err:
@@ -141,6 +165,78 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
     result.pth_files.sort(key=lambda p: p.path)
     result.unparsed.sort()
     return result
+
+
+def _callee(name: str, modules: Mapping[str, bytes]) -> tuple[str, str] | None:
+    """Split ``pkg.mod.Class.method`` into the longest module known and the rest."""
+    parts = name.split(".")
+    for n in range(len(parts) - 1, 0, -1):
+        mod = ".".join(parts[:n])
+        if mod in modules:
+            return mod, ".".join(parts[n:])
+    return None
+
+
+def _follow_calls_out(
+    result: Inspection,
+    sources: Mapping[str, bytes],
+    calls_out: Mapping[str, tuple[str, ...]],
+    handed_out: Mapping[str, tuple[tuple[str, str], ...]],
+    own: frozenset[str],
+) -> None:
+    """Follow import-time calls into the package's other modules.
+
+    memoryos 2.0.34 ran ``get_logger()`` at module level in most modules; that
+    function called ``configure_logging()``, which imported ``_stage0`` and
+    ran its ``trigger()``, which started a bundled binary. Each callable is
+    parsed once, and its sensitive calls are added to the module that holds
+    them once per module whose import reaches it, marked with that module,
+    so a check can tell a call every import runs from one that only a test
+    file reaches. A callable that import-time code only handed to another
+    call (``partial(f)``) is followed the same way, carrying that call.
+    """
+    by_module = {m.module: i for i, m in enumerate(result.modules)}
+    pending: list[tuple[str, str, str | None]] = sorted(
+        (callee, mod, None) for mod, names in calls_out.items() for callee in names
+    )
+    pending += sorted(
+        (callee, mod, to) for mod, pairs in handed_out.items() for callee, to in pairs
+    )
+    seen: set[tuple[tuple[str, str], str, str | None]] = set()
+    scans: dict[tuple[tuple[str, str], str | None], ModuleScan | None] = {}
+    extra: dict[str, list[CallSite]] = {}
+    while pending:
+        name, origin, to = pending.pop(0)
+        target = _callee(name, sources)
+        if target is None or (target, origin, to) in seen:
+            continue
+        seen.add((target, origin, to))
+        mod, entry = target
+        if (target, to) not in scans:
+            index = result.modules[by_module[mod]]
+            try:
+                scans[target, to] = scan_module(
+                    sources[mod], path=index.path, own=own, module=mod, entry=entry, handed=to
+                )
+            except (SyntaxError, ValueError, RecursionError):
+                scans[target, to] = None
+        scan = scans[target, to]
+        if scan is None:
+            continue
+        origin_path = result.modules[by_module[origin]].path
+        extra.setdefault(mod, []).extend(
+            replace(c, from_module=origin_path if origin != mod else None) for c in scan.calls
+        )
+        pending.extend((callee, origin, None) for callee in scan.calls_out)
+        pending.extend((callee, origin, ctx) for callee, ctx in scan.handed_out)
+    for mod, calls in extra.items():
+        i = by_module[mod]
+        index = result.modules[i]
+        merged = sorted(
+            set(index.top_level_calls) | set(calls),
+            key=lambda c: (c.line, c.name, c.via or "", c.from_module or "", c.handed_to or ""),
+        )
+        result.modules[i] = replace(index, top_level_calls=tuple(merged))
 
 
 def _build_backend(pyproject: bytes) -> str | None:

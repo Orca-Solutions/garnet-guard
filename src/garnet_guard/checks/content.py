@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 
 from ..models import (
     ArtifactFacts,
+    CallSite,
     Change,
     Evidence,
     ModuleIndex,
@@ -15,6 +17,8 @@ from ..models import (
 )
 
 MAX_EVIDENCE = 25  # evidence lines per finding; the rest are counted, not listed
+# A wheel's <name>-<version>.data/purelib/ and platlib/ install into site-packages itself.
+_SITE_PREFIX = re.compile(r"^[^/]+\.data/(purelib|platlib)/")
 
 # Well-known build backends. A switch to one of these isn't GRN-C002; a switch
 # to anything else, or to a backend shipped inside the sdist, is.
@@ -53,19 +57,39 @@ def _pick(rel: ReleaseFacts, kind: str) -> ArtifactFacts | None:
 def _pair(
     base: ReleaseFacts, cand: ReleaseFacts
 ) -> tuple[ArtifactFacts | None, ArtifactFacts | None]:
-    """The artifacts to compare: wheels when both have one, else sdists."""
+    """The artifacts to compare: wheels when both have one, else sdists.
+
+    When neither pairing is possible (the trusted version shipped only a
+    wheel and the new one only an sdist, or the other way round) the two
+    kinds are compared with each other, with a note, rather than not at all.
+    """
     bw, cw = _pick(base, "wheel"), _pick(cand, "wheel")
     if bw is not None and cw is not None:
         return bw, cw
-    return _pick(base, "sdist"), _pick(cand, "sdist")
+    bs, cs = _pick(base, "sdist"), _pick(cand, "sdist")
+    if bs is not None and cs is not None:
+        return bs, cs
+    return bw or bs, cw or cs
 
 
 def _clip(text: str, n: int = 160) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def _tag_note(b: ArtifactFacts, c: ArtifactFacts) -> tuple[Evidence, ...]:
-    """A note when the two wheels compared were built for different platforms."""
+def _site_name(path: str) -> str:
+    """A wheel path as it lands in site-packages (see ``facts.inventory.site_path``)."""
+    return _SITE_PREFIX.sub("", path)
+
+
+def _compare_note(b: ArtifactFacts, c: ArtifactFacts) -> tuple[Evidence, ...]:
+    """A note when the two files compared aren't like for like."""
+    if b.packagetype != c.packagetype:
+        return (
+            Evidence(
+                "note",
+                f"compared {c.filename} with {b.filename}: the releases ship different kinds of files",
+            ),
+        )
     if b.wheel_tag and c.wheel_tag and b.wheel_tag != c.wheel_tag:
         return (
             Evidence(
@@ -84,11 +108,15 @@ def new_pth_file(
     b, c = _pair(base, cand)
     if b is None or c is None:
         return
-    old = {p.path: p for p in b.pth_files}
+    old = {_site_name(p.path): p for p in b.pth_files}
+    old_lines = {p.exec_lines for p in b.pth_files if p.exec_lines}
     evidence: list[Evidence] = []
     for p in c.pth_files:
         size = next((f.size for f in c.files if f.path == p.path), 0)
-        if p.path not in old:
+        name = _site_name(p.path)
+        if name not in old:
+            if p.exec_lines in old_lines:
+                continue  # renamed (protobuf-<version>-nspkg.pth), same lines
             first = p.exec_lines[0] if p.exec_lines else "(no executable lines)"
             evidence.append(
                 Evidence(
@@ -99,7 +127,7 @@ def new_pth_file(
                 )
             )
         else:
-            gained = [x for x in p.exec_lines if x not in old[p.path].exec_lines]
+            gained = [x for x in p.exec_lines if x not in old[name].exec_lines]
             if gained:
                 evidence.append(
                     Evidence(
@@ -112,7 +140,7 @@ def new_pth_file(
         yield RawFinding(
             "GRN-C001",
             f"{cand.version} adds code that runs at every Python startup (.pth)",
-            tuple(evidence[:MAX_EVIDENCE]) + _tag_note(b, c),
+            tuple(evidence[:MAX_EVIDENCE]) + _compare_note(b, c),
         )
 
 
@@ -122,32 +150,45 @@ def new_build_hook(
     """GRN-C002: new sensitive calls in setup.py, or a new unusual build backend.
 
     Only sdists are compared: a wheel is already built. For npm the rule
-    compares install-time scripts instead (``_new_install_script``).
+    compares install-time scripts instead (``_new_install_script``). A
+    trusted version that shipped no sdist had no build code at all, so
+    every build-time call in the new sdist is new.
     """
     if base is None:
         return
     if change.ecosystem == "npm":
         yield from _new_install_script(base, cand)
         return
-    b, c = _pick(base, "sdist"), _pick(cand, "sdist")
-    if b is None or c is None:
+    c = _pick(cand, "sdist")
+    if c is None:
         return
+    b = _pick(base, "sdist")
+    if b is None and any(a.packagetype == "sdist" for a in base.artifacts):
+        return  # the trusted sdist couldn't be read; GRN-E001 says so
     evidence: list[Evidence] = []
-    old_names = {s.name for s in b.setup_py_calls}
+    old_names = {s.name for s in b.setup_py_calls} if b is not None else set()
+    old_backend = b.build_backend if b is not None else None
     for s in c.setup_py_calls:
         if s.name not in old_names:
+            via = f" (in {s.via}())" if s.via else ""
             evidence.append(
-                Evidence("file", f"setup.py:{s.line} calls {s.name}", path="setup.py", line=s.line)
+                Evidence(
+                    "file", f"setup.py:{s.line} calls {s.name}{via}", path="setup.py", line=s.line
+                )
             )
-    if c.build_backend != b.build_backend and c.build_backend is not None:
+    if c.build_backend != old_backend and c.build_backend is not None:
         if c.build_backend.startswith("in-tree:") or c.build_backend not in BACKEND_ALLOWLIST:
             evidence.append(
                 Evidence(
                     "file",
-                    f"build backend {b.build_backend or 'default'} → {c.build_backend}",
+                    f"build backend {old_backend or 'default'} → {c.build_backend}",
                     path="pyproject.toml",
                 )
             )
+    if evidence and b is None:
+        evidence.append(
+            Evidence("note", f"{base.version} shipped no sdist, so it had no build-time code")
+        )
     if evidence:
         yield RawFinding(
             "GRN-C002",
@@ -204,16 +245,36 @@ def _moved_from(path: str, baseline: tuple[ModuleIndex, ...]) -> set[str]:
         n = 0
         while n < min(len(parts), len(other)) and parts[-1 - n] == other[-1 - n]:
             n += 1
+        if (
+            n == 0
+            and other[:-1] == parts[:-1]
+            and _public_name(other[-1]) == _public_name(parts[-1])
+        ):
+            n = len(parts)  # html5lib 1.0 renamed inputstream.py to _inputstream.py
         if n > best_len or (n == best_len and best is not None and m.path < best.path):
             best, best_len = m, n
     return {s.name for s in best.top_level_calls} if best is not None else set()
 
 
+def _public_name(filename: str) -> str:
+    """``_inputstream.py`` and ``inputstream.py`` are the same module renamed."""
+    return filename.lstrip("_")
+
+
 def is_test_path(path: str) -> bool:
-    """tests/ folders, test_*.py and conftest.py (docs/rules/GRN-C003.md)."""
+    """tests/ folders, a top-level test/ folder, test_*.py and conftest.py.
+
+    A ``test/`` folder inside the package is installed code (``django.test``),
+    so only one beside the package counts (docs/rules/GRN-C003.md).
+    """
     parts = path.split("/")
-    name = parts[-1]
-    return "tests" in parts[:-1] or name.startswith("test_") or name == "conftest.py"
+    folders, name = parts[:-1], parts[-1]
+    return (
+        "tests" in folders
+        or folders[:1] == ["test"]
+        or name.startswith("test_")
+        or name == "conftest.py"
+    )
 
 
 def _live_test_modules(art: ArtifactFacts) -> set[str]:
@@ -241,14 +302,68 @@ def _live_test_modules(art: ArtifactFacts) -> set[str]:
     return reached & set(tests)
 
 
+_RUNNERS = frozenset(
+    {
+        "threading.Thread",
+        "threading.Timer",
+        "multiprocessing.Process",
+        "atexit.register",
+        "signal.signal",
+        "asyncio.run",
+        "asyncio.create_task",
+        "asyncio.ensure_future",
+        "weakref.finalize",
+        "_thread.start_new_thread",
+        "os.register_at_fork",
+    }
+)
+_RUNNER_METHODS = frozenset(
+    {"submit", "apply_async", "map_async", "call_soon", "call_soon_threadsafe", "call_later"}
+)
+
+
+def _deferred(site: CallSite) -> bool:
+    """A call reached only through a function handed to a call that may not run it."""
+    return site.handed_to is not None and not _runs(site.handed_to)
+
+
+def _runs(callee: str) -> bool:
+    """Whether the call a function was handed to is known to run it.
+
+    ``threading.Thread(target=f)`` and ``executor.submit(f)`` run f;
+    ``functools.partial(f)``, ``map(f, xs)`` or a wrapper factory may never.
+    """
+    return callee in _RUNNERS or callee.rsplit(".", 1)[-1] in _RUNNER_METHODS
+
+
+def _outside_package(art: ArtifactFacts, package: str) -> set[str]:
+    """Paths of sdist modules that are not installed with the package.
+
+    An sdist carries docs/conf.py, examples and benchmarks beside the package
+    (ply 3.6's example/, mpmath 1.2.1's demo/); they run only when someone runs
+    them. A wheel holds only what is installed, so nothing in it is outside.
+    """
+    if art.packagetype != "sdist":
+        return set()
+    tops = {f.path.split("/")[0] for f in art.files if f.path.endswith("/__init__.py")}
+    name = package.lower().replace("-", "_").replace(".", "_")
+    tops |= {"src", name, name.split("_")[0]}
+    return {m.path for m in art.modules if "/" in m.path and m.path.split("/")[0] not in tops}
+
+
 def new_import_time_exec(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
     """GRN-C003: new import-time calls to the sensitive APIs in pyindex.
 
     A module byte-identical to a baseline file is skipped, and one moved from
-    a baseline path is compared with that file. Calls in test files that
-    nothing else imports are reported at info (docs/rules/GRN-C003.md).
+    a baseline path is compared with that file. Three kinds of call are
+    reported at info, each in its own finding (docs/rules/GRN-C003.md): calls
+    in or reached only from test files that nothing else imports, calls in or
+    reached only from sdist files outside the package, and calls in a function
+    that import-time code only handed to another call which is not known to
+    run it. A call that a package module reaches at import is reported once,
+    at warn, whatever else reaches it.
     """
     if base is None:
         return
@@ -257,23 +372,73 @@ def new_import_time_exec(
         return
     old = {m.module: {s.name for s in m.top_level_calls} for m in b.modules}
     old_hashes = {f.sha256 for f in b.files}
+    old_unparsed = set(b.unparsed)
     new_hash = {f.path: f.sha256 for f in c.files}
     live_tests = _live_test_modules(c)
-    found: dict[bool, tuple[list[Evidence], set[str]]] = {False: ([], set()), True: ([], set())}
+    module_of = {m.path: m.module for m in c.modules}
+    outside = _outside_package(c, cand.package)
+    kinds = ("module", "test", "outside", "handed")
+    # per kind: evidence, the files counted in the title, and the trusted
+    # copies ast couldn't parse (a Python 2 wheel), module -> path
+    found: dict[str, tuple[list[Evidence], set[str], dict[str, str]]] = {
+        k: ([], set(), {}) for k in kinds
+    }
     for m in c.modules:
         if m.module in old:
             before = old[m.module]
         elif new_hash.get(m.path) in old_hashes:
             continue  # byte-identical to a baseline file: moved, not added
+        elif m.path in old_unparsed:
+            before = set()
         else:
             before = _moved_from(m.path, b.modules)
         test_only = is_test_path(m.path) and m.module not in live_tests
-        evidence, modules = found[test_only]
+        # A function handed to two calls is scanned once per call; a site that
+        # some call is known to run is not also "handed".
+        ran = {(s.line, s.name) for s in m.top_level_calls if not _deferred(s)}
+        sites: list[tuple[CallSite, str, str]] = []  # site, kind, file counted in the title
         for s in m.top_level_calls:
             if s.name in before:
                 continue
-            via = f" (in {s.via}(), reached at import)" if s.via else ""
-            where = "new module " if m.module not in old else ""
+            deferred = _deferred(s)
+            if deferred and (s.line, s.name) in ran:
+                continue
+            origin = s.from_module
+            from_test = (
+                origin is not None
+                and is_test_path(origin)
+                and module_of.get(origin) not in live_tests
+            )
+            from_outside = origin is not None and origin in outside
+            counted = m.module
+            if deferred:
+                kind = "handed"
+            elif test_only or from_test:
+                kind = "test"
+            elif m.path in outside or from_outside:
+                kind = "outside"
+            else:
+                kind = "module"
+            if origin is not None and kind != "handed" and (from_test or from_outside):
+                counted = module_of.get(origin, origin)
+            sites.append((s, kind, counted))
+        # A site some package module reaches at import is a warn, whatever
+        # else reaches it; a site several files reach is listed once.
+        direct = {(s.line, s.name) for s, kind, _ in sites if kind == "module"}
+        listed: set[tuple[str, int, str, str | None]] = set()
+        for s, kind, counted in sites:
+            if kind != "module" and (s.line, s.name) in direct:
+                continue
+            if (kind, s.line, s.name, s.via) in listed:
+                continue
+            listed.add((kind, s.line, s.name, s.via))
+            evidence, files, unread = found[kind]
+            start = f" from {s.from_module}" if s.from_module else ""
+            how = f"handed to {s.handed_to}() at import" if _deferred(s) else "reached at import"
+            via = f" (in {s.via}(), {how}{start})" if s.via else ""
+            where = "new module " if m.module not in old and m.path not in old_unparsed else ""
+            if m.path in old_unparsed:
+                unread[m.module] = m.path
             evidence.append(
                 Evidence(
                     "file",
@@ -282,17 +447,18 @@ def new_import_time_exec(
                     line=s.line,
                 )
             )
-            modules.add(m.module)
-    for test_only, (evidence, modules) in found.items():
+            files.add(counted)
+    for kind, (evidence, files, unread) in found.items():
         if not evidence:
             continue
-        note: tuple[Evidence, ...]
+        n = len(files)
         more = len(evidence) - MAX_EVIDENCE
         tail = (Evidence("note", f"and {more} more call site(s)"),) if more > 0 else ()
-        if test_only:
+        note: tuple[Evidence, ...] = ()
+        if kind == "test":
             title = (
-                f"{cand.version} adds import-time calls to sensitive APIs in "
-                f"{len(modules)} test module(s) that no other module imports"
+                f"{cand.version} adds import-time calls to sensitive APIs reached only "
+                f"from {n} test module(s) that no other module imports"
             )
             note = (
                 Evidence(
@@ -301,14 +467,50 @@ def new_import_time_exec(
                     "so this is reported at info",
                 ),
             )
+        elif kind == "outside":
+            title = (
+                f"{cand.version} adds import-time calls to sensitive APIs reached only "
+                f"from {n} file(s) outside the package"
+            )
+            note = (
+                Evidence(
+                    "note",
+                    "these files ship in the sdist but not in the installed package, "
+                    "so they run only when run on their own; reported at info",
+                ),
+            )
+        elif kind == "handed":
+            title = (
+                f"{cand.version} hands functions that call sensitive APIs to other "
+                f"calls at import in {n} module(s)"
+            )
+            note = (
+                Evidence(
+                    "note",
+                    "whether the receiving call runs them cannot be read from the source, "
+                    "so this is reported at info",
+                ),
+            )
+        elif unread and files <= unread.keys():
+            title = (
+                f"{cand.version} calls sensitive APIs at import in {n} module(s) whose "
+                f"{base.version} copy couldn't be parsed"
+            )
         else:
-            title = f"{cand.version} adds import-time calls to sensitive APIs in {len(modules)} module(s)"
-            note = ()
+            title = f"{cand.version} adds import-time calls to sensitive APIs in {n} module(s)"
+        if unread:
+            note += (
+                Evidence(
+                    "note",
+                    f"{base.version} has {', '.join(sorted(unread.values()))} too, but it "
+                    "couldn't be parsed, so these calls may not be new",
+                ),
+            )
         yield RawFinding(
             "GRN-C003",
             title,
-            tuple(evidence[:MAX_EVIDENCE]) + tail + note + _tag_note(b, c),
-            lowered_to=Severity.INFO if test_only else None,
+            tuple(evidence[:MAX_EVIDENCE]) + tail + note + _compare_note(b, c),
+            lowered_to=None if kind == "module" else Severity.INFO,
         )
 
 

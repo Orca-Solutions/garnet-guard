@@ -27,6 +27,67 @@ def test_no_match() -> None:
     assert match_tag(TAGS, "x", "not a version") is None
 
 
+def test_monorepo_directory_tags() -> None:
+    # Real tag names: open-telemetry/opentelemetry-js and import-js/eslint-plugin-import.
+    tags = {"api/v1.4.1": "a", "v1.4.0": "b", "utils/v2.8.1": "c", "resolvers/node/v0.3.3": "d"}
+    assert match_tag(tags, "@opentelemetry/api", "1.4.1", npm=True).name == "api/v1.4.1"
+    assert match_tag(tags, "eslint-module-utils", "2.8.1", npm=True).name == "utils/v2.8.1"
+    assert match_tag(tags, "eslint-import-resolver-node", "0.3.3").name == "resolvers/node/v0.3.3"
+    assert match_tag({"pkgs/demo/1.0": "e"}, "demo", "1.0.0").name == "pkgs/demo/1.0"
+
+
+def test_release_word_and_monorepo_separators() -> None:
+    # Real tag names: explosion/confection, langchain-ai/langgraph, Azure/azure-sdk-for-python.
+    tags = {"release-v1.0.0": "a", "prebuilt==1.0.11": "b", "azure-mgmt-core_1.1.0": "c"}
+    assert match_tag(tags, "confection", "1.0.0").name == "release-v1.0.0"
+    assert match_tag(tags, "langgraph-prebuilt", "1.0.11").name == "prebuilt==1.0.11"
+    assert match_tag(tags, "azure-mgmt-core", "1.1.0").name == "azure-mgmt-core_1.1.0"
+    assert match_tag({"Release-1.0": "d"}, "x", "1.0.0").name == "Release-1.0"
+
+
+def test_prefix_must_name_the_package_or_a_release() -> None:
+    tags = {"checkpoint==1.0.11": "a", "azure-core_1.1.0": "b", "nightly-v1.0.0": "c"}
+    assert match_tag(tags, "langgraph-prebuilt", "1.0.11") is None
+    assert match_tag(tags, "azure-mgmt-core", "1.1.0") is None
+    assert match_tag(tags, "x", "1.0.0") is None
+
+
+def test_monorepo_directory_tag_must_name_the_package() -> None:
+    tags = {"api/v1.4.1": "a", "sdk-metrics/v2.0.0": "b", "utils/v2.8.1": "c"}
+    assert match_tag(tags, "@opentelemetry/sdk-trace", "1.4.1", npm=True) is None
+    assert match_tag(tags, "@opentelemetry/api", "2.0.0", npm=True) is None
+    assert match_tag(tags, "eslint-module-utils", "2.8.2") is None
+    assert match_tag(tags, "utils-extra", "2.8.1") is None
+
+
+def test_sibling_package_tag_is_not_this_package() -> None:
+    # Real tag names: TooTallNate/proxy-agents tags socks-proxy-agent and
+    # proxy-agent, and has no tag for socks-proxy-agent 8.0.0.
+    tags = {"proxy-agent@8.0.0": "a", "proxy-agent@8.0.1": "b", "socks-proxy-agent@8.0.1": "c"}
+    assert match_tag(tags, "socks-proxy-agent", "8.0.0", npm=True) is None
+    assert match_tag(tags, "socks-proxy-agent", "8.0.1", npm=True).name == "socks-proxy-agent@8.0.1"
+    assert match_tag(tags, "proxy-agent", "8.0.0", npm=True).name == "proxy-agent@8.0.0"
+
+
+def test_short_name_needs_a_folder_or_double_equals_prefix() -> None:
+    tags = {"agent@1.0.0": "a", "agent-1.0.0": "b", "agent_1.0.0": "c"}
+    assert match_tag(tags, "socks-proxy-agent", "1.0.0", npm=True) is None
+    assert (
+        match_tag({"agent/1.0.0": "d"}, "socks-proxy-agent", "1.0.0", npm=True).name
+        == "agent/1.0.0"
+    )
+    assert (
+        match_tag({"@ctrl/tinycolor@4.2.2": "e"}, "@ctrl/tinycolor", "4.2.2", npm=True).name
+        == "@ctrl/tinycolor@4.2.2"
+    )
+
+
+def test_short_name_is_ignored_when_the_full_name_is_tagged() -> None:
+    tags = {"utils/v2.8.1": "a", "eslint-module-utils-v2.8.0": "b"}
+    assert match_tag(tags, "eslint-module-utils", "2.8.1") is None
+    assert match_tag(tags, "eslint-module-utils", "2.8.0").name == "eslint-module-utils-v2.8.0"
+
+
 def _pkt(line: str) -> bytes:
     data = line.encode() + b"\n"
     return f"{len(data) + 4:04x}".encode() + data

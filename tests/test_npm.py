@@ -6,14 +6,16 @@ import io
 import json
 import tarfile
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from garnet_guard.ecosystems import npm, npm_provenance
-from garnet_guard.ecosystems.github import match_tag
+from garnet_guard.ecosystems.github import TagLookup, match_tag
 from garnet_guard.engine import run_checks
 from garnet_guard.facts.npmmeta import inspect_tarball, install_scripts
 from garnet_guard.models import ArtifactFacts, Change, FileProvenance, Limits, ReleaseFacts, TagInfo
+from garnet_guard.net import Http, Response
 
 FIXTURES = Path(__file__).parent / "fixtures" / "npm"
 CHANGE = Change("npm", "demo", "1.0.0", "1.1.0")
@@ -196,6 +198,33 @@ def test_lost_provenance_and_tag_on_npm() -> None:
         "GRN-T004",
     }
     assert rules(release("1.0.0"), release("1.1.0")) == set()
+
+
+def test_listed_but_unserved_attestation_is_missing_and_says_so() -> None:
+    # whatwg-url 17.1.1: the version document lists an attestation, and the
+    # attestations endpoint answers 404 for it.
+    class NotFound:
+        def get(self, url: str, **kwargs: object) -> Response:
+            return Response(status=404, content=b'{"error":"Not found"}', url=url)
+
+    ctx = npm.FetchContext(
+        http=cast(Http, NotFound()), limits=Limits(), tags=TagLookup(cast(Http, NotFound()))
+    )
+    p = npm._fetch_provenance(ctx, "demo", "1.1.0", "demo-1.1.0.tgz", "sha512-AAAA", True)
+    assert not p.present and "returns HTTP 404" in (p.error or "")
+    result = run_checks(CHANGE, release("1.0.0", provenance="ok"), release("1.1.0", provenance=p))
+    (t001,) = [f for f in result.findings if f.rule_id == "GRN-T001"]
+    assert (
+        t001.title == "1 file(s) in 1.1.0 have no attestation served; every file of 1.0.0 had one"
+    )
+    assert "lists an attestation" in t001.evidence[0].summary
+
+
+def test_absent_attestation_title_is_unchanged() -> None:
+    result = run_checks(CHANGE, release("1.0.0", provenance="ok"), release("1.1.0"))
+    (t001,) = [f for f in result.findings if f.rule_id == "GRN-T001"]
+    assert t001.title == "1 file(s) in 1.1.0 have no attestation; every file of 1.0.0 had one"
+    assert t001.evidence[0].summary == "demo-1.1.0.tgz: no attestation"
 
 
 def test_integrity_mismatch_blocks() -> None:

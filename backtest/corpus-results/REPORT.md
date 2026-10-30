@@ -1,6 +1,6 @@
 # Clean-corpus backtest, 2026-10-10
 
-> **Current result:** with the rule tuning from PR #8 (now merged), 12 of 974 clean updates warn (1.2%), and none of those warnings makes a false claim. Confirmed on main on 2026-10-29; see [Re-run on main](#re-run-on-main-2026-10-29). The sections before it describe the first run, which led to that tuning. The incident replay mentioned below covered three releases at the time; it now covers seven malicious releases from four attacks (lightning, elementary-data, litellm, telnyx), and all seven get a warning (PR #24).
+> **Current result:** with the rule tuning from PR #8 (now merged), 12 of 974 clean updates warn (1.2%), and none of those warnings makes a false claim. Confirmed on main on 2026-10-29; see [Re-run on main](#re-run-on-main-2026-10-29). The sections before it describe the first run, which led to that tuning. The incident replay mentioned below covered three releases at the time; it now covers 26 malicious releases of 15 compromised packages, and 24 of them get a warning (see the README).
 
 The PyCon plan needed this number by Dec 1. Garnet `0.1.0.dev0` (the draft PR #1 engine) was run over the top 100 PyPI packages and the update between each pair of consecutive releases among their last 11 releases.
 
@@ -15,7 +15,7 @@ The PyCon plan needed this number by Dec 1. Garnet `0.1.0.dev0` (the draft PR #1
 
 ## Corpus
 
-- Packages: the top 100 by 30-day downloads in hugovk/top-pypi-packages (snapshot of 2026-10-01). The list is frozen in `backtest/top-pypi-100.json`.
+- Packages: the top 100 by 30-day downloads in hugovk/top-pypi-packages (snapshot of 2026-10-01). The list is frozen as the first 100 of `backtest/top-pypi-1000.json`.
 - Releases: the last 11 final releases of each package by version, that still have a non-yanked file. Pre-releases and dev releases are skipped, as Dependabot does by default. Each package gives 10 updates, except 7 packages that have fewer releases, which is why the total is 974 and not 1,000. The chosen versions are in `backtest/corpus.json`.
 - Settings: same as the incident replay. Known-bad lookup (K001) is off, tags are evaluated as they exist today, and default severities apply. A "warn" is any finding at warn or above from a detection rule (T, C). E-findings are counted separately as coverage gaps.
 
@@ -106,7 +106,7 @@ The results at `09bcd75` are in [after-pr8/summary.json](after-pr8/summary.json)
 
 ## Re-run on main, 2026-10-29
 
-**On main at `ce133f4`: 12 of 974 clean updates warned (1.23%), in 12 of 100 packages, and none of the 12 is a false alarm.** [summary.json](summary.json) and [updates.json](updates.json) now hold this run.
+**On main at `ce133f4`: 12 of 974 clean updates warned (1.23%), in 12 of 100 packages, and none of the 12 makes a false claim.** [summary.json](summary.json) and [updates.json](updates.json) now hold this run.
 
 - By rule: C002 5, C003 3, T001 3, T004 1. Coverage gaps are unchanged at 33 (E002 32, E001 1).
 - Compared with the first run, the same 974 updates were checked and exactly five changed, all from warn to pass: certifi 2025.11.12 → 2026.1.4 (T004), pip 26.1.2 → 26.2 (C003), scipy 1.16.3 → 1.17.0 (C003, now info in a test file), scipy 1.17.1 → 1.18.0 (C003 and T004) and setuptools 80.9.0 → 80.10.1 (C003). No update gained a warning.

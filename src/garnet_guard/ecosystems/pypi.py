@@ -38,6 +38,9 @@ class ReplayRelease:
     files: tuple[RegistryFile, ...]
     source_repo: str | None
     note: str
+    # PyPI no longer serves provenance for a removed release. False records
+    # that published sources confirm no file was attested; None means unknown.
+    attested: bool | None = None
 
 
 @dataclass
@@ -175,7 +178,11 @@ def release_facts(
     provenance: dict[str, FileProvenance | None] = {}
     for f in files:
         if replay is not None:
-            provenance[f.filename] = None
+            provenance[f.filename] = (
+                FileProvenance(filename=f.filename, present=False, verified=False)
+                if replay.attested is False
+                else None
+            )
             continue
         try:
             provenance[f.filename] = _fetch_provenance(ctx, name, version, f)
