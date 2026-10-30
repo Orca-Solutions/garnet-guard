@@ -8,6 +8,10 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 
 - npm: `garnet diff npm:<name> <old> <new>` compares two npm releases. It reads the registry's package document, npm provenance (verified with Sigstore, including the older `intoto` log-entry format that sigstore-python no longer accepts), git tags, OSV advisories and the tarball's `package.json`. The trust rules, GRN-K001 and GRN-T008 (Subresource Integrity) apply to npm; GRN-C002 reports an added or changed `preinstall`, `install` or `postinstall` script (not `prepare`, which npm doesn't run for a published tarball); GRN-T004 also accepts `<name>@X` tags. The backtest replays chalk 5.6.1, debug 4.4.2, nx 21.5.0 and @ctrl/tinycolor 4.1.1 from recorded registry facts, and `python -m backtest corpus npm` runs the top-200 npm clean corpus. npm lockfiles are not read yet.
 
+### Changed
+
+- GRN-C003 follows more of what runs at import: lambdas that are called or passed to a call, classes that are instantiated (their `__init__`) and methods called on them, names pulled in by `from os import *`, and `getattr(os, "system")`, `__import__("os")` or `importlib.import_module("os")` with a literal name. A `base64` decode whose result reaches `exec` or another sensitive call is reported as a call of its own, so a release that starts decoding what it executes is flagged even where `exec` was already used. Sensitive set version `2026-10-b`.
+
 ## 0.1.0a1
 
 The first pre-release. It claims the `garnet-guard` name on PyPI and lets people try the command line before the first full release. Expect changes before 0.2.0.
