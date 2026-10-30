@@ -20,7 +20,7 @@ class PinChange:
 
 
 def _key(v: str) -> tuple[int, Version | str]:
-    """Sort by PEP 440 version, with versions that don't parse first."""
+    """Sort by version (PEP 440, which also orders semver), unparsable ones first."""
     try:
         return (1, Version(v))
     except InvalidVersion:
@@ -35,11 +35,11 @@ def diff_pins(base: list[Pin], head: list[Pin]) -> list[PinChange]:
     """
     base_versions: dict[str, set[str]] = {}
     for p in base:
-        if p.source == "pypi" and p.version:
+        if p.checkable and p.version:
             base_versions.setdefault(p.package, set()).add(p.version)
     changes: dict[tuple[str, str], PinChange] = {}
     for p in head:
-        if p.source != "pypi" or not p.version:
+        if not p.checkable or not p.version:
             continue
         olds = base_versions.get(p.package, set())
         if p.version in olds:
@@ -61,6 +61,6 @@ def new_unchecked(base: list[Pin], head: list[Pin]) -> list[Pin]:
     out = [
         p
         for p in head
-        if p.source != "pypi" and (p.package, p.version, p.source, p.detail) not in seen
+        if not p.checkable and (p.package, p.version, p.source, p.detail) not in seen
     ]
     return sorted(out, key=lambda p: (p.line, p.package))

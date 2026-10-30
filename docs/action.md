@@ -12,7 +12,7 @@ Copy [`action/examples/garnet-guard.yml`](../action/examples/garnet-guard.yml) t
 name: Garnet Guard
 on:
   pull_request:
-    paths: ["**/uv.lock", "**/poetry.lock", "**/pylock.toml", "**/pylock.*.toml", "**/requirements*.txt", "garnet.toml"]
+    paths: ["**/uv.lock", "**/poetry.lock", "**/pylock.toml", "**/pylock.*.toml", "**/requirements*.txt", "**/package-lock.json", "**/npm-shrinkwrap.json", "**/yarn.lock", "**/pnpm-lock.yaml", "garnet.toml"]
 permissions: {}
 jobs:
   garnet-guard:

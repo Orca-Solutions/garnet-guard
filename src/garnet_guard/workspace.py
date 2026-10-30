@@ -11,11 +11,19 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .lockfiles import LockfileError, Pin, diff_pins, parse
+from .lockfiles import ECOSYSTEM, LockfileError, Pin, detect, diff_pins, parse
 from .lockfiles.diff import new_unchecked
 from .models import Change
 
-_DIRECT = ("uv.lock", "poetry.lock", "pylock.toml")
+_DIRECT = (
+    "uv.lock",
+    "poetry.lock",
+    "pylock.toml",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+)
 
 
 @dataclass(frozen=True)
@@ -103,11 +111,14 @@ def changes_for(
     """The changes to check in one lockfile, and the new entries Garnet can't check.
 
     ``base`` is None when the lockfile is new, so every entry is a change.
+    The ecosystem follows the lockfile format.
     """
-    head_pins = parse(head_name, head)
-    base_pins: list[Pin] = parse(head_name, base) if base is not None else []
+    fmt = detect(head_name, head)
+    eco = ECOSYSTEM[fmt]
+    head_pins = parse(head_name, head, format=fmt)
+    base_pins: list[Pin] = parse(head_name, base, format=fmt) if base is not None else []
     changes = [
-        Change("pypi", c.package, c.baseline, c.candidate, lockfile=head_name, line=c.line)
+        Change(eco, c.package, c.baseline, c.candidate, lockfile=head_name, line=c.line)
         for c in diff_pins(base_pins, head_pins)
     ]
     unchecked = []
@@ -121,7 +132,7 @@ def changes_for(
             else p.detail or "unsupported source"
         )
         change = Change(
-            "pypi",
+            eco,
             p.package,
             None,
             p.version or ("unpinned" if p.source == "unpinned" else "unchecked"),
@@ -133,8 +144,8 @@ def changes_for(
 
 
 def dedupe(changes: list[Change]) -> list[Change]:
-    """One change per (package, baseline, candidate), keeping the first lockfile."""
-    seen: dict[tuple[str, str | None, str], Change] = {}
+    """One change per (ecosystem, package, baseline, candidate), keeping the first lockfile."""
+    seen: dict[tuple[str, str, str | None, str], Change] = {}
     for c in changes:
-        seen.setdefault((c.package, c.baseline, c.candidate), c)
+        seen.setdefault((c.ecosystem, c.package, c.baseline, c.candidate), c)
     return list(seen.values())

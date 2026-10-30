@@ -19,5 +19,6 @@ Each significant decision gets a short record: context, decision, consequences. 
 | [0013](0013-brand-identity.md) | Brand identity: pomegranate mark, palette, tagline, trademarks | Accepted |
 | [0014](0014-runtime-dependencies-0-1.md) | Runtime dependencies for 0.1; tags via the git ref advertisement | Proposed |
 | [0015](0015-core-and-premium-pricing.md) | Business priced per developer above 25; Core tiers plus a Premium governance-and-audit add-on | Accepted (prices are placeholders) |
+| [0016](0016-pyyaml-for-pnpm-lock.md) | Read pnpm-lock.yaml with PyYAML's safe loader, aliases refused | Proposed |
 
 The [v1.0 specification](../SPEC-v1.md) and [code design](../API.md) sit beside these records.

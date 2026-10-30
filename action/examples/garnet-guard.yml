@@ -17,6 +17,10 @@ on:
       - "**/pylock.toml"
       - "**/pylock.*.toml"
       - "**/requirements*.txt"
+      - "**/package-lock.json"
+      - "**/npm-shrinkwrap.json"
+      - "**/yarn.lock"
+      - "**/pnpm-lock.yaml"
       - "garnet.toml"
 
 permissions: {}

@@ -53,8 +53,8 @@ def _parser() -> argparse.ArgumentParser:
         "check",
         help="check every dependency change between two lockfiles",
         description="Compare a trusted lockfile with an updated one and check every package\n"
-        "version that changed. Reads uv.lock, poetry.lock, pylock.toml and pinned\n"
-        "requirements files.",
+        "version that changed. Reads uv.lock, poetry.lock, pylock.toml, pinned\n"
+        "requirements files, package-lock.json, yarn.lock and pnpm-lock.yaml.",
         epilog=_EXIT_CODES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
