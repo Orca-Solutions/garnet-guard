@@ -11,6 +11,7 @@ from ..models import (
     ArtifactFacts,
     CallSite,
     Change,
+    DependencyProfile,
     Evidence,
     FileEntry,
     JsUse,
@@ -629,6 +630,29 @@ def code_not_in_source(
 # it is reported at warn, whoever owns it; an established one at info.
 YOUNG_DEPENDENCY_DAYS = 90
 _REGISTRY = {"pypi": "PyPI", "npm": "npm"}
+
+
+def _released(first: datetime, p: DependencyProfile, registry: str, *, short: bool = False) -> str:
+    """When a dependency was first released, in the words its record allows.
+
+    A name that was unpublished and created again has an earlier history the
+    date doesn't cover, so it is the earliest version still published.
+    """
+    day = f"{first:%Y-%m-%d}"
+    if not p.unpublished_versions:
+        return f"first released {day}"
+    if short:
+        return f"earliest version still published {day}"
+    return f"earliest version still published {day} ({_unpublished(p, registry)})"
+
+
+def _unpublished(p: DependencyProfile, registry: str) -> str:
+    gone = p.unpublished_versions
+    shown = ", ".join(gone[:3]) + (f" and {len(gone) - 3} more" if len(gone) > 3 else "")
+    since = f" from {p.earliest_unpublished_at:%Y-%m-%d}" if p.earliest_unpublished_at else ""
+    return f"{registry} also lists {shown}{since}, since unpublished"
+
+
 _REGISTRY_PAGE = {
     "pypi": "https://pypi.org/project/{}/",
     "npm": "https://www.npmjs.com/package/{}",
@@ -745,7 +769,7 @@ def new_dependency(
         if p is not None and not p.on_registry:
             about = f"; {registry} has no package named {r.package}"
         elif p is not None and p.first_release_at is not None:
-            about = f"; {r.package} first released {p.first_release_at:%Y-%m-%d}"
+            about = f"; {r.package} {_released(p.first_release_at, p, registry)}"
         evidence.append(
             Evidence(
                 "url",
@@ -778,7 +802,7 @@ def new_dependency(
         parts = [alias.strip(" ()")] if alias else []
         shared = sorted(trusted_owners & set(p.owners))
         if p.first_release_at is not None:
-            when = f"first released {p.first_release_at:%Y-%m-%d}"
+            when = _released(p.first_release_at, p, registry, short=True)
             if uploaded is not None:
                 days = (uploaded - p.first_release_at).days
                 if days < 0:
@@ -786,10 +810,15 @@ def new_dependency(
                 else:
                     when += f", {days} day(s) before {cand.version}"
                 if days < YOUNG_DEPENDENCY_DAYS:
-                    flagged.append(
-                        f"{r.package} was first released {max(days, 0)} day(s) before it"
+                    since = (
+                        "'s earliest version still published was released"
+                        if p.unpublished_versions
+                        else " was first released"
                     )
+                    flagged.append(f"{r.package}{since} {max(days, 0)} day(s) before it")
             parts.append(when)
+            if p.unpublished_versions:
+                parts.append(_unpublished(p, registry))
         else:
             parts.append("no upload dates on record")
         parts.append(f"{p.releases} release(s)")

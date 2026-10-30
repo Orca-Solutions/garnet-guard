@@ -29,6 +29,12 @@ The rule reports every new dependency. It keeps its `warn` severity when the new
 - installs from outside the registry: a git repository, a URL or a local path;
 - was first released less than 90 days before the new version, or after it.
 
+On npm the first release is the date the registry created the package's record. When a name
+was unpublished and created again, the registry still lists the dates of the versions that
+were removed. The evidence then says "earliest version still published" and names the older
+versions, and the 90 days count from the current record: a name that was taken down and came
+back is no reason to look less closely.
+
 A young dependency keeps `warn` even when an account that owns the trusted package owns it
 too, and the evidence says so. Maintainers who split code into a helper package often publish
 it the same day as the release that uses it, but an attacker who holds a maintainer's account

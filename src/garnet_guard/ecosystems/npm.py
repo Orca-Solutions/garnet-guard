@@ -424,6 +424,16 @@ def package_profile(ctx: FetchContext, package: str) -> DependencyProfile:
     if created is None:
         stamps = [t for v in versions if (t := _parse_time(times.get(v)))]
         created = min(stamps) if stamps else None
+    # The time table keeps the dates of versions that were unpublished; when a
+    # name was unpublished and created again, they predate ``created``.
+    gone = sorted(
+        (t, v)
+        for v, raw in times.items()
+        if v not in ("created", "modified")
+        and v not in versions
+        and (t := _parse_time(raw)) is not None
+        and (created is None or t < created)
+    )
     latest = _table(pack, "dist-tags").get("latest")
     doc = versions.get(latest) if isinstance(latest, str) else None
     return DependencyProfile(
@@ -434,6 +444,8 @@ def package_profile(ctx: FetchContext, package: str) -> DependencyProfile:
         source_repo=source_repo(doc) if isinstance(doc, dict) else None,
         latest_version=latest if isinstance(latest, str) else None,
         owners=maintainers(pack),
+        unpublished_versions=tuple(v for _, v in gone),
+        earliest_unpublished_at=gone[0][0] if gone else None,
     )
 
 
