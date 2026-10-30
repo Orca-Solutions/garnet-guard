@@ -40,6 +40,10 @@ class Options:
     # replay), by version: PyPI files still served by URL, npm recorded facts.
     replay: Mapping[str, pypi.ReplayRelease] = field(default_factory=dict)
     npm_replay: Mapping[str, npm.ReplayRelease] = field(default_factory=dict)
+    # Tags as they stood on the day of an incident, per repository, laid over
+    # the tags fetched now: a sha restores a tag deleted since, None hides a
+    # tag pushed later (incident replay).
+    tags_then: Mapping[str, Mapping[str, str | None]] = field(default_factory=dict)
     # OSV is queried for the candidate only. The backtest turns it off so
     # results show what Garnet catches before any feed lists a release.
     check_known_bad: bool = True
@@ -56,7 +60,7 @@ class Fetcher:
     def __init__(self, options: Options) -> None:
         self.options = options
         self.http = Http(github_token=options.github_token)
-        tags = github.TagLookup(self.http)
+        tags = github.TagLookup(self.http, options.tags_then)
         self._pypi = pypi.FetchContext(http=self.http, limits=options.limits, tags=tags)
         self._npm = npm.FetchContext(http=self.http, limits=options.limits, tags=tags)
 

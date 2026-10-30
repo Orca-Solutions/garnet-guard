@@ -9,6 +9,7 @@ repositories. One request per repository covers every version.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 
 from packaging.version import InvalidVersion, Version
 
@@ -61,11 +62,19 @@ def parse_ref_advertisement(data: bytes) -> dict[str, str]:
 
 
 class TagLookup:
-    """Tags per repository, fetched once per run and shared between releases."""
+    """Tags per repository, fetched once per run and shared between releases.
 
-    def __init__(self, http: Http) -> None:
+    ``overrides`` maps ``owner/repo`` to {tag name: sha or None} and is laid
+    over the fetched tags: a sha adds or replaces a tag, None removes it. The
+    incident replay uses it to see the tags as they stood on the day.
+    """
+
+    def __init__(
+        self, http: Http, overrides: Mapping[str, Mapping[str, str | None]] | None = None
+    ) -> None:
         self._http = http
         self._cache: dict[str, dict[str, str]] = {}
+        self._overrides = {k.lower(): v for k, v in (overrides or {}).items()}
 
     def tags(self, repo: str) -> dict[str, str]:
         """{tag name: commit sha} for ``owner/repo``. Raises ``NetError``."""
@@ -74,7 +83,13 @@ class TagLookup:
             resp = self._http.get(url, max_bytes=64 * 1024 * 1024)
             if resp.status != 200:
                 raise NetError(f"tag lookup for github.com/{repo} returned HTTP {resp.status}")
-            self._cache[repo] = parse_ref_advertisement(resp.content)
+            tags = parse_ref_advertisement(resp.content)
+            for name, sha in self._overrides.get(repo.lower(), {}).items():
+                if sha is None:
+                    tags.pop(name, None)
+                else:
+                    tags[name] = sha
+            self._cache[repo] = tags
         return self._cache[repo]
 
 

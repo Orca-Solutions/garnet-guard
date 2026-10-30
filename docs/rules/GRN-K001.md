@@ -28,7 +28,9 @@ this one is a match against a published report.
 
 From OSV. The replay versions are listed there:
 [MAL-2026-3201](https://osv.dev/vulnerability/MAL-2026-3201) (lightning 2.6.2 and 2.6.3) and
-[MAL-2026-3083](https://osv.dev/vulnerability/MAL-2026-3083) (elementary-data 0.23.3). The
+[MAL-2026-3083](https://osv.dev/vulnerability/MAL-2026-3083) (elementary-data 0.23.3),
+[PYSEC-2026-2](https://osv.dev/vulnerability/PYSEC-2026-2) (litellm 1.82.7 and 1.82.8) and
+[PYSEC-2026-3](https://osv.dev/vulnerability/PYSEC-2026-3) (telnyx 4.87.1 and 4.87.2). The
 [replay](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml) judges releases from content alone and doesn't count this rule.
 
 ```text
