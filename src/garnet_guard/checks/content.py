@@ -262,10 +262,19 @@ def _public_name(filename: str) -> str:
 
 
 def is_test_path(path: str) -> bool:
-    """tests/ folders, test_*.py and conftest.py (docs/rules/GRN-C003.md)."""
+    """tests/ folders, a top-level test/ folder, test_*.py and conftest.py.
+
+    A ``test/`` folder inside the package is installed code (``django.test``),
+    so only one beside the package counts (docs/rules/GRN-C003.md).
+    """
     parts = path.split("/")
-    name = parts[-1]
-    return "tests" in parts[:-1] or name.startswith("test_") or name == "conftest.py"
+    folders, name = parts[:-1], parts[-1]
+    return (
+        "tests" in folders
+        or folders[:1] == ["test"]
+        or name.startswith("test_")
+        or name == "conftest.py"
+    )
 
 
 def _live_test_modules(art: ArtifactFacts) -> set[str]:

@@ -568,6 +568,37 @@ def test_chain_that_starts_outside_the_package_is_info() -> None:
     )
 
 
+def test_top_level_test_folder_counts_as_tests_but_one_in_the_package_does_not() -> None:
+    # ply 3.6: test/calclex.py builds a lexer at import and the exec sits in
+    # ply/lex.py; test/ holds a package, so it is not "outside" either.
+    util = "import subprocess\n\ndef go():\n    subprocess.run(['x'])\n"
+    base = {
+        "demo/__init__.py": "",
+        "demo/util.py": util,
+        "test/pkg/__init__.py": "",
+        "test/calc.py": "from demo.util import go\n",
+    }
+    cand = {**base, "test/calc.py": "from demo.util import go\ngo()\n"}
+    result = run_checks(
+        CHANGE,
+        release("1.0", sdist_files=base, sdist_only=True),
+        release("1.1", sdist_files=cand, sdist_only=True),
+    )
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert f.severity == Severity.INFO
+    assert "test module(s)" in f.title
+    # demo/test/ is installed with the package (django.test), so it is package code.
+    inside = {
+        "demo/__init__.py": "",
+        "demo/util.py": util,
+        "demo/test/__init__.py": "",
+        "demo/test/calc.py": "from demo.util import go\ngo()\n",
+    }
+    result = run_checks(CHANGE, release("1.0", base), release("1.1", inside))
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert f.severity == Severity.WARN
+
+
 def test_call_a_package_module_and_a_test_file_both_reach_is_one_warn() -> None:
     # The test module's name sorts first, so its chain is followed first; the
     # package module's chain must still be seen, and the call reported once.

@@ -45,7 +45,8 @@ Three kinds of call are reported at `info`, each in its own finding, because the
 does not show them running when the package is imported. A call that a package module
 reaches at import is reported once, at `warn`, whatever else reaches it:
 
-- Calls in test files (`tests/`, `test_*.py`, `conftest.py`), or reached only from one,
+- Calls in test files (a `tests/` folder, a top-level `test/` folder, `test_*.py`,
+  `conftest.py`), or reached only from one,
   unless a non-test module imports the file (directly or through other test modules) or an
   entry point names it. Test files usually run only with the package's own test suite,
   which often starts processes or opens sockets at module level. An imported test file
