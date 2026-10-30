@@ -10,8 +10,9 @@
 |---|---|---|
 | Lost provenance | T001 | PEP 740 provenance from the Integrity API (`/integrity/<project>/<version>/<file>/provenance`), verified with `pypi-attestations`. Fires when every baseline file was attested and a candidate file isn't. |
 | Publisher changed | T002, T003, T005 | Source repository, workflow path and environment from the attestation, compared across the two releases; Trusted Publishing use per file. |
-| No matching tag | T004 | The baseline version had a git tag in the source repo and the candidate doesn't (`X`, `vX`, `name-X`, `name-vX`, compared as PEP 440 versions). |
-| New code that runs on install or import | C001, C002, C003 | A new `.pth` file, a new build hook or in-tree backend, or a new top-level call to `exec`, `subprocess`, sockets, `ctypes` and similar. Test files report at info. |
+| No matching tag | T004 | The baseline version had a git tag in the source repo and the candidate doesn't (`X` or `vX`, alone or after a prefix naming the package, compared as PEP 440 versions; the [rule page](rules/GRN-T004.md) lists every form). Tags are read from GitHub's public git ref advertisement, one request per repository. |
+| New code that runs on install or import | C001, C002, C003 | A new `.pth` file, a new build hook or in-tree backend, or a new call to `exec`, `subprocess`, sockets, `ctypes` and similar in code that runs at import, followed through the package's own modules. Test files report at info. |
+| Code that isn't in the source | C007 | A Python file in the wheel differs from the file at the release's git tag and has a sensitive call the source file lacks: code added by the build, as in ultralytics 8.3.42. |
 | Known bad | K001 | OSV `MAL-` advisories. |
 | Couldn't check | E001 to E005 | Reported as a finding, never as a pass. |
 

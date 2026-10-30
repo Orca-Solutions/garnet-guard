@@ -28,7 +28,7 @@ This describes the engine Garnet is built around and the surfaces that use it. I
               ┌───────────────────────┬───────┴──────────────┐
               ▼                       ▼                      ▼
         GitHub Action           CLI (garnet check)     Agent / install hooks
-          (month 2)               (month 1)                (month 3)
+        (preview, 0.1)              (0.1)            (planned, month 3)
 ```
 
 Every surface is a thin shell over one library call: `garnet_guard.evaluate(diff, policy) -> Report`.
@@ -37,7 +37,7 @@ Every surface is a thin shell over one library call: `garnet_guard.evaluate(diff
 
 **ReleasePair.** One dependency changing: ecosystem, package name, `old` version (the baseline you trusted) and `new` version. A newly added dependency has no `old`; it gets only known-bad and absolute checks, not diff checks.
 
-**Baseline.** In the open-source tool the baseline is simply the version in the base lockfile, i.e. the version this project already runs. If an update skips versions (2.6.1 → 2.6.4), Garnet diffs against 2.6.1 and also reports trust signals for each skipped release, since a compromise can hide in the middle. In v2 the engine also computes **per-package history from the registry** (how the last N releases were published), so the baseline isn't limited to one release; that stays in the free engine (ADR-0009). The hosted app adds what only a service can see: history observed across many organizations.
+**Baseline.** In the open-source tool the baseline is simply the version in the base lockfile, i.e. the version this project already runs. If an update skips versions (2.6.1 → 2.6.4), Garnet diffs against 2.6.1 and, per SPEC §5 rule 2, also reports trust signals for each skipped release, since a compromise can hide in the middle. That second part isn't built yet: 0.1 compares the baseline and the candidate only. In v2 the engine also computes **per-package history from the registry** (how the last N releases were published), so the baseline isn't limited to one release; that stays in the free engine (ADR-0009). The hosted app adds what only a service can see: history observed across many organizations.
 
 **ReleaseFacts.** Everything Garnet knows about one release, extracted once and cached:
 
@@ -89,11 +89,11 @@ class Ecosystem(Protocol):
     def release_facts(self, name: str, version: str) -> ReleaseFacts: ...
 ```
 
-**PyPI (month 1).** JSON API for metadata and files, the Integrity API (`/integrity/<project>/<version>/<filename>/provenance`) for PEP 740 attestations, verified with the `pypi-attestations` library. Wheels and the sdist are both inspected, because sdists carry build code. Lockfile parsers: uv.lock, poetry.lock, pylock.toml, pinned requirements.txt with hashes.
+**PyPI (built in 0.1).** JSON API for metadata and files, the Integrity API (`/integrity/<project>/<version>/<filename>/provenance`) for PEP 740 attestations, verified with the `pypi-attestations` library. Wheels and the sdist are both inspected, because sdists carry build code. Lockfile parsers: uv.lock, poetry.lock, pylock.toml and requirements.txt lines pinned with `==`.
 
-**npm (month 2).** Registry packument and tarball, npm provenance / Sigstore attestations, `scripts` and `bin` from `package.json`. Lockfile parsers: package-lock.json, pnpm-lock.yaml, yarn.lock.
+**npm (0.1, `garnet diff` only).** Registry packument and tarball, npm provenance / Sigstore attestations, and the install-time `scripts` from `package.json`. Planned: `bin` diffs and the lockfile parsers (package-lock.json, pnpm-lock.yaml, yarn.lock), so `garnet check` and the Action read only Python lockfiles today.
 
-**Source host.** Tag lookups go to the repository named by provenance first, falling back to project URLs in metadata. GitHub only at first, through the public API with an optional token for rate limits.
+**Source host.** Tag lookups go to the repository named by provenance first, falling back to project URLs in metadata. GitHub only at first. Tags come from the public git ref advertisement (`github.com/<repo>.git/info/refs`, ADR-0014), which needs no token and has no REST rate limit. GRN-C007 reads the repository's files at the tag over the same git endpoint (`ecosystems/gittree.py`).
 
 ## Initial rule catalog
 
@@ -106,13 +106,13 @@ IDs are stable forever. A retired rule keeps its ID reserved. Exact firing condi
 | GRN-T003 | workflow-changed | Same repo, different publishing workflow file or environment. |
 | GRN-T004 | no-matching-tag | No git tag for the new version in the attested or declared repo. |
 | GRN-T005 | outside-trusted-publishing | Old files came through Trusted Publishing; new ones were uploaded with a token. |
-| GRN-T006 | files-uploaded-late | A file was added to a release long after the release was first published. |
+| GRN-T006 | files-uploaded-late (planned) | A file was added to a release long after the release was first published. |
 | GRN-C001 | new-pth-file | A `.pth` file appears that the old release didn't have. |
 | GRN-C002 | new-build-hook | New `setup.py` logic, custom build backend, or new npm install-time script. |
 | GRN-C003 | new-import-time-exec | New module-level calls to `exec`, `eval`, `compile`, `subprocess`, `os.system`, `ctypes`, sockets or HTTP clients. |
-| GRN-C004 | new-binary | New native binaries or executables not explained by the build (e.g. outside the platform wheel's normal extension modules). |
-| GRN-C005 | obfuscated-blob | New long base64/hex/compressed literals, especially passed to exec or decode. |
-| GRN-C006 | sdist-wheel-mismatch | Wheel contains files with no counterpart in the sdist. |
+| GRN-C004 | new-binary (planned) | New native binaries or executables not explained by the build (e.g. outside the platform wheel's normal extension modules). |
+| GRN-C005 | obfuscated-blob (planned) | New long base64/hex/compressed literals, especially passed to exec or decode. |
+| GRN-C006 | sdist-wheel-mismatch (planned) | Wheel contains files with no counterpart in the sdist. |
 | GRN-C007 | code-not-in-source | A Python file in the release isn't the one at its git tag and has sensitive calls the source lacks (code injected by the build, as in ultralytics 8.3.42). |
 | GRN-T007 | invalid-attestation | An attestation exists but fails verification (blocks by default). |
 | GRN-T008 | hash-mismatch | A download doesn't match the registry's published hash (blocks by default). |
@@ -127,24 +127,24 @@ Garnet handles hostile input by design. These are invariants, enforced in code r
 
 - **No execution.** Nothing from an inspected package is ever imported, run, built or installed. Python source is parsed with `ast` only.
 - **Safe extraction.** Archives are read in memory or into a private temp dir with limits on total size, file count, compression ratio and path depth. Absolute paths, `..` segments, symlinks, hard links and device files are rejected.
-- **Bounded work.** Timeouts on every network call, and a per-package budget; on a budget overrun Garnet reports an error finding rather than silently passing.
+- **Bounded work.** Timeouts on every network call, size, count and ratio limits on every archive, and a per-change time budget; on an overrun Garnet reports an error finding rather than silently passing. The time budget is specified (SPEC §4.4) but not yet enforced in 0.1.
 - **Fail visible.** If Garnet can't fetch or verify something, it says so in the report. It never turns "couldn't check" into "pass".
 
 See [THREAT_MODEL.md](THREAT_MODEL.md) for the full analysis.
 
 ## Caching and determinism
 
-Artifacts and facts are cached by content hash under the user cache dir (and `actions/cache` in CI). Facts for a given `(ecosystem, name, version)` are immutable once a release is published, except for yanks and late file uploads, which are re-checked. Outputs sort findings deterministically.
+Planned: artifacts and facts cached by content hash under the user cache dir (and `actions/cache` in CI). 0.1 has no cache yet; it fetches everything on each run, and `--cache-dir` and `--offline` say they aren't supported. Facts for a given `(ecosystem, name, version)` are immutable once a release is published, except for yanks and late file uploads, which are re-checked. Outputs sort findings deterministically.
 
 ## Surfaces
 
-**CLI.** `garnet check --base <lockfile> --head <lockfile>`, `garnet explain <rule>`, `garnet diff <pkg> <old> <new>`. Run with `uvx garnet-guard` or install with `uv tool install garnet-guard`.
+**CLI.** `garnet check --base <lockfile> --head <lockfile>` (or `--git-base <ref>`), `garnet diff <pkg> <old> <new>`, `garnet explain <rule>`, `garnet policy check`. Run with `uvx garnet-guard` or install with `uv tool install garnet-guard`.
 
-**GitHub Action (month 2).** Runs on `pull_request` when a lockfile changes, compares the base and head lockfiles, and posts or updates one sticky comment plus an optional SARIF upload. Design constraints:
+**GitHub Action (preview in 0.1).** Runs on `pull_request` when a lockfile changes, compares the base and head lockfiles, and posts or updates one sticky comment plus an optional SARIF upload. Design constraints:
 
 - Never use `pull_request_target` with a checkout of PR code.
-- Least privilege: `contents: read`, and `pull-requests: write` only in the step that comments.
-- Dependabot-triggered runs get a restricted token. If commenting directly isn't possible, use the two-workflow pattern: the analysis job uploads the report as an artifact, and a `workflow_run` job with write permission posts it without checking out PR code. *Verify current GitHub behavior before building.*
+- Least privilege: `contents: read`, plus `pull-requests: write` for the comment and `security-events: write` only with SARIF upload.
+- Dependabot-triggered runs get a restricted token. If commenting directly isn't possible, use the two-workflow pattern: the analysis job uploads the report as an artifact, and a `workflow_run` job with write permission posts it without checking out PR code. Both patterns ship in `action/examples/` ([docs/action.md](docs/action.md)); a Dependabot-opened run and a fork run are still to be seen on GitHub.
 - The Action is pinned by commit SHA in all docs, and its own dependencies are hash-locked.
 
 **Install wrapper and agent hooks (month 3).** `garnet pip install …` / `garnet uv sync` resolve first, run `evaluate` on the resulting change, then hand off to the real tool. Claude Code and Codex hooks call the same entry point before a dependency is added.
@@ -155,4 +155,4 @@ See [docs/API.md](docs/API.md) §9 for the full layout and §2 for the import ru
 
 ## Backtesting
 
-`backtest/` replays known incidents (47 malicious releases of 36 compromised PyPI packages, listed in `backtest/incidents.toml`, and four npm account takeovers in `backtest/npm-incidents.toml`) and a clean corpus of recent releases of the top ~500 PyPI packages. Every rule change runs against it. Two numbers gate releases: detection on the incident set and warn rate on the clean corpus. Where an incident's malicious artifacts were removed from the registry, the replay uses recorded `ReleaseFacts` from public write-ups rather than the files.
+`backtest/` replays known incidents (47 malicious releases of 36 compromised PyPI packages, listed in `backtest/incidents.toml`, and four npm account takeovers in `backtest/npm-incidents.toml`) and clean corpora of the last 11 releases of the top 1,000 PyPI and top 1,000 npm packages (18,181 updates; `python -m backtest corpus pypi|npm 1000`, with reports in `backtest/corpus-results-*-1000/`). Every rule change runs against them. Two numbers gate releases: detection on the incident set (51 of 51 warn today) and the flag rate on the clean corpus (366 of 18,181, 2.0%, none a false claim). Where an incident's malicious artifacts were removed from the registry, the replay uses recorded `ReleaseFacts` from public write-ups rather than the files.
