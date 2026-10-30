@@ -18,8 +18,12 @@ status: implemented
 
 Any of these, compared with the trusted version:
 
-- a new or changed `setup.py` adds a call in the [sensitive call set](#sensitive-call-set);
+- a new or changed `setup.py` adds a call in the [sensitive call set](#sensitive-call-set),
+  anywhere in the file: `setup.py` runs as a script when the sdist is built, and a
+  `cmdclass` hook in it runs at install, so a call inside a function or a method counts;
 - the build backend changed to one that is not on the allowlist, or to an in-tree backend;
+- the trusted version shipped no sdist at all, and the new sdist has either of the above:
+  a release that had no build code has gained some;
 - an npm `preinstall`, `install` or `postinstall` script was added or changed in the
   tarball's `package.json`. A script that was removed doesn't fire.
 
