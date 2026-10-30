@@ -57,7 +57,11 @@ file renamed with a leading underscore, a trusted copy that couldn't be parsed) 
 kinds of warning a reviewer cannot act on (a function handed to a call that may never run it,
 a chain that starts in a test file, sdist files outside the package); #38 fixes the four and
 moves the three to `info`. On the 974-update corpus #38 changes no verdict (18 → 18); the
-seven GRN-C003 warns all stay at `warn`, so none rested on a kind it moves to `info`.
+seven GRN-C003 warns all stay at `warn`, so none rested on a kind it moves to `info`. On
+the top-1,000 corpus with #38, the clean-package thread counts 221 of 9,439 updates warned
+(2.3%), 66 of them GRN-C003, each read line by line with none false, and 44 GRN-C003
+findings at `info`; its last read also showed a latent first-chain-wins bug in the origin
+of a call, fixed in #38's third commit.
 
 | Shape | Rule | What happened | Fix |
 |---|---|---|---|
