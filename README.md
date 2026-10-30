@@ -80,10 +80,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: orca-solutions/garnet-guard@<release-commit-sha> # v0.1.0
+      - uses: orca-solutions/garnet-guard@42547f6313420768a2bf5d03e9577a68844496e9 # v0.1.0a1
 ```
 
-Until the Action's first full release (0.2.0), `<release-commit-sha>` is a placeholder. Inputs, permissions and the fork-safe two-workflow pattern are in [docs/action.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/action.md). The Action is a preview.
+The example pins the commit tagged `v0.1.0a1`, the first preview release. Inputs, permissions and the fork-safe two-workflow pattern are in [docs/action.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/action.md). The Action is a preview.
 
 **Locally.** `garnet check` compares two lockfiles, for example your branch against `main`, and checks every package that changed. Once you've reviewed a finding, an ignore in `garnet.toml` silences it until a date you choose ([docs/policy.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/policy.md)).
 
