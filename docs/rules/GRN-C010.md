@@ -103,8 +103,9 @@ matched. How to write one is in [the policy guide](../policy.md); the format is 
 - **What the file does.** The rule reports that it is there and where it installs. A new
   `.pth` file is GRN-C001's.
 - **Console scripts declared as entry points.** Those are written by the installer from
-  `entry_points.txt`, not shipped as files. A new-entry-point check is planned in
-  [#47](https://github.com/orca-solutions/garnet-guard/issues/47).
+  `entry_points.txt`, not shipped as files. [GRN-C009](GRN-C009.md) reports a new script
+  declared in `entry_points.txt`, and warns for one with a common command's name other than
+  the project's own.
 
 ## See also
 

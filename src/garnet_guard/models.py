@@ -375,6 +375,19 @@ class DependencyProfile:
 
 
 @dataclass(frozen=True)
+class EntryPoint:
+    """One line of a wheel's ``entry_points.txt``: ``name = target`` under ``[group]``.
+
+    ``path`` is the file in the wheel the line comes from.
+    """
+
+    group: str
+    name: str
+    target: str
+    path: str = ""
+
+
+@dataclass(frozen=True)
 class ArtifactFacts:
     """One file of a release (a wheel or an sdist).
 
@@ -397,6 +410,14 @@ class ArtifactFacts:
     unparsed: tuple[str, ...] = ()  # .py files ast couldn't parse
     wheel_tag: str | None = None
     entry_points: tuple[str, ...] = ()  # modules named by entry points
+    # Every entry point a wheel declares: each line of the entry_points.txt
+    # of every .dist-info or .egg-info folder at its root or under
+    # .data/purelib/ or platlib/, sorted by group and name, file order kept
+    # within a name. ``entry_points_read``
+    # is True only for a wheel read to the end, so an empty tuple there means
+    # none. Read for wheels only: an sdist's may come from ``setup.py``.
+    entry_point_specs: tuple[EntryPoint, ...] = ()
+    entry_points_read: bool = False
     source_match: SourceMatch | None = None  # None: not compared (no tag, or a fetch error)
     # npm: the registry's Subresource Integrity string ("sha512-…") and the
     # one computed from the download (GRN-T008), and the package.json scripts

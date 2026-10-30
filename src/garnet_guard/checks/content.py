@@ -12,6 +12,7 @@ from ..models import (
     CallSite,
     Change,
     DependencyProfile,
+    EntryPoint,
     Evidence,
     FileEntry,
     JsUse,
@@ -905,6 +906,260 @@ def new_dependency(
         title,
         tuple(evidence[:MAX_EVIDENCE]) + _compare_note(b, c),
         lowered_to=None if flagged else Severity.INFO,
+    )
+
+
+# GRN-C009: entry point groups another tool loads on its own, so the target
+# runs inside that tool, in the environment the package is installed in
+# (pytest, setuptools builds that don't isolate themselves, flake8, keyring...).
+AUTO_LOADED_GROUPS = frozenset(
+    {
+        "pytest11",
+        "egg_info.writers",
+        "flake8.extension",
+        "flake8.report",
+        "keyring.backends",
+        "pydantic",
+        "tox",
+        "hatch",
+        "pdm",
+        "poetry.plugin",
+        "poetry.application.plugin",
+    }
+)
+AUTO_LOADED_PREFIXES = ("setuptools.", "distutils.", "virtualenv.", "pygments.", "opentelemetry_")
+_SCRIPT_GROUPS = ("console_scripts", "gui_scripts")
+# Groups whose tool loads every line, a repeated name too, so a line that runs
+# now ran before unless its target is new. setuptools (its hooks and file
+# finders, distutils.setup_keywords for a keyword in use, egg_info.writers),
+# flake8, keyring, pydantic, pdm, poetry and virtualenv load each entry of the
+# group; opentelemetry runs each instrumentor. pygments picks a lexer by the
+# class a line loads, not the line's name, and loads every lexer to match a
+# file name or content. pytest, tox and hatch (pluggy) skip a name they have
+# registered, and a lookup (distutils.commands, pygments.styles,
+# pygments.filters, pygments.formatters, the other opentelemetry_ groups)
+# returns the first line that matches: those keep the first-line test.
+_EVERY_LINE_GROUPS = frozenset(
+    {
+        "distutils.setup_keywords",
+        "egg_info.writers",
+        "flake8.extension",
+        "flake8.report",
+        "keyring.backends",
+        "opentelemetry_instrumentor",
+        "opentelemetry_pre_instrument",
+        "opentelemetry_post_instrument",
+        "pydantic",
+        "pdm",
+        "poetry.plugin",
+        "poetry.application.plugin",
+        "pygments.lexers",
+    }
+)
+_EVERY_LINE_PREFIXES = ("setuptools.", "virtualenv.")
+
+
+def _auto_loaded(group: str) -> bool:
+    return group in AUTO_LOADED_GROUPS or group.startswith(AUTO_LOADED_PREFIXES)
+
+
+def _loads_every_line(group: str) -> bool:
+    return group in _EVERY_LINE_GROUPS or group.startswith(_EVERY_LINE_PREFIXES)
+
+
+def _spaceless(target: str) -> str:
+    # ``mod:func [extra]`` and ``mod:func[extra]`` are the same target.
+    return "".join(target.split())
+
+
+def _shadows(script: str, package: str) -> bool:
+    """Whether a new script would run in place of a common command. A
+    project's own command doesn't count: pytest installs ``pytest``."""
+    name = script.lower()
+    return name in _COMMANDS and name != re.sub(r"[-_.]+", "-", package).lower()
+
+
+def _own_metadata(path: str) -> bool:
+    """Whether an entry_points.txt is the one installers make commands from:
+    in the ``.dist-info`` folder at the root of the wheel, with both names
+    spelled exactly, as pip matches them."""
+    folder, _, name = path.partition("/")
+    return name == "entry_points.txt" and folder.endswith(".dist-info")
+
+
+def _read_from(path: str) -> str:
+    """Why an entry_points.txt other than the wheel's own counts."""
+    folder = path.rpartition("/")[0]
+    if "/" not in folder and folder.endswith(".dist-info"):
+        return f"read from {path}, which macOS and Windows open as entry_points.txt"
+    return (
+        f"read from {path}, a second metadata folder, which importlib.metadata reads as "
+        "another installed package"
+    )
+
+
+# Which of a name's lines in one entry_points.txt runs: pip keeps the last
+# target of a script name; pytest, tox and hatch (pluggy) skip a plugin name
+# they have already registered; setuptools and keyring load every line of
+# their groups.
+_WHICH_LOADS = {
+    "console_scripts": "pip installs the last",
+    "gui_scripts": "pip installs the last",
+    "pytest11": "pytest loads the first",
+    "tox": "tox loads the first",
+    "hatch": "hatch loads the first",
+}
+_EACH_LOADS = "a tool that loads the whole group loads each one; a lookup by name takes the first"
+# What changed when no target is new but the line that runs is another one.
+_NOW = {
+    "console_scripts": "pip now installs",
+    "gui_scripts": "pip now installs",
+    "pytest11": "pytest now loads",
+    "tox": "tox now loads",
+    "hatch": "hatch now loads",
+}
+_NOW_LOOKUP = "a lookup by name now returns"
+
+
+def _by_name(specs: tuple[EntryPoint, ...]) -> dict[tuple[str, str], list[EntryPoint]]:
+    out: dict[tuple[str, str], list[EntryPoint]] = {}
+    for e in specs:
+        out.setdefault((e.group, e.name), []).append(e)
+    return out
+
+
+def _running(eps: list[EntryPoint]) -> EntryPoint | None:
+    """The line of a script name that pip installs: the last in the wheel's
+    own file (None: no command)."""
+    own = [e for e in eps if _own_metadata(e.path)]
+    return own[-1] if own else None
+
+
+def _firsts(eps: list[EntryPoint]) -> list[EntryPoint]:
+    """A name's first line in each file. pluggy registers a name from the
+    first line it reads and a lookup by name returns the first; which file
+    is read first is the order the folders are listed in."""
+    out: dict[str, EntryPoint] = {}
+    for e in eps:
+        out.setdefault(e.path, e)
+    return list(out.values())
+
+
+def _targets(eps: list[EntryPoint], n: int) -> str:
+    """A name's targets in file order: the first two and the last, and a
+    count of the others, when there are more than three."""
+    if len(eps) <= 3:
+        return ", then ".join(_clip(e.target, n) for e in eps)
+    first, second, last = (_clip(e.target, n) for e in (eps[0], eps[1], eps[-1]))
+    return f"{first}, then {second}, then {len(eps) - 3:,} more line(s), then {last}"
+
+
+_MAX_SUMMARY = 1000  # characters of one entry point's evidence line
+
+
+def new_entry_point(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-C009: the candidate's wheel declares an entry point the baseline's
+    didn't, or points an existing one somewhere else.
+
+    An entry point is a group and a name. It is reported when the candidate
+    lists a target for it that the baseline's wheel didn't, so a second line
+    for a name counts, or when a line runs that didn't: for a script, the
+    line pip installs (``_running``); for a group read by its first line, a
+    target first in a file that was first in none (``_firsts``); for a group
+    whose tool loads every line (``_loads_every_line``), never, since each
+    line already ran. Lines removed, repeated or reordered with nothing new
+    running are not.
+    It keeps the rule's severity for a group another tool loads without being
+    asked (``AUTO_LOADED_GROUPS``) and for a script named like a common
+    command other than the project's own that the candidate's own file
+    declares and the baseline's didn't, so a script moved into that file
+    from another counts; any other new or changed entry point is reported at
+    info. The evidence lists those that keep the severity first, each line
+    clipped. Wheels only, each read to the end: an sdist's entry
+    points may be computed by ``setup.py``, and a wheel Garnet stopped
+    reading may hold more (GRN-E002 or GRN-E003 names this rule).
+    """
+    if base is None:
+        return
+    b, c = _pair(base, cand)
+    if b is None or c is None or not (b.entry_points_read and c.entry_points_read):
+        return
+    old = _by_name(b.entry_point_specs)
+    found: list[tuple[bool, Evidence]] = []
+    loud: list[str] = []
+    retargeted = False
+    for (group, name), eps in _by_name(c.entry_point_specs).items():
+        was = old.get((group, name), [])
+        before = {_spaceless(e.target) for e in was}
+        added = [i for i, e in enumerate(eps) if _spaceless(e.target) not in before]
+        script = group in _SCRIPT_GROUPS
+        runs: EntryPoint | None = None  # for a script, the line pip installs now
+        ran: EntryPoint | None = None  # and the one it installed before
+        now: EntryPoint | None = None  # a line that runs now and didn't before
+        if script:
+            runs, ran = _running(eps), _running(was)
+            if runs and (ran is None or _spaceless(runs.target) != _spaceless(ran.target)):
+                now = runs
+        elif not _loads_every_line(group):
+            first = {_spaceless(e.target) for e in _firsts(was)}
+            now = next((e for e in _firsts(eps) if _spaceless(e.target) not in first), None)
+        if not (added or now):
+            continue  # lines removed, repeated or reordered: nothing new runs
+        retargeted = retargeted or bool(was)
+        shown, where = _clip(name, 80) or '""', _clip(group, 80)
+        files = sorted({e.path for e in eps})
+        # The first new target leads the notes, so the clip can't drop it.
+        why: list[str] = []
+        if added and len(eps) > 3 and 2 <= added[0] < len(eps) - 1:
+            why.append(f"first new target: {_clip(eps[added[0]].target, 120)}")
+        warns = True
+        if _auto_loaded(group):
+            why.append(f"[{where}] is loaded automatically by the tool that reads it")
+            loud.append(f"[{where}] {shown}")
+        elif script and runs and not ran and _shadows(name, change.package):
+            why.append(f"a script named {name} can shadow the {name} command")
+            loud.append(f"script {name}")
+        else:
+            warns = False
+        if script and runs and was and not ran:
+            why.append(
+                f"{base.version} listed it only outside its own entry_points.txt, "
+                "which makes no command"
+            )
+        if not added and now and (ran or not script):
+            note = f"{_NOW.get(group, _NOW_LOOKUP)} {_clip(now.target, 120)}"
+            if not script and len(files) > 1:
+                note += f" if {_clip(now.path, 120)} is read first"
+            why.append(note)
+        if len(eps) > 1 and len(files) == 1:
+            why.append(f"{len(eps)} lines for one name: {_WHICH_LOADS.get(group, _EACH_LOADS)}")
+        why += [_read_from(p) for p in files if not _own_metadata(p)]
+        what = f"[{where}] {shown} = {_targets(eps, 120)}"
+        what += f" (was {_targets(was, 80)})" if was else " (new)"
+        at = eps[added[0]] if added else now or eps[0]
+        summary = _clip("; ".join([what, *why]), _MAX_SUMMARY)
+        found.append((warns, Evidence("file", summary, path=f"{c.filename}:{at.path}")))
+    if not found:
+        return
+    found.sort(key=lambda t: not t[0])  # stable: the entries that warn first
+    evidence = [ev for _, ev in found]
+    more = len(evidence) - MAX_EVIDENCE
+    tail = (Evidence("note", f"and {more} more entry point(s)"),) if more > 0 else ()
+    if retargeted:
+        title = f"{cand.version} adds or changes {len(found)} entry point(s)"
+    else:
+        title = f"{cand.version} declares {len(found)} entry point(s) that {base.version} didn't"
+    if loud:
+        title += ", including " + ", ".join(loud[:3])
+        if len(loud) > 3:
+            title += f" and {len(loud) - 3} more"
+    yield RawFinding(
+        "GRN-C009",
+        title,
+        tuple(evidence[:MAX_EVIDENCE]) + tail + _compare_note(b, c),
+        lowered_to=None if loud else Severity.INFO,
     )
 
 
