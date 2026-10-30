@@ -47,10 +47,18 @@ lightning 2.6.1 → 2.6.2: WARN
 ```
 
 The same rule reported lightning 2.6.3, litellm 1.82.7 and 1.82.8
-([PYSEC-2026-2](https://osv.dev/vulnerability/PYSEC-2026-2)), and telnyx 4.87.1 and 4.87.2
-([PYSEC-2026-3](https://osv.dev/vulnerability/PYSEC-2026-3)) in the replay. In telnyx 4.87.1 a
-typo stopped the payload before it ran; the rule reads code and reports what a module calls
-at import, not whether the call succeeds.
+([PYSEC-2026-2](https://osv.dev/vulnerability/PYSEC-2026-2)), telnyx 4.87.1 and 4.87.2
+([PYSEC-2026-3](https://osv.dev/vulnerability/PYSEC-2026-3)), ultralytics 8.3.45 and 8.3.46,
+xinference 2.6.0 to 2.6.2, mistralai 2.4.6, guardrails-ai 0.10.1 and durabletask 1.4.1 to 1.4.3
+in the replay. In telnyx 4.87.1 a typo stopped the payload before it ran; the rule reads code
+and reports what a module calls at import, not whether the call succeeds.
+
+What it missed in the replay, and why:
+
+- **ultralytics 8.3.41 and 8.3.42**: the miner runs when a model is downloaded, not at import.
+- **num2words 0.5.15 and 0.5.16**: `__init__.py` loads a DLL through
+  `getattr(ctypes, "CDLL")`, and the rule doesn't follow calls made through `getattr`.
+- **memoryos 2.0.34**: the payload starts from a logging setup function in another module.
 
 ## How to resolve it
 

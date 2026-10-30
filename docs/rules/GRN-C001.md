@@ -40,7 +40,11 @@ elementary-data 0.23.2 → 0.23.3: WARN
 ```
 
 The same rule reported litellm 1.82.8 ([PYSEC-2026-2](https://osv.dev/vulnerability/PYSEC-2026-2))
-in the replay, for a new `litellm_init.pth` that starts a base64 payload.
+for a new `litellm_init.pth` that starts a base64 payload, and gpsea 0.9.14, pyphetools 0.9.120
+and ppkt2synergy 0.1.1 (the June 2026 Hades campaign) for a new `<name>-setup.pth` that downloads
+and runs Bun. It missed embiggen 0.11.97 from the same campaign: the trusted 0.11.96 shipped only
+an sdist and 0.11.97 only a wheel, so there was no pair of artifacts to compare, and the content
+rules passed without saying so. That's a bug, and a fix is planned.
 
 ## How to resolve it
 

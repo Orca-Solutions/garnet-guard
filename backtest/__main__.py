@@ -8,8 +8,10 @@
 Known-bad lookups (GRN-K001) are off: the question is what Garnet catches
 before any feed lists a release. Incidents are replayed against the git tags
 as they stood when the release was uploaded (``tags_on_the_day`` in
-incidents.toml), and again against today's tags where those differ. Results
-go to backtest/results.json.
+incidents.toml), and again against today's tags where those differ. PyPI
+no longer serves provenance for removed releases; where public sources confirm
+a release had no attestations, ``attested = false`` records it. Results go to
+backtest/results.json.
 """
 
 from __future__ import annotations
@@ -69,7 +71,15 @@ def run_incidents() -> list[dict[str, object]]:
                 for f in inc["files"]
             ),
             source_repo=inc["source_repo"],
-            note="replayed: release removed from PyPI; files fetched by URL and hash, provenance not available",
+            note=(
+                "replayed: release removed from PyPI; files fetched by URL and hash; "
+                + (
+                    "no attestations, per incidents.toml"
+                    if inc.get("attested") is False
+                    else "provenance not available"
+                )
+            ),
+            attested=inc.get("attested"),
         )
         then = _tags_then(inc)
         opts = Options(replay={inc["candidate"]: replay}, check_known_bad=False, tags_then=then)
