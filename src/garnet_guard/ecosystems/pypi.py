@@ -150,7 +150,7 @@ def select_wheel(filenames: list[str]) -> str | None:
 # GRN-C012 compares the wheel Garnet read with one wheel per other platform
 # family and with each wheel uploaded late, up to this many late ones.
 LATE_UPLOAD = timedelta(hours=24)  # the same threshold as GRN-T006
-MAX_LATE_WHEELS = 10
+MAX_LATE_WHEELS = 30
 
 
 def wheel_family(filename: str) -> str:

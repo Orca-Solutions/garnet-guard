@@ -255,7 +255,7 @@ _DOCS: tuple[RuleDoc, ...] = (
         W,
         "Another wheel of the new version, for a different platform or uploaded late, has a "
         "Python file that differs from the wheel Garnet read and makes a sensitive call the "
-        "read wheel's copy doesn't. Garnet compares one wheel per platform family and up to 10 "
+        "read wheel's copy doesn't. Garnet compares one wheel per platform family and up to 30 "
         "late wheels; more late wheels than that is GRN-E003. A call any of the trusted "
         "version's wheels for the same platform made in the same file, the one Garnet read "
         "included, isn't new. A differing file Garnet can't parse is GRN-E002, unless the "
@@ -303,7 +303,7 @@ _DOCS: tuple[RuleDoc, ...] = (
         "A safety limit (size, entries, compression ratio, parse size or time) was hit, or a "
         "release has more late wheels than GRN-C012 compares.",
         "Limits stop archive bombs and runaway parsing. Content past a limit was not checked. "
-        "A late wheel past the 10 GRN-C012 compares wasn't read either, and it can carry code "
+        "A late wheel past the 30 GRN-C012 compares wasn't read either, and it can carry code "
         "the wheel Garnet read doesn't.",
         "Inspect what hit the limit by hand. For late wheels, compare each one's Python files "
         "with the wheel Garnet read. If it is expected, ignore this version.",

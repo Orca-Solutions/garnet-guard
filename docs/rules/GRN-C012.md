@@ -27,8 +27,8 @@ Garnet picks, from the new version's wheels:
   (`py3-none-any`) wheel, and any other platform, such as Android or iOS. Within a family it
   takes the newest CPython build, then x86-64, then the first by name, so the same release
   always gives the same pick;
-- **every wheel uploaded more than 24 hours after the release's first file**, up to 10, in
-  file-name order. The threshold is GRN-T006's. A late wheel past the 10th is not compared,
+- **every wheel uploaded more than 24 hours after the release's first file**, up to 30, in
+  file-name order. The threshold is GRN-T006's. A late wheel past the 30th is not compared,
   and that is a [GRN-E003](GRN-E003.md) naming this rule, which lists those wheels, so the
   update doesn't pass.
 
@@ -127,7 +127,7 @@ matched. How to write one is in [the policy guide](../policy.md); the format is 
 - Every wheel. A release with 40 wheels gets one per platform family plus the late ones, so
   a payload in, say, the Linux aarch64 wheel alone, beside a clean Linux x86-64 wheel Garnet
   reads, isn't seen.
-- Late wheels past the 10th. An update that has them gets a GRN-E003 naming this rule, with
+- Late wheels past the 30th. An update that has them gets a GRN-E003 naming this rule, with
   those wheels listed in file-name order (the first 25, and a count of the rest), so it
   doesn't pass. GRN-T006 still reports them as late files.
 - Files other than `.py`. A new `.pth` in another wheel, or a compiled extension that

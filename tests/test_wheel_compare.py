@@ -589,12 +589,12 @@ def test_late_wheels_past_the_cap_are_budget_exceeded() -> None:
     data = b"x"
     late = tuple(
         _file(f"demo-1.1-cp3{i}-cp3{i}-manylinux_2_17_aarch64.whl", data, hours=48)
-        for i in range(10, 23)
+        for i in range(10, 43)
     )
     files = (_file("demo-1.1-py3-none-any.whl", data), *late)
     chosen, left = wheels_to_compare(files, "demo-1.1-py3-none-any.whl")
-    # ten late ones, and the newest stands for Linux too, so two are left out
-    assert len(chosen) == 11 and len(left) == 2
+    # thirty late ones, and the newest stands for Linux too, so two are left out
+    assert len(chosen) == 31 and len(left) == 2
     base = ReleaseFacts("pypi", "demo", "1.0", False, ())
     cand = ReleaseFacts("pypi", "demo", "1.1", False, (), wheels_not_compared=tuple(left))
     result = _result(base, cand)
@@ -602,7 +602,7 @@ def test_late_wheels_past_the_cap_are_budget_exceeded() -> None:
     assert _reported(base, cand, "GRN-E003") == [
         (
             "Couldn't fully check 1.1: 2 late wheel(s) weren't compared with the wheel Garnet "
-            "read; GRN-C012 compares up to 10",
+            "read; GRN-C012 compares up to 30",
             [*sorted(left), "not evaluated: GRN-C012"],
         )
     ]
@@ -624,7 +624,7 @@ def test_late_wheels_past_the_cap_say_why_and_what_to_do() -> None:
     late = ("demo-1.1-cp314-cp314-win32.whl",)
     cand = ReleaseFacts("pypi", "demo", "1.1", False, (), wheels_not_compared=late)
     (found,) = [f for f in _result(base, cand).findings if f.rule_id == "GRN-E003"]
-    assert "late wheel past the 10 GRN-C012 compares" in found.explanation
+    assert "late wheel past the 30 GRN-C012 compares" in found.explanation
     assert "For late wheels, compare each one's Python files with the wheel Garnet read" in (
         found.remediation
     )

@@ -929,7 +929,7 @@ def _rows() -> list[Row]:
     )
     fires(
         "GRN-E003",
-        "late wheels past the 10 GRN-C012 compares",
+        "late wheels past the 30 GRN-C012 compares",
         release("1.0", PKG),
         replace(release("1.1", PKG), wheels_not_compared=("demo-1.1-cp314-cp314-win32.whl",)),
         Verdict.WARN,

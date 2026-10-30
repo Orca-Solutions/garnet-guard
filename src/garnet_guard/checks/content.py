@@ -1207,7 +1207,7 @@ def late_wheels_not_compared(
     yield RawFinding(
         "GRN-E003",
         f"Couldn't fully check {cand.version}: {len(left)} late wheel(s) weren't compared with "
-        "the wheel Garnet read; GRN-C012 compares up to 10",
+        "the wheel Garnet read; GRN-C012 compares up to 30",
         tuple(evidence),
     )
 
