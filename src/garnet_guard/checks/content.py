@@ -350,9 +350,11 @@ def new_import_time_exec(
     A module byte-identical to a baseline file is skipped, and one moved from
     a baseline path is compared with that file. Three kinds of call are
     reported at info, each in its own finding (docs/rules/GRN-C003.md): calls
-    in or reached from test files that nothing else imports, calls in sdist
-    files outside the package, and calls in a function that import-time code
-    only handed to another call which is not known to run it.
+    in or reached only from test files that nothing else imports, calls in or
+    reached only from sdist files outside the package, and calls in a function
+    that import-time code only handed to another call which is not known to
+    run it. A call that a package module reaches at import is reported once,
+    at warn, whatever else reaches it.
     """
     if base is None:
         return
@@ -367,8 +369,11 @@ def new_import_time_exec(
     module_of = {m.path: m.module for m in c.modules}
     outside = _outside_package(c, cand.package)
     kinds = ("module", "test", "outside", "handed")
-    found: dict[str, tuple[list[Evidence], set[str]]] = {k: ([], set()) for k in kinds}
-    unread: list[str] = []  # trusted copies ast couldn't parse (a Python 2 wheel)
+    # per kind: evidence, the files counted in the title, and the trusted
+    # copies ast couldn't parse (a Python 2 wheel), module -> path
+    found: dict[str, tuple[list[Evidence], set[str], dict[str, str]]] = {
+        k: ([], set(), {}) for k in kinds
+    }
     for m in c.modules:
         if m.module in old:
             before = old[m.module]
@@ -382,32 +387,49 @@ def new_import_time_exec(
         # A function handed to two calls is scanned once per call; a site that
         # some call is known to run is not also "handed".
         ran = {(s.line, s.name) for s in m.top_level_calls if not _deferred(s)}
+        sites: list[tuple[CallSite, str, str]] = []  # site, kind, file counted in the title
         for s in m.top_level_calls:
             if s.name in before:
                 continue
             deferred = _deferred(s)
             if deferred and (s.line, s.name) in ran:
                 continue
+            origin = s.from_module
             from_test = (
-                s.from_module is not None
-                and is_test_path(s.from_module)
-                and module_of.get(s.from_module) not in live_tests
+                origin is not None
+                and is_test_path(origin)
+                and module_of.get(origin) not in live_tests
             )
+            from_outside = origin is not None and origin in outside
+            counted = m.module
             if deferred:
                 kind = "handed"
             elif test_only or from_test:
                 kind = "test"
-            elif m.path in outside:
+            elif m.path in outside or from_outside:
                 kind = "outside"
             else:
                 kind = "module"
-            evidence, modules = found[kind]
-            origin = f" from {s.from_module}" if s.from_module else ""
-            how = f"handed to {s.handed_to}() at import" if deferred else "reached at import"
-            via = f" (in {s.via}(), {how}{origin})" if s.via else ""
+            if origin is not None and kind != "handed" and (from_test or from_outside):
+                counted = module_of.get(origin, origin)
+            sites.append((s, kind, counted))
+        # A site some package module reaches at import is a warn, whatever
+        # else reaches it; a site several files reach is listed once.
+        direct = {(s.line, s.name) for s, kind, _ in sites if kind == "module"}
+        listed: set[tuple[str, int, str, str | None]] = set()
+        for s, kind, counted in sites:
+            if kind != "module" and (s.line, s.name) in direct:
+                continue
+            if (kind, s.line, s.name, s.via) in listed:
+                continue
+            listed.add((kind, s.line, s.name, s.via))
+            evidence, files, unread = found[kind]
+            start = f" from {s.from_module}" if s.from_module else ""
+            how = f"handed to {s.handed_to}() at import" if _deferred(s) else "reached at import"
+            via = f" (in {s.via}(), {how}{start})" if s.via else ""
             where = "new module " if m.module not in old and m.path not in old_unparsed else ""
-            if m.path in old_unparsed and m.path not in unread:
-                unread.append(m.path)
+            if m.path in old_unparsed:
+                unread[m.module] = m.path
             evidence.append(
                 Evidence(
                     "file",
@@ -416,18 +438,18 @@ def new_import_time_exec(
                     line=s.line,
                 )
             )
-            modules.add(m.module)
-    for kind, (evidence, modules) in found.items():
+            files.add(counted)
+    for kind, (evidence, files, unread) in found.items():
         if not evidence:
             continue
-        n = len(modules)
+        n = len(files)
         more = len(evidence) - MAX_EVIDENCE
         tail = (Evidence("note", f"and {more} more call site(s)"),) if more > 0 else ()
         note: tuple[Evidence, ...] = ()
         if kind == "test":
             title = (
-                f"{cand.version} adds import-time calls to sensitive APIs in "
-                f"{n} test module(s) that no other module imports"
+                f"{cand.version} adds import-time calls to sensitive APIs reached only "
+                f"from {n} test module(s) that no other module imports"
             )
             note = (
                 Evidence(
@@ -438,8 +460,8 @@ def new_import_time_exec(
             )
         elif kind == "outside":
             title = (
-                f"{cand.version} adds import-time calls to sensitive APIs in "
-                f"{n} file(s) outside the package"
+                f"{cand.version} adds import-time calls to sensitive APIs reached only "
+                f"from {n} file(s) outside the package"
             )
             note = (
                 Evidence(
@@ -460,14 +482,19 @@ def new_import_time_exec(
                     "so this is reported at info",
                 ),
             )
+        elif unread and files <= unread.keys():
+            title = (
+                f"{cand.version} calls sensitive APIs at import in {n} module(s) whose "
+                f"{base.version} copy couldn't be parsed"
+            )
         else:
             title = f"{cand.version} adds import-time calls to sensitive APIs in {n} module(s)"
         if unread:
             note += (
                 Evidence(
                     "note",
-                    f"{base.version} has {', '.join(sorted(unread))} too, but it couldn't be "
-                    "parsed, so these calls may not be new",
+                    f"{base.version} has {', '.join(sorted(unread.values()))} too, but it "
+                    "couldn't be parsed, so these calls may not be new",
                 ),
             )
         yield RawFinding(

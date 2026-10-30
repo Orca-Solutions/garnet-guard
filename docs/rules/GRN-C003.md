@@ -38,10 +38,12 @@ new even in a module that already used `exec`.
 A module is new when the trusted version had no module of that name; a file that only moved
 or was renamed with a leading underscore is compared with the file it came from. When the
 trusted version has the file but it couldn't be parsed (a wheel built for Python 2), the
-calls are reported with a note that they may not be new, because Garnet couldn't compare.
+finding says so in its title and notes that the calls may not be new, because Garnet
+couldn't compare.
 
 Three kinds of call are reported at `info`, each in its own finding, because the source
-does not show them running when the package is imported:
+does not show them running when the package is imported. A call that a package module
+reaches at import is reported once, at `warn`, whatever else reaches it:
 
 - Calls in test files (`tests/`, `test_*.py`, `conftest.py`), or reached only from one,
   unless a non-test module imports the file (directly or through other test modules) or an
@@ -49,7 +51,8 @@ does not show them running when the package is imported:
   which often starts processes or opens sockets at module level. An imported test file
   runs whenever the package is imported, and one named by an entry point, such as a
   `pytest11` plugin, loads in every pytest run, so those stay at `warn`.
-- Calls in sdist files outside the package: `docs/conf.py`, `examples/`, `benchmarks/`.
+- Calls in sdist files outside the package, or reached only from one: `docs/conf.py`,
+  `examples/`, `benchmarks/`, or a lexer that ply 3.6's `example/` scripts build at import.
   They ship in the sdist but not in the installed package, and run only when run on their
   own.
 - Calls in a function that import-time code only handed to another call, when nothing says

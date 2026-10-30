@@ -440,10 +440,21 @@ def test_module_the_trusted_version_could_not_parse_is_not_called_new() -> None:
     cand = {"demo/__init__.py": "", "demo/work.py": "import os\nos.system('x')\n"}
     result = run_checks(CHANGE, release("1.0", base), release("1.1", cand))
     [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert (
+        f.title
+        == "1.1 calls sensitive APIs at import in 1 module(s) whose 1.0 copy couldn't be parsed"
+    )
     assert f.evidence[0].summary == "demo/work.py:2 calls os.system"
     assert f.evidence[1].summary == (
         "1.0 has demo/work.py too, but it couldn't be parsed, so these calls may not be new"
     )
+    mixed = {**cand, "demo/new.py": "import os\nos.system('y')\n"}
+    [f] = [
+        f
+        for f in run_checks(CHANGE, release("1.0", base), release("1.1", mixed)).findings
+        if f.rule_id == "GRN-C003"
+    ]
+    assert f.title == "1.1 adds import-time calls to sensitive APIs in 2 module(s)"
 
 
 def test_module_renamed_with_a_leading_underscore_is_the_same_module() -> None:
@@ -517,8 +528,9 @@ def test_sdist_files_outside_the_package_are_info() -> None:
     )
     [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
     assert f.severity == Severity.INFO
-    assert (
-        f.title == "1.1 adds import-time calls to sensitive APIs in 1 file(s) outside the package"
+    assert f.title == (
+        "1.1 adds import-time calls to sensitive APIs reached only from 1 file(s) "
+        "outside the package"
     )
     inside = {**base, "demo/__init__.py": "import os\nos.system('x')\n"}
     result = run_checks(
@@ -528,6 +540,55 @@ def test_sdist_files_outside_the_package_are_info() -> None:
     )
     [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
     assert f.severity == Severity.WARN
+
+
+def test_chain_that_starts_outside_the_package_is_info() -> None:
+    # ply 3.6: example/ansic/clex.py builds a lexer at import; the exec sits
+    # in ply/lex.py, which nothing in the package runs at import.
+    util = "import subprocess\n\ndef go():\n    subprocess.run(['x'])\n"
+    base = {
+        "demo/__init__.py": "",
+        "demo/util.py": util,
+        "example/run.py": "from demo.util import go\n",
+    }
+    cand = {**base, "example/run.py": "from demo.util import go\ngo()\n"}
+    result = run_checks(
+        CHANGE,
+        release("1.0", sdist_files=base, sdist_only=True),
+        release("1.1", sdist_files=cand, sdist_only=True),
+    )
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert f.severity == Severity.INFO
+    assert f.title == (
+        "1.1 adds import-time calls to sensitive APIs reached only from 1 file(s) "
+        "outside the package"
+    )
+    assert f.evidence[0].summary == (
+        "demo/util.py:4 calls subprocess.run (in go(), reached at import from example/run.py)"
+    )
+
+
+def test_call_a_package_module_and_a_test_file_both_reach_is_one_warn() -> None:
+    # The test module's name sorts first, so its chain is followed first; the
+    # package module's chain must still be seen, and the call reported once.
+    util = "import subprocess\n\ndef go():\n    subprocess.run(['x'])\n"
+    base = {
+        "demo/__init__.py": "",
+        "demo/conftest.py": "from demo.util import go\n",
+        "demo/util.py": util,
+        "demo/zeta.py": "from demo.util import go\n",
+    }
+    cand = {
+        **base,
+        "demo/conftest.py": "from demo.util import go\ngo()\n",
+        "demo/zeta.py": "from demo.util import go\ngo()\n",
+    }
+    result = run_checks(CHANGE, release("1.0", base), release("1.1", cand))
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert f.severity == Severity.WARN
+    assert [e.summary for e in f.evidence if e.kind == "file"] == [
+        "demo/util.py:4 calls subprocess.run (in go(), reached at import from demo/zeta.py)"
+    ]
 
 
 def test_function_in_another_module_that_nothing_calls_at_import_is_quiet() -> None:
