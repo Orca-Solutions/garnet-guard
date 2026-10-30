@@ -15,7 +15,7 @@ The PyCon plan needed this number by Dec 1. Garnet `0.1.0.dev0` (the draft PR #1
 
 ## Corpus
 
-- Packages: the top 100 by 30-day downloads in hugovk/top-pypi-packages (snapshot of 2026-10-01). The list is frozen in `backtest/top-pypi-100.json`.
+- Packages: the top 100 by 30-day downloads in hugovk/top-pypi-packages (snapshot of 2026-10-01). The list is frozen as the first 100 of `backtest/top-pypi-1000.json`.
 - Releases: the last 11 final releases of each package by version, that still have a non-yanked file. Pre-releases and dev releases are skipped, as Dependabot does by default. Each package gives 10 updates, except 7 packages that have fewer releases, which is why the total is 974 and not 1,000. The chosen versions are in `backtest/corpus.json`.
 - Settings: same as the incident replay. Known-bad lookup (K001) is off, tags are evaluated as they exist today, and default severities apply. A "warn" is any finding at warn or above from a detection rule (T, C). E-findings are counted separately as coverage gaps.
 
