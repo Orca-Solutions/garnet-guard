@@ -1,0 +1,57 @@
+{
+ "_npmUser": {
+  "approver": {
+   "email": "scttcper@gmail.com",
+   "name": "scttcper"
+  },
+  "email": "npm-oidc-no-reply@github.com",
+  "name": "GitHub Actions",
+  "trustedPublisher": {
+   "id": "github",
+   "oidcConfigId": "ebb1f022-9ab3-48e5-87c1-31a0b8365363"
+  }
+ },
+ "bugs": {
+  "url": "https://github.com/scttcper/tinycolor/issues"
+ },
+ "dist": {
+  "attestations": {
+   "provenance": {
+    "predicateType": "https://slsa.dev/provenance/v1"
+   },
+   "url": "https://registry.npmjs.org/-/npm/v1/attestations/@ctrl%2ftinycolor@4.2.2"
+  },
+  "fileCount": 41,
+  "integrity": "sha512-9rQHijqB2Rq6qOEC/xHaA6aPlsKGi5kmCQW50O1asn9g63XFeD5NmBwysriistW5Xx0JPafyD/TA7yk2S3pXGQ==",
+  "shasum": "213091ae98e116c6164e0ac1b7338ec6a7b0f9a8",
+  "signatures": [
+   {
+    "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+    "sig": "MEYCIQCqwlV1KY8OlGfTX38Dj8j8YeFw6UeR240awmuTUF1AWwIhAPbFm2JByfuXMNlNXcWqJIFbnqdTPnUc/mxCEi1TQqCw"
+   }
+  ],
+  "tarball": "https://registry.npmjs.org/@ctrl/tinycolor/-/tinycolor-4.2.2.tgz",
+  "unpackedSize": 253080
+ },
+ "homepage": "https://tinycolor.vercel.app",
+ "name": "@ctrl/tinycolor",
+ "repository": {
+  "type": "git",
+  "url": "git+https://github.com/scttcper/tinycolor.git"
+ },
+ "scripts": {
+  "bench": "vitest bench --config vitest.bench.config.mts --run --reporter=verbose",
+  "bench:watch": "vitest bench --config vitest.bench.config.mts --watch --reporter=verbose",
+  "build": "del-cli dist && tsc -p tsconfig.build.json && tsc -p tsconfig.module.json && node build.ts",
+  "demo:build": "cd demo && node --run build",
+  "demo:watch": "cd demo && node --run dev",
+  "docs:build": "typedoc --out demo/dist/docs --hideGenerator --tsconfig tsconfig.build.json src/public_api.ts",
+  "lint": "eslint .",
+  "lint:fix": "eslint --fix .",
+  "prepare": "node --run build",
+  "test": "vitest run",
+  "test:ci": "vitest run --reporter=default --reporter=junit --outputFile=./junit.xml",
+  "test:watch": "vitest"
+ },
+ "version": "4.2.2"
+}

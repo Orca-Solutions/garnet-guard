@@ -1,0 +1,88 @@
+# Real npm compromises replayed by `python -m backtest`.
+#
+# npm removes the tarball of a malicious version along with its registry
+# record, so unlike the PyPI incidents the files can't be fetched. Each entry
+# records what the registry showed for the bad version, from the public
+# write-ups cited, and the baseline is fetched live. The tag lookup for the
+# bad version runs live against the repository as it is today. Nothing is
+# executed, and no malicious file is stored in this repository.
+#
+# Each record says: whether the registry listed provenance for the version
+# (`attestation`), whether it was published through a trusted publisher
+# (`trusted_publisher`), the install-time scripts in its package.json
+# (`scripts`), and the source. What a write-up didn't report is recorded as
+# unchanged from the baseline, so nothing is caught on guesswork.
+
+[[incident]]
+id = "chalk-5.6.1"
+ecosystem = "npm"
+package = "chalk"
+baseline = "5.6.0"
+candidate = "5.6.1"
+source_repo = "chalk/chalk"
+osv = "MAL-2025-47141"
+uploaded_at = "2025-09-08T13:13:05+00:00"
+attestation = false
+scripts = []
+summary = "Published from the maintainer's phished npm account on 2025-09-08; index.js gained an obfuscated line that hijacks crypto transactions in browsers. The package had never used provenance."
+sources = [
+  "https://github.com/chalk/chalk/issues/656",
+  "https://semgrep.dev/blog/2025/chalk-debug-and-color-on-npm-compromised-in-new-supply-chain-attack",
+]
+note = "replayed: version removed from npm; registry facts recorded from write-ups, tarball not inspected"
+
+[[incident]]
+id = "debug-4.4.2"
+ecosystem = "npm"
+package = "debug"
+baseline = "4.4.1"
+candidate = "4.4.2"
+source_repo = "debug-js/debug"
+osv = "MAL-2025-47142"
+uploaded_at = "2025-09-08T13:12:39+00:00"
+attestation = false
+scripts = []
+summary = "Same account takeover as chalk, minutes earlier; a maintainer noticed that the version on npm was not in the repository."
+sources = [
+  "https://github.com/debug-js/debug/issues/1005",
+  "https://semgrep.dev/blog/2025/chalk-debug-and-color-on-npm-compromised-in-new-supply-chain-attack",
+]
+note = "replayed: version removed from npm; registry facts recorded from write-ups, tarball not inspected"
+
+[[incident]]
+id = "nx-21.5.0"
+ecosystem = "npm"
+package = "nx"
+baseline = "21.4.1"
+candidate = "21.5.0"
+source_repo = "nrwl/nx"
+osv = "MAL-2025-41439"
+uploaded_at = "2025-08-26T22:32:25+00:00"
+attestation = false
+trusted_publisher = false
+scripts = [["postinstall", "node telemetry.js"]]
+summary = "Published with an npm token stolen through a GitHub Actions injection; package.json's postinstall became `node telemetry.js`, a credential stealer that drives local AI CLIs. Earlier nx releases carried provenance; this one had none."
+sources = [
+  "https://nx.dev/blog/s1ngularity-postmortem",
+  "https://www.stepsecurity.io/blog/supply-chain-security-alert-popular-nx-build-system-package-compromised-with-data-stealing-malware",
+  "https://socket.dev/blog/nx-packages-compromised",
+]
+note = "replayed: version removed from npm; registry facts recorded from write-ups, tarball not inspected"
+
+[[incident]]
+id = "ctrl-tinycolor-4.1.1"
+ecosystem = "npm"
+package = "@ctrl/tinycolor"
+baseline = "4.1.0"
+candidate = "4.1.1"
+source_repo = "scttcper/tinycolor"
+osv = "MAL-2025-47138"
+uploaded_at = "2025-09-15T19:52:46+00:00"
+attestation = false
+scripts = [["prepare", "npm run build"], ["postinstall", "node bundle.js"]]
+summary = "First package of the Shai-Hulud worm: package.json gained a postinstall running a 3.6 MB bundle.js that steals tokens and republishes itself into every package the token can reach."
+sources = [
+  "https://socket.dev/blog/tinycolor-supply-chain-attack-affects-40-packages",
+  "https://www.stepsecurity.io/blog/ctrl-tinycolor-and-40-npm-packages-compromised",
+]
+note = "replayed: version removed from npm; registry facts recorded from write-ups, tarball not inspected"

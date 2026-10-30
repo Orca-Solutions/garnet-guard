@@ -50,7 +50,7 @@ Launch means the replay write-up plus a working GitHub Action. The bar doesn't m
 - [ ] GitHub Marketplace listing for the Action
 - [ ] Launch write-up "We replayed the 2025–26 supply-chain attacks against Garnet Guard", then Show HN, Python Discourse, r/Python, Mastodon and Bluesky, newsletters (marketing owns the launch; see plans/marketing.md)
 - [ ] In launch week: apply to the GitHub Secure Open Source Fund (if a cohort is open) and to Open Source Collective as fiscal host (needs an org-owned repo, which `orca-solutions` satisfies, and a second admin by early December)
-- [ ] *Stretch, not a launch requirement:* npm adapter (package-lock, pnpm-lock, yarn.lock; npm provenance; lifecycle-script and `bin` diffs)
+- [ ] *Stretch, not a launch requirement:* npm adapter (package-lock, pnpm-lock, yarn.lock; npm provenance; lifecycle-script and `bin` diffs). `garnet diff npm:…`, provenance, tags and lifecycle-script diffs are built and backtested; the lockfile parsers and `bin` diffs are open.
 
 **Exit:** the launch success criteria in [VISION.md](VISION.md); the Action runs on real Dependabot and Renovate PRs.
 

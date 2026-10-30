@@ -121,9 +121,13 @@ def new_build_hook(
 ) -> Iterator[RawFinding]:
     """GRN-C002: new sensitive calls in setup.py, or a new unusual build backend.
 
-    Only sdists are compared: a wheel is already built.
+    Only sdists are compared: a wheel is already built. For npm the rule
+    compares install-time scripts instead (``_new_install_script``).
     """
     if base is None:
+        return
+    if change.ecosystem == "npm":
+        yield from _new_install_script(base, cand)
         return
     b, c = _pick(base, "sdist"), _pick(cand, "sdist")
     if b is None or c is None:
@@ -148,6 +152,38 @@ def new_build_hook(
         yield RawFinding(
             "GRN-C002",
             f"{cand.version} adds code that runs when the sdist is built",
+            tuple(evidence[:MAX_EVIDENCE]),
+        )
+
+
+def _new_install_script(base: ReleaseFacts, cand: ReleaseFacts) -> Iterator[RawFinding]:
+    """GRN-C002 for npm: a preinstall, install or postinstall script was added
+    or changed. npm runs these on the machine that installs the package."""
+    b = next(iter(base.content), None)
+    c = next(iter(cand.content), None)
+    if b is None or c is None:
+        return
+    old = dict(b.install_scripts)
+    evidence: list[Evidence] = []
+    for name, cmd in c.install_scripts:
+        if name not in old:
+            evidence.append(
+                Evidence(
+                    "file", f"package.json: new {name} script: {_clip(cmd)}", path="package.json"
+                )
+            )
+        elif old[name] != cmd:
+            evidence.append(
+                Evidence(
+                    "file",
+                    f"package.json: {name} script changed to {_clip(cmd)} (was {_clip(old[name])})",
+                    path="package.json",
+                )
+            )
+    if evidence:
+        yield RawFinding(
+            "GRN-C002",
+            f"{cand.version} adds or changes a script that runs when the package is installed",
             tuple(evidence[:MAX_EVIDENCE]),
         )
 

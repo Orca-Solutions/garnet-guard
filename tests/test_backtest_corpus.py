@@ -39,9 +39,43 @@ def test_cache_round_trips_release_facts(tmp_path: Path) -> None:
         }
     )
     cache = corpus.FactCache(tmp_path)
-    assert cache.get("demo", "1.0") is None
+    assert cache.get("pypi", "demo", "1.0") is None
     cache.put(rel)
-    assert cache.get("demo", "1.0") == rel
+    assert cache.get("pypi", "demo", "1.0") == rel
+
+
+def test_cache_round_trips_npm_facts(tmp_path: Path) -> None:
+    art = ArtifactFacts(
+        filename="demo-1.0.0.tgz",
+        sha256="0" * 64,
+        packagetype="tarball",
+        uploaded_at=None,
+        provenance=None,
+        inspected=True,
+        integrity="sha512-AAAA",
+        downloaded_integrity="sha512-AAAA",
+        install_scripts=(("postinstall", "node x.js"), ("prepare", "npm run build")),
+    )
+    rel = ReleaseFacts("npm", "@scope/demo", "1.0.0", False, (art,), tag_repos=("o/r",))
+    cache = corpus.FactCache(tmp_path)
+    cache.put(rel)
+    assert cache.get("npm", "@scope/demo", "1.0.0") == rel
+
+
+def test_pick_npm_versions_skips_prereleases_and_deprecated() -> None:
+    pack = {
+        "versions": {
+            "1.0.0": {},
+            "1.10.0": {},
+            "1.2.0": {},
+            "2.0.0-beta.1": {},
+            "1.3.0": {"deprecated": "use 1.10"},
+            "2.0.0": {},
+            "junk": {},
+        }
+    }
+    assert corpus.pick_npm_versions(pack, 10) == ["1.0.0", "1.2.0", "1.10.0", "2.0.0"]
+    assert corpus.pick_npm_versions(pack, 2) == ["1.10.0", "2.0.0"]
 
 
 def test_run_package_records_every_finding(tmp_path: Path) -> None:
@@ -49,7 +83,7 @@ def test_run_package_records_every_finding(tmp_path: Path) -> None:
     cache.put(release("1.0", {"demo/__init__.py": "x = 1\n"}))
     cache.put(release("1.1", {"demo/__init__.py": "x = 1\n"}))
     cache.put(release("1.2", {"demo/__init__.py": "x = 1\n", "demo-hook.pth": "import demo\n"}))
-    rows = corpus.run_package("demo", ["1.0", "1.1", "1.2"], cache, lambda _: None)
+    rows = corpus.run_package("pypi", "demo", ["1.0", "1.1", "1.2"], cache, lambda _: None)
     assert [(r["candidate"], r["warn_rules"]) for r in rows] == [("1.1", []), ("1.2", ["GRN-C001"])]
     assert rows[1]["findings"][0]["rule"] == "GRN-C001"
     summary = corpus.summarize(rows)
