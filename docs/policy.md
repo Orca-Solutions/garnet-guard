@@ -65,6 +65,8 @@ An ignore matches a finding when all of these hold:
 
 An ignored finding is not hidden. It still appears in the JSON report with `suppressed_by` set to the ignore that matched, in the text report as `ignored`, and in the pull request comment under "ignored by the policy". It just doesn't count toward the verdict or the exit code. Findings the ignore doesn't cover still count: an ignore for GRN-T004 on a package does nothing about a GRN-T001 on the same update.
 
+An `until` more than 12 months after the day Garnet reads the policy is refused, and the run exits with code 3: an ignore records a review, and a review goes out of date. Pick a date within the year and renew it after looking again.
+
 The day after `until`, the ignore stops applying. The finding counts again, with a note that an ignore expired and the reason it gave, and the report lists every expired ignore so a lapsed review is visible even when nothing matched it. Review the package again, then renew the date or delete the entry.
 
 Policies may name rules that are in the spec but not built yet (GRN-T006, GRN-C004 to GRN-C006). They produce no findings until they ship.
@@ -81,6 +83,8 @@ It prints the file's SHA-256, every rule setting, and every ignore with whether 
 ## In the GitHub Action
 
 The Action's `policy` input defaults to `auto`: `garnet.toml` at the pull request's base commit, else `[tool.garnet]` in `pyproject.toml` there. Give a path to use another file. Either way the policy is read from the **base commit**, so a pull request can't relax or remove the policy it is checked with, and a `garnet.toml` added by a pull request is not read. A change to the policy applies to later pull requests once it is merged.
+
+When the pull request also edits the policy file, or adds one, the comment opens with a callout that lists what the edit changes: each new or extended ignore, each rule setting, `fail_on`, `default` and the limits. A change that loosens the policy is marked "loosens" and listed first, so a dependency bump that also adds an ignore for its own warning is plain to the reviewer. The edit itself still applies only after the merge. Locally, `garnet check --git-base REF --policy-change garnet.toml` prints the same list.
 
 The Action's `fail-on` input is empty by default, which means the policy's `fail_on`, else `block`. Details are in [docs/action.md](action.md#the-policy).
 

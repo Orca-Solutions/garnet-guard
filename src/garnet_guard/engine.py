@@ -158,6 +158,8 @@ class Report:
     results: tuple[ChangeResult, ...]
     policy: Policy = field(default_factory=Policy)
     expired: tuple[Ignore, ...] = ()  # ignores past their until date
+    # (policy file, what the pull request changes in it), for the reviewer
+    policy_changes: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     def exit_code(self, fail_on: Severity) -> int:
         """0 below ``fail_on``, else 1 for warn and 2 for block (SPEC §8).
@@ -404,11 +406,16 @@ def diff_lockfiles(
 
 
 def report(
-    results: list[ChangeResult], *, policy: Policy | None = None, today: date | None = None
+    results: list[ChangeResult],
+    *,
+    policy: Policy | None = None,
+    today: date | None = None,
+    policy_changes: tuple[tuple[str, tuple[str, ...]], ...] = (),
 ) -> Report:
     """Collect results into a ``Report``, worst change first, with the overall verdict.
 
     With a ``policy``, the report names it and lists its expired ignores.
+    ``policy_changes`` are carried as given; they never change the verdict.
     """
     policy = policy or Policy()
     worst = _worst(f for r in results for f in r.findings)
@@ -417,4 +424,6 @@ def report(
         key=lambda r: (-int(_worst(r.findings)), r.change.package, r.change.candidate),
     )
     expired = pol.expired_ignores(policy, today or _utc_today())
-    return Report(__version__, Verdict.from_severity(worst), tuple(ordered), policy, expired)
+    return Report(
+        __version__, Verdict.from_severity(worst), tuple(ordered), policy, expired, policy_changes
+    )

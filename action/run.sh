@@ -109,10 +109,12 @@ policy_dir="$out/policy"
 rm -rf "$policy_dir"
 mkdir -p "$policy_dir"
 policy_args=(--no-policy)
+policy_name=""
 read_policy() {
   git -C "$ws" show "$base:$1" > "$policy_dir/$(basename "$1")" \
     || couldnt_check "Couldn't read the policy file $1 from the base commit."
   policy_args=(--policy "$policy_dir/$(basename "$1")")
+  policy_name="$1"
 }
 case "${GARNET_POLICY:-auto}" in
   auto)
@@ -129,10 +131,26 @@ case "${GARNET_POLICY:-auto}" in
     read_policy "$GARNET_POLICY" ;;
 esac
 
+# A pull request that also edits the policy is checked with the base commit's
+# policy, but the edit applies once it merges. garnet reads the file in the
+# checkout as data (a symbolic link is refused) and the comment lists what the
+# edit changes. With no policy at the base, a policy the pull request adds is
+# listed the same way.
+change_args=()
+if [[ -n "$policy_name" ]]; then
+  change_args=(--policy-change "$policy_name")
+else
+  for name in garnet.toml pyproject.toml; do
+    if [[ -e "$ws/$name" || -L "$ws/$name" ]]; then
+      change_args+=(--policy-change "$name")
+    fi
+  done
+fi
+
 # --- Run garnet check ------------------------------------------------------
 
 args=(check --git-base "$base" --format json --output "$report"
-      --github-token-env GARNET_GITHUB_TOKEN "${policy_args[@]}")
+      --github-token-env GARNET_GITHUB_TOKEN "${policy_args[@]}" "${change_args[@]}")
 [[ -n "$fail_on" ]] && args+=(--fail-on "$fail_on")
 heads=()
 if [[ "${GARNET_LOCKFILES:-auto}" != "auto" ]]; then

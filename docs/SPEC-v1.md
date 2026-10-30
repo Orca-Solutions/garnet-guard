@@ -187,6 +187,7 @@ budget_seconds = 60
 
 - Unknown keys MUST produce an error, not be ignored.
 - An ignore past its `until` date MUST stop applying and produce an info note that it expired.
+- An ignore whose `until` is more than 12 months after the day the policy is read MUST be refused as invalid (exit code 3), naming the latest date accepted.
 - An ignore MUST NOT suppress GRN-T007, GRN-T008 or GRN-K001 unless it also sets `acknowledge_critical = true`.
 - Suppressed findings still appear in JSON and SARIF output with `suppressed_by`.
 
@@ -215,6 +216,7 @@ Human-readable, grouped by change, worst first. Colors only on a TTY. All packag
   "garnet_version": "1.0.0",
   "verdict": "warn",
   "policy": {"source": "garnet.toml", "sha256": "…"},
+  "policy_changes": [{"path": "garnet.toml", "changes": ["loosens: new ignore: examplelib GRN-C003 until 2027-06-30, reason: …"]}],
   "changes": [
     {
       "ecosystem": "pypi",
@@ -228,6 +230,8 @@ Human-readable, grouped by change, worst first. Colors only on a TTY. All packag
 }
 ```
 
+`policy_changes` is present only with `garnet check --git-base REF --policy-change PATH`, when the policy file at `PATH` differs from the one at `REF`: one entry per file, each change a line, those that loosen the policy (a new or extended ignore, a rule lowered or turned off, `fail_on` raised, a limit raised, the file deleted) first and prefixed `loosens:`. It never changes the verdict; the policy that applied is the one in `policy`.
+
 The schema is published with each release. Within 1.x, fields may be added but not removed or retyped. (The URL names the schema; garnetguard.dev doesn't serve the file yet.)
 
 ### 9.3 SARIF
@@ -236,7 +240,7 @@ SARIF 2.1.0. One `run`, tool name `Garnet Guard` (GitHub shows it as the check r
 
 ### 9.4 PR comment
 
-Markdown with a hidden marker (`<!-- garnet:report -->`) so the Action updates one comment instead of posting new ones. It lists changes with a non-pass verdict first, each with its findings and a link to `garnet explain` docs, then a collapsed list of passing changes. All package-supplied strings MUST be escaped for markdown and MUST NOT create links or mentions. The comment MUST stay under GitHub's 65,536-character limit, truncating passing changes first. It ends with a one-line footer linking to Garnet's docs and to each cited rule's page; the footer links only to documentation, never to anything paid, and the Action input `footer: false` removes it. The footer is on by default (accepted 2026-10-10).
+Markdown with a hidden marker (`<!-- garnet:report -->`) so the Action updates one comment instead of posting new ones. It lists changes with a non-pass verdict first, each with its findings and a link to `garnet explain` docs, then a collapsed list of passing changes. All package-supplied strings MUST be escaped for markdown and MUST NOT create links or mentions. The comment MUST stay under GitHub's 65,536-character limit, truncating passing changes first. It ends with a one-line footer linking to Garnet's docs and to each cited rule's page; the footer links only to documentation, never to anything paid, and the Action input `footer: false` removes it. The footer is on by default (accepted 2026-10-10). When the report has `policy_changes`, the comment MUST open with a callout listing them, so a policy edited beside a dependency bump is visible to the reviewer.
 
 ## 10. Surfaces
 

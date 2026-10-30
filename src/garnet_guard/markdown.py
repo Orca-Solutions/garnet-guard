@@ -205,6 +205,26 @@ def _footer(cited: Sequence[str]) -> str:
     return "<sub>Garnet Guard · " + " · ".join(links) + "</sub>"
 
 
+def _policy_change_lines(doc: Mapping[str, Any]) -> list[str]:
+    """A callout when the pull request also edits the policy, with each change."""
+    lines: list[str] = []
+    for entry in _list(doc.get("policy_changes")):
+        if not isinstance(entry, Mapping):
+            continue
+        changes = [c for c in _list(entry.get("changes")) if isinstance(c, str)]
+        if not changes:
+            continue
+        lines += [
+            "> [!IMPORTANT]",
+            f"> **This pull request also changes the policy in {code(entry.get('path', '?'))}.** "
+            "The Action checks every pull request with the policy of its base commit, so "
+            "these changes apply to pull requests after this one merges:",
+        ]
+        lines += [f"> - {text(c)}" for c in changes]
+        lines.append("")
+    return lines
+
+
 def _expired_lines(doc: Mapping[str, Any]) -> list[str]:
     """One line per policy ignore past its until date, so nobody misses it."""
     policy = doc.get("policy")
@@ -242,7 +262,7 @@ def render(doc: Mapping[str, Any], *, footer: bool = True, max_chars: int = MAX_
     head = [MARKER, _header(len(flagged), len(changes)), ""]
     tail = ["", _footer(cited)] if footer else []
 
-    body: list[str] = []
+    body: list[str] = _policy_change_lines(doc)
     for c in flagged:
         body += _flagged_block(c) + [""]
     body += _expired_lines(doc)

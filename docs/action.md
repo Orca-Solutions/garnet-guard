@@ -67,7 +67,7 @@ If Garnet Guard itself fails, or a report is missing or invalid, the comment say
 
 ## The policy
 
-The policy file ([docs/policy.md](policy.md)) sets rule severities and the ignores for findings you have reviewed. The Action reads it from the pull request's **base commit**, never from the pull request's checkout, so a pull request can't relax or remove the policy it is checked with. A pull request that changes `garnet.toml` is checked with the old policy; the new one applies to later pull requests once it is merged.
+The policy file ([docs/policy.md](policy.md)) sets rule severities and the ignores for findings you have reviewed. The Action reads it from the pull request's **base commit**, never from the pull request's checkout, so a pull request can't relax or remove the policy it is checked with. A pull request that changes `garnet.toml` is checked with the old policy; the new one applies to later pull requests once it is merged. The comment opens with a callout listing what such a pull request changes in the policy, loosening changes first ([docs/policy.md](policy.md#in-the-github-action)).
 
 With `policy: auto`, the Action looks for `garnet.toml` at the base commit, then for `[tool.garnet]` in `pyproject.toml`. If neither exists, `garnet check` runs with `--no-policy`, so a `garnet.toml` that a pull request adds is not read either. With a path, that file must exist at the base commit; otherwise the Action reports that it couldn't check the pull request, which is never a pass.
 
