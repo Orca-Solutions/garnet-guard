@@ -18,9 +18,10 @@ status: implemented
 
 A release is built from its git tag, so every Python file in the wheel should be, byte for
 byte, a file in the repository at that tag. Garnet reads the repository's file list at the
-tagged commit and compares each `.py` file in the wheel with it (the sdist stands in when
-there is no wheel). A file that differs, or has no counterpart, is then asked one more
-question: does it contain a call in the [sensitive call set](GRN-C003.md#sensitive-call-set)
+tagged commit and looks for each `.py` file in the wheel there (the sdist stands in when
+there is no wheel). A file whose exact bytes are anywhere in the tree, submodules included,
+is sourced, wherever the build put it. A file that isn't is compared with the file at the
+same path, if there is one, and asked one more question: does it contain a call in the [sensitive call set](GRN-C003.md#sensitive-call-set)
 that the source file doesn't? Only then does the rule fire. A call the trusted version
 already carried outside its source, in the same file, isn't new.
 

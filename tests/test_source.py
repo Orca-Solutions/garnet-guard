@@ -109,6 +109,20 @@ def test_match_reports_calls_the_source_lacks_and_fetches_only_what_it_needs() -
     assert trees.blob_requests == [git_blob_id(CLEAN_DL.encode())]  # not the version file
 
 
+def test_identical_file_counts_as_sourced_wherever_the_build_put_it() -> None:
+    cand = release("1.1", {"demo/_vendor/x.py": PAYLOAD_DL})
+    trees = FakeTrees(
+        {
+            ("o/r", "c" * 40): CommitFiles(
+                {"subprojects/x/x/x.py": git_blob_id(PAYLOAD_DL.encode())}, {}
+            )
+        },
+        {},
+    )
+    match = match_artifact(trees, TAG, cand.artifacts[0])  # type: ignore[arg-type]
+    assert (match.matched, match.unmatched) == (1, ())
+
+
 def test_match_is_quiet_when_the_source_has_the_same_call() -> None:
     cand = release("1.1", {"demo/dl.py": PAYLOAD_DL + "\n# built\n"})
     trees = FakeTrees(

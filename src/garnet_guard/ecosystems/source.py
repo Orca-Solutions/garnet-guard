@@ -83,23 +83,29 @@ def find_prefix(paths: Iterable[str], files: Mapping[str, object]) -> str:
 def match_artifact(trees: TreeLookup, tag: TagInfo, art: ArtifactFacts) -> SourceMatch:
     """Compare the artifact's parsed Python files with the tag's source tree.
 
-    Raises ``NetError`` when the tree or a needed file can't be read. Source
-    files are fetched only for published files that have sensitive calls.
+    A published file counts as sourced when its exact bytes are anywhere in
+    the tree (submodules included). Otherwise it is compared with the file at
+    the same path under ``prefix``, when there is one. Raises ``NetError``
+    when the tree or a needed file can't be read. Source files are fetched
+    only for published files that have sensitive calls.
     """
     assert tag.sha is not None and tag.repo is not None
     files, unreadable = repo_files(trees, tag.repo, tag.sha)
     modules = sorted((m for m in art.modules if m.blob_sha1), key=lambda m: m.path)
     prefix = find_prefix([m.path for m in modules], files)
     own = frozenset(m.module.split(".")[0] for m in modules)
+    # A file with the same bytes anywhere in the tree is sourced, wherever the
+    # build put it: scipy copies a submodule's inner package up two levels.
+    in_tree = {sha for _, sha in files.values()}
     matched = 0
     unmatched: list[UnsourcedFile] = []
     unchecked: list[str] = []
     for m in modules:
-        full = prefix + m.path
-        source = files.get(full)
-        if source is not None and source[1] == m.blob_sha1:
+        if m.blob_sha1 in in_tree:
             matched += 1
             continue
+        full = prefix + m.path
+        source = files.get(full)
         if source is None and any(full.startswith(u + "/") for u in unreadable):
             unchecked.append(m.path)
             continue
