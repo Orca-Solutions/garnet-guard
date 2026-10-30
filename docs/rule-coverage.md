@@ -3,7 +3,8 @@
 What stands behind each rule ID, as of 2026-10-30 on `main`. Three kinds of evidence:
 
 - **Crafted releases** (`tests/test_rule_matrix.py`): tiny wheels and sdists built in memory,
-  one that makes the rule fire and one that keeps it quiet (50 rows today). No real malware is stored in the
+  one that makes the rule fire and one that keeps it quiet (54 rows today), run for every
+  ecosystem the rule is registered for. No real malware is stored in the
   repository. `test_every_built_rule_has_rows` fails when a rule is registered without both.
 - **Real attacks** (`python -m backtest`): the compromised releases in
   [backtest/incidents.toml](../backtest/incidents.toml), fetched by URL and hash from
@@ -31,7 +32,7 @@ That is said in the table, not hidden.
 | GRN-T007 invalid-attestation | yes / yes | none | none | 0 | a real forged or broken attestation has not been seen. The verifier itself (Sigstore, via pypi-attestations) has no unit test and is exercised by every corpus run: every attested release in the corpus verified |
 | GRN-T008 hash-mismatch | yes / yes | none | none | 0 | a real mismatch has not been seen; every download in the corpus matched the registry |
 | GRN-C001 new-pth-file | yes / yes | elementary-data 0.23.3, litellm 1.82.8; in #31 gpsea 0.9.14, pyphetools 0.9.120 and ppkt2synergy 0.1.1 (the Hades campaign), and embiggen 0.11.97 once #33 lands | none (no top-100 release added a `.pth`) | 0 | — |
-| GRN-C002 new-build-hook | yes / yes | memoryos 2.0.34 (#31); nx 21.5.0 and @ctrl/tinycolor 4.1.1 on npm, through install scripts | 5 in the corpus, every one an in-tree build backend or a version read in `setup.py` (accurate) | 5 warns, accurate; 7 with #33 (pycparser 2.19 and multidict 7.1.0 each added a build-time subprocess call, accurate) | a real PyPI attack through a `cmdclass` install hook, the classic shape |
+| GRN-C002 new-build-hook | yes / yes (PyPI: `setup.py` and the build backend; npm: install scripts) | memoryos 2.0.34 (#31); nx 21.5.0 and @ctrl/tinycolor 4.1.1 on npm, through install scripts | 5 in the corpus, every one an in-tree build backend or a version read in `setup.py` (accurate) | 5 warns, accurate; 7 with #33 (pycparser 2.19 and multidict 7.1.0 each added a build-time subprocess call, accurate) | a real PyPI attack through a `cmdclass` install hook, the classic shape |
 | GRN-C003 new-import-time-exec | yes / yes | lightning 2.6.2 and 2.6.3, litellm 1.82.7 and 1.82.8, telnyx 4.87.1 and 4.87.2, ultralytics 8.3.45 and 8.3.46; in #31 xinference 2.6.0–2.6.2, mistralai 2.4.6, guardrails-ai 0.10.1 and durabletask 1.4.1–1.4.3, and with #34 num2words 0.5.15 and 0.5.16 and memoryos 2.0.34 | requests 2.32.2, typing-inspection 0.1.0, wheel 0.45.0 (accurate) | 3 warns, accurate (unchanged by #32) | — |
 | GRN-K001 known-malicious | yes / yes | off in the backtest by design (the question is what Garnet catches before a feed lists a release) | none | n/a | the live OSV lookup has not been exercised in any recorded run; the cloud sandbox cannot reach api.osv.dev. Run `garnet diff` on a listed release from a machine that can |
 | GRN-E001 fetch-failed | yes / yes | the replays (provenance of a removed release is unknown) | 1 in the corpus (a tag lookup) | 1 | — |
