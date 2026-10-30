@@ -319,7 +319,7 @@ src/garnet_guard/
   models.py  policy.py  baseline.py  engine.py
   net.py  safe_archive.py  cache.py
   lockfiles/   uv.py poetry.py pylock.py requirements.py npm_lock.py pnpm.py yarn.py
-  ecosystems/  pypi.py npm.py github.py osv.py
+  ecosystems/  pypi.py npm.py github.py gittree.py source.py osv.py
   facts/       inventory.py pyindex.py npmmeta.py
   checks/      trust.py content.py known_bad.py errors.py __init__.py
   report/      text.py json.py sarif.py markdown.py schema/report-v1.json

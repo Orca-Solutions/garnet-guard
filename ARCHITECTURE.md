@@ -113,6 +113,7 @@ IDs are stable forever. A retired rule keeps its ID reserved. Exact firing condi
 | GRN-C004 | new-binary | New native binaries or executables not explained by the build (e.g. outside the platform wheel's normal extension modules). |
 | GRN-C005 | obfuscated-blob | New long base64/hex/compressed literals, especially passed to exec or decode. |
 | GRN-C006 | sdist-wheel-mismatch | Wheel contains files with no counterpart in the sdist. |
+| GRN-C007 | code-not-in-source | A Python file in the release isn't the one at its git tag and has sensitive calls the source lacks (code injected by the build, as in ultralytics 8.3.42). |
 | GRN-T007 | invalid-attestation | An attestation exists but fails verification (blocks by default). |
 | GRN-T008 | hash-mismatch | A download doesn't match the registry's published hash (blocks by default). |
 | GRN-K001 | known-malicious | OSV `MAL-` advisory for this package version. |

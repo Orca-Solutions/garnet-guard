@@ -135,6 +135,22 @@ _DOCS: tuple[RuleDoc, ...] = (
         "whether the release notes explain them.",
     ),
     RuleDoc(
+        "GRN-C007",
+        "code-not-in-source",
+        "diff",
+        W,
+        "A Python file in the new version is not the file at the release's git tag, and it has calls "
+        "that run processes, load code or use the network which the source file doesn't.",
+        "A release is built from its tagged source, so every Python file in the wheel should be in the "
+        "repository at that tag. Generated files differ all the time and have no such calls, so the rule "
+        "stays quiet on them. ultralytics 8.3.42 was built by the project's own CI after an attacker "
+        "poisoned its cache: the wheel was attested and tagged, and the code that downloaded a miner "
+        "was in two files that were never committed.",
+        "Open the flagged line and the same file at the tag (linked in the evidence). If the build "
+        "generates that code on purpose, add a time-limited ignore with the reason. If not, don't "
+        "merge, and tell the maintainers: their build, not their repository, produced the release.",
+    ),
+    RuleDoc(
         "GRN-K001",
         "known-malicious",
         "absolute",

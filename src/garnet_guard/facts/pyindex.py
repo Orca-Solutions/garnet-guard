@@ -246,3 +246,37 @@ def module_name(path: str) -> str:
     if p.endswith("/__init__"):
         p = p[: -len("/__init__")]
     return p.replace("/", ".")
+
+
+def sensitive_calls(
+    source: bytes, *, path: str = "<module>", own: frozenset[str] = frozenset()
+) -> tuple[CallSite, ...]:
+    """Every sensitive call in a module, wherever it sits, with its function.
+
+    ``index_module`` asks what runs at import. This asks what the file can do
+    at all: GRN-C007 compares a published file with the same file in the
+    source repository, where a call that only exists in the published copy
+    matters whether or not anything calls it at import.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        tree = ast.parse(source, filename=path)
+    resolver = _Resolver()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            resolver.note_import(node)
+    calls: list[CallSite] = []
+
+    def visit(node: ast.AST, via: str | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(child, child.name)
+                continue
+            if isinstance(child, ast.Call):
+                name = resolver.resolve(child.func)
+                if name is not None and name.split(".")[0] not in own and is_sensitive(name, child):
+                    calls.append(CallSite(name=name, line=child.lineno, via=via))
+            visit(child, via)
+
+    visit(tree, None)
+    return tuple(sorted(set(calls), key=lambda c: (c.line, c.name, c.via or "")))

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 from ..models import CallSite, FactError, FileEntry, FileKind, Limits, ModuleIndex, PthFile
 from ..safe_archive import ArchiveError, LimitExceeded, open_archive
-from .pyindex import index_module, module_name
+from .pyindex import index_module, module_name, sensitive_calls
 
 _NATIVE_EXT = (".so", ".pyd", ".dylib", ".dll", ".exe")
 _NATIVE_MAGIC = (b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
@@ -27,6 +27,12 @@ class Inspection:
     unparsed: list[str] = field(default_factory=list)
     entry_points: set[str] = field(default_factory=set)
     errors: list[FactError] = field(default_factory=list)
+
+
+def git_blob_id(data: bytes) -> str:
+    """The id git gives a file with these bytes (GRN-C007 compares it with the
+    source tree). Git names objects by SHA-1; it is an identifier, not a check."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()  # noqa: S324
 
 
 def _kind(path: str, head: bytes) -> FileKind:
@@ -117,7 +123,10 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                 if sdist and rel == "setup.py":
                     result.setup_py_calls = calls
                 else:
-                    result.modules.append(ModuleIndex(mod, rel, calls, imports))
+                    anywhere = sensitive_calls(body, path=rel, own=own)
+                    result.modules.append(
+                        ModuleIndex(mod, rel, calls, imports, git_blob_id(body), anywhere)
+                    )
             elif sdist and rel == "pyproject.toml":
                 result.build_backend = _build_backend(body)
                 result.entry_points |= _pyproject_entry_points(body)
