@@ -1,0 +1,53 @@
+{
+  "updates": 9439,
+  "packages": 975,
+  "updates_warned": 221,
+  "warn_rate": 0.0234,
+  "packages_with_a_warn": 173,
+  "warns_by_rule": {
+    "GRN-C003": {
+      "updates": 66,
+      "packages": 53
+    },
+    "GRN-C002": {
+      "updates": 57,
+      "packages": 51
+    },
+    "GRN-T004": {
+      "updates": 49,
+      "packages": 39
+    },
+    "GRN-T001": {
+      "updates": 18,
+      "packages": 18
+    },
+    "GRN-T003": {
+      "updates": 16,
+      "packages": 14
+    },
+    "GRN-T002": {
+      "updates": 14,
+      "packages": 13
+    },
+    "GRN-C001": {
+      "updates": 3,
+      "packages": 3
+    }
+  },
+  "updates_with_coverage_gaps": 297,
+  "coverage_gaps_by_rule": {
+    "GRN-E001": 147,
+    "GRN-E002": 143,
+    "GRN-E003": 11
+  },
+  "garnet_version": "0.1.0a1",
+  "ecosystem": "pypi",
+  "corpus": {
+    "selected_on": "2026-10-30",
+    "rule": "last 11 final, non-yanked releases by version",
+    "top_list": {
+      "source": "https://raw.githubusercontent.com/hugovk/top-pypi-packages/main/top-pypi-packages-30-days.min.json",
+      "last_update": "2026-10-01 12:40:51"
+    }
+  }
+}

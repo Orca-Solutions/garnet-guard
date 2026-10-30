@@ -102,6 +102,7 @@ We fed the original malicious files from the 2026 PyPI compromises through `garn
 | telnyx 4.87.0 → 4.87.1 | warn | GRN-C003 `subprocess.Popen` reached at import in `telnyx/_client.py:7810`; GRN-T004 no tag `v4.87.1` |
 | telnyx 4.87.0 → 4.87.2 | warn | GRN-C003 `subprocess`, `urllib.request` reached at import in `telnyx/_client.py`; GRN-T004 no tag `v4.87.2` |
 | 20 clean updates ([list](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/clean.toml)) | 0 warn | none |
+| 9,439 updates of the top 1,000 PyPI packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-pypi-1000/REPORT.md)) | 221 flagged for a look (2.3%); none makes a false claim | GRN-C003 66, GRN-C002 57, GRN-T004 49, GRN-T001 18, GRN-T003 16, GRN-T002 14, GRN-C001 3 |
 
 The same replay covers the npm account takeovers of August and September 2025. npm deletes the tarball of a removed version, so these use the registry facts the public write-ups recorded (provenance present or not, the `package.json` scripts) and fetch the previous release and the repository's tags live. The malicious tarballs were not inspected.
 
@@ -111,7 +112,7 @@ The same replay covers the npm account takeovers of August and September 2025. n
 | debug 4.4.1 → 4.4.2 | warn | GRN-T004 no tag `4.4.2` |
 | nx 21.4.1 → 21.5.0 | warn | GRN-T001 21.4.1 had provenance, 21.5.0 has none; GRN-C002 `postinstall` became `node telemetry.js`; GRN-T004 no tag |
 | @ctrl/tinycolor 4.1.0 → 4.1.1 | warn | GRN-C002 new `postinstall` running `node bundle.js`; GRN-T004 no tag |
-| 1,809 updates of the top 200 npm packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-npm/REPORT.md)) | 33 warn (1.8%) | GRN-T004 25, GRN-T001 5, GRN-T002 2, GRN-T003 1 |
+| 8,742 updates of the top 1,000 npm packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-npm-1000/REPORT.md)) | 146 flagged for a look (1.7%); none makes a false claim | GRN-T004 89, GRN-T001 48, GRN-T002 3, GRN-C002 3, GRN-T003 2, GRN-T005 1 |
 
 Limits, stated plainly:
 - GRN-T001 (lost provenance) couldn't fire in any case, because none of these projects signed its releases before the attack.
@@ -119,7 +120,7 @@ Limits, stated plainly:
 - GRN-T004 couldn't fire for litellm, which doesn't tag plain version numbers.
 - In telnyx 4.87.1 a typo stopped the payload from running. GRN-C003 reads code; it reports what the module calls at import, not whether the call would succeed.
 - The litellm 1.82.7 and telnyx 4.87.1 sdists aren't replayed, because no public source gives their URLs. The wheels are, and content rules compare wheels.
-- Twenty clean updates is a small sample. The month-2 backtest covers the last ~20 releases of the top ~500 PyPI packages.
+- Twenty clean updates is a small sample. The clean-corpus backtests cover the last 11 releases of the top 1,000 PyPI and npm packages: every warning there states something true, but none of those updates is malicious, so each is a false alarm a reviewer has to dismiss.
 - chalk and debug are reported by the missing tag alone: they never used provenance, and the one changed file, `index.js`, is gone from the registry. A JavaScript content rule is still to come.
 
 Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightning](https://snyk.io/blog/lightning-pypi-compromise-bun-based-credential-stealer), [CSA on elementary-data](https://labs.cloudsecurityalliance.org/research/csa-research-note-pypi-elementarydata-supply-chain-20260429/), [PyPI's incident report on litellm and telnyx](https://blog.pypi.org/posts/2026-04-02-incident-report-litellm-telnyx-supply-chain-attack/), and the files from DataDog's malicious-software-packages dataset.
