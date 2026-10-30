@@ -12,6 +12,7 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 
 ### Changed
 
+- GRN-C007 reads a published file back and indexes its calls only when the file isn't in the source tree, after the tag lookup, instead of indexing every file at inspection. A release from a large repository (transformers ships 5,600 Python files) costs one hash per file and one tree fetch, not a second parse of everything.
 - GRN-T004 reads more tag forms: `X` or `vX` after a prefix that names the package or is `release`, joined by `-`, `_`, `==` or `/` (and `@` for npm), as in `release-v1.0.0`, `azure-mgmt-core_1.1.0` and `prebuilt==1.0.11`. A monorepo's folder or `==` prefix may use the end of the name (`api/v1.4.1`, `utils/v2.8.1`) when the repository never tags the package by its full name. The top-1,000 corpora found 16 releases that it wrongly said had no tag.
 - GRN-T001 on npm says "no attestation served", with the HTTP status, when a version document lists an attestation that the registry's attestations endpoint doesn't serve (whatwg-url 17.1.1).
 

@@ -5,12 +5,12 @@ from __future__ import annotations
 import hashlib
 import re
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 
 from ..models import CallSite, FactError, FileEntry, FileKind, Limits, ModuleIndex, PthFile
-from ..safe_archive import ArchiveError, LimitExceeded, open_archive
-from .pyindex import ModuleScan, index_build_script, module_name, scan_module, sensitive_calls
+from ..safe_archive import ArchiveError, ArchiveReader, LimitExceeded, open_archive
+from .pyindex import ModuleScan, index_build_script, module_name, scan_module
 
 _NATIVE_EXT = (".so", ".pyd", ".dylib", ".dll", ".exe")
 _SITE_PREFIX = re.compile(r"^[^/]+\.data/(purelib|platlib)/")
@@ -140,12 +140,11 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                         result.setup_py_calls = index_build_script(body)
                         continue
                     scan = scan_module(body, path=rel, own=own, module=mod)
-                    anywhere = sensitive_calls(body, path=rel, own=own)
                 except (SyntaxError, ValueError, RecursionError):
                     result.unparsed.append(rel)
                     continue
                 result.modules.append(
-                    ModuleIndex(mod, rel, scan.calls, scan.imports, git_blob_id(body), anywhere)
+                    ModuleIndex(mod, rel, scan.calls, scan.imports, git_blob_id(body))
                 )
                 sources[mod] = body
                 calls_out[mod] = scan.calls_out
@@ -165,6 +164,25 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
     result.pth_files.sort(key=lambda p: p.path)
     result.unparsed.sort()
     return result
+
+
+def file_reader(
+    filename: str, data: bytes, limits: Limits, *, sdist: bool
+) -> Callable[[str], bytes]:
+    """Read single files back from an artifact, by the paths ``inspect_artifact``
+    recorded. GRN-C007 uses it after the tag lookup to index only the files
+    that aren't in the source tree. The archive is opened on first use."""
+    opened: list[tuple[ArchiveReader, str]] = []
+
+    def read(rel: str) -> bytes:
+        if not opened:
+            reader = open_archive(data, filename, limits)
+            paths = [e.path for e in reader.entries()]
+            opened.append((reader, _strip_prefix(paths) if sdist else ""))
+        reader, prefix = opened[0]
+        return reader.read(prefix + rel)
+
+    return read
 
 
 def _callee(name: str, modules: Mapping[str, bytes]) -> tuple[str, str] | None:

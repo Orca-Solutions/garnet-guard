@@ -10,9 +10,10 @@ from typing import Any
 from packaging.tags import sys_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
-from ..facts.inventory import inspect_artifact
+from ..facts.inventory import file_reader, inspect_artifact
 from ..models import ArtifactFacts, FactError, FileProvenance, Limits, ReleaseFacts
 from ..net import Http, NetError
+from ..safe_archive import ArchiveError
 from . import github, gittree, osv, source
 from .provenance import verify_provenance
 
@@ -196,6 +197,7 @@ def release_facts(
     selected = {s for s in sdists[:1]} | ({wheel} if wheel else set())
 
     artifacts: list[ArtifactFacts] = []
+    payloads: dict[str, tuple[bytes, bool]] = {}  # inspected bytes, kept for GRN-C007
     for f in sorted(files, key=lambda x: x.filename):
         art = ArtifactFacts(
             filename=f.filename,
@@ -205,8 +207,10 @@ def release_facts(
             provenance=provenance.get(f.filename),
         )
         if f.filename in selected:
-            art, errs = _inspect(ctx, f, art)
+            art, errs, payload = _inspect(ctx, f, art)
             errors.extend(errs)
+            if payload is not None:
+                payloads[f.filename] = (payload, f.packagetype == "sdist")
         artifacts.append(art)
 
     # The attested repository beats project URLs, which anyone can edit.
@@ -248,12 +252,17 @@ def release_facts(
                 art.filename.endswith(".whl") or (wheel is None and art.packagetype == "sdist")
             ):
                 continue
+            data, is_sdist = payloads[art.filename]
+            source_of = file_reader(art.filename, data, ctx.limits, sdist=is_sdist)
             try:
-                match = source.match_artifact(ctx.trees, tag, art)
+                match = source.match_artifact(ctx.trees, tag, art, source_of)
             except NetError as err:
                 errors.append(
                     FactError("GRN-E001", f"source at tag {tag.name}: {err}", ("GRN-C007",))
                 )
+                break
+            except ArchiveError as err:
+                errors.append(FactError("GRN-E001", f"{art.filename}: {err}", ("GRN-C007",)))
                 break
             if match.unchecked:
                 errors.append(
@@ -266,6 +275,7 @@ def release_facts(
                 )
             artifacts[i] = replace(art, source_match=match)
             break
+    payloads.clear()
 
     mal: tuple[str, ...] = ()
     advisories_checked = False
@@ -295,22 +305,23 @@ def release_facts(
 
 def _inspect(
     ctx: FetchContext, f: RegistryFile, art: ArtifactFacts
-) -> tuple[ArtifactFacts, list[FactError]]:
+) -> tuple[ArtifactFacts, list[FactError], bytes | None]:
     """Download one artifact, check its hash, then read its contents.
 
     A file whose hash doesn't match the registry's is not read; GRN-T008
-    reports it.
+    reports it. The bytes come back with the facts when they were read, so
+    GRN-C007 can look at single files again after the tag lookup.
     """
     try:
         resp = ctx.http.get(f.url, max_bytes=ctx.limits.max_artifact_bytes)
     except NetError as err:
-        return art, [FactError("GRN-E001", f"download {f.filename}: {err}", CONTENT_RULES)]
+        return art, [FactError("GRN-E001", f"download {f.filename}: {err}", CONTENT_RULES)], None
     if resp.status != 200:
         msg = f"download {f.filename}: HTTP {resp.status}"
-        return art, [FactError("GRN-E001", msg, CONTENT_RULES)]
+        return art, [FactError("GRN-E001", msg, CONTENT_RULES)], None
     digest = hashlib.sha256(resp.content).hexdigest()
     if digest != f.sha256.lower():
-        return replace(art, inspected=True, downloaded_sha256=digest), []
+        return replace(art, inspected=True, downloaded_sha256=digest), [], None
     ins = inspect_artifact(f.filename, resp.content, ctx.limits, sdist=f.packagetype == "sdist")
     wheel_tag = None
     if f.filename.endswith(".whl"):
@@ -334,6 +345,7 @@ def _inspect(
             wheel_tag=wheel_tag,
         ),
         ins.errors,
+        resp.content,
     )
 
 
