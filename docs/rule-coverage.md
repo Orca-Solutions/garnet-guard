@@ -56,7 +56,8 @@ four false GRN-C003 claims (a local list called `requests`, a package's own `com
 file renamed with a leading underscore, a trusted copy that couldn't be parsed) and three
 kinds of warning a reviewer cannot act on (a function handed to a call that may never run it,
 a chain that starts in a test file, sdist files outside the package); #38 fixes the four and
-moves the three to `info`.
+moves the three to `info`. On the 974-update corpus #38 changes no verdict (18 → 18); the
+seven GRN-C003 warns all stay at `warn`, so none rested on a kind it moves to `info`.
 
 | Shape | Rule | What happened | Fix |
 |---|---|---|---|
