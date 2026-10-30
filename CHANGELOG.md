@@ -11,6 +11,9 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 ### Changed
 
 - GRN-C003 follows more of what runs at import: lambdas that are called or passed to a call, classes that are instantiated (their `__init__`) and methods called on them, names pulled in by `from os import *`, and `getattr(os, "system")`, `__import__("os")` or `importlib.import_module("os")` with a literal name. A `base64` decode whose result reaches `exec` or another sensitive call is reported as a call of its own, so a release that starts decoding what it executes is flagged even where `exec` was already used. Sensitive set version `2026-10-b`.
+- GRN-C002 reads the whole of `setup.py`, not only what runs at import, so a `cmdclass` install hook that runs a command is reported (with the function it sits in). When the trusted version shipped no sdist, every build-time call in the new sdist is new; when the trusted sdist exists but couldn't be read, GRN-E001 reports that instead.
+- GRN-C001 compares `.pth` files by where they land in `site-packages`: a file under `<name>-<version>.data/purelib/` is the same file release after release, a `.pth` deeper in the package (which Python never reads) is ignored, and a renamed `.pth` with the same `import` lines is not new. Modules under `.data/purelib/` keep their names across versions for GRN-C003.
+- When the trusted version ships only a wheel and the new one only an sdist (or the reverse), the content rules compare the two kinds with each other and say so, instead of comparing nothing.
 
 ## 0.1.0a1
 

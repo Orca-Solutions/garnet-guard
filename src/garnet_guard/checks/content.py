@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 
 from ..models import (
@@ -15,6 +16,8 @@ from ..models import (
 )
 
 MAX_EVIDENCE = 25  # evidence lines per finding; the rest are counted, not listed
+# A wheel's <name>-<version>.data/purelib/ and platlib/ install into site-packages itself.
+_SITE_PREFIX = re.compile(r"^[^/]+\.data/(purelib|platlib)/")
 
 # Well-known build backends. A switch to one of these isn't GRN-C002; a switch
 # to anything else, or to a backend shipped inside the sdist, is.
@@ -53,19 +56,39 @@ def _pick(rel: ReleaseFacts, kind: str) -> ArtifactFacts | None:
 def _pair(
     base: ReleaseFacts, cand: ReleaseFacts
 ) -> tuple[ArtifactFacts | None, ArtifactFacts | None]:
-    """The artifacts to compare: wheels when both have one, else sdists."""
+    """The artifacts to compare: wheels when both have one, else sdists.
+
+    When neither pairing is possible (the trusted version shipped only a
+    wheel and the new one only an sdist, or the other way round) the two
+    kinds are compared with each other, with a note, rather than not at all.
+    """
     bw, cw = _pick(base, "wheel"), _pick(cand, "wheel")
     if bw is not None and cw is not None:
         return bw, cw
-    return _pick(base, "sdist"), _pick(cand, "sdist")
+    bs, cs = _pick(base, "sdist"), _pick(cand, "sdist")
+    if bs is not None and cs is not None:
+        return bs, cs
+    return bw or bs, cw or cs
 
 
 def _clip(text: str, n: int = 160) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def _tag_note(b: ArtifactFacts, c: ArtifactFacts) -> tuple[Evidence, ...]:
-    """A note when the two wheels compared were built for different platforms."""
+def _site_name(path: str) -> str:
+    """A wheel path as it lands in site-packages (see ``facts.inventory.site_path``)."""
+    return _SITE_PREFIX.sub("", path)
+
+
+def _compare_note(b: ArtifactFacts, c: ArtifactFacts) -> tuple[Evidence, ...]:
+    """A note when the two files compared aren't like for like."""
+    if b.packagetype != c.packagetype:
+        return (
+            Evidence(
+                "note",
+                f"compared {c.filename} with {b.filename}: the releases ship different kinds of files",
+            ),
+        )
     if b.wheel_tag and c.wheel_tag and b.wheel_tag != c.wheel_tag:
         return (
             Evidence(
@@ -84,11 +107,15 @@ def new_pth_file(
     b, c = _pair(base, cand)
     if b is None or c is None:
         return
-    old = {p.path: p for p in b.pth_files}
+    old = {_site_name(p.path): p for p in b.pth_files}
+    old_lines = {p.exec_lines for p in b.pth_files if p.exec_lines}
     evidence: list[Evidence] = []
     for p in c.pth_files:
         size = next((f.size for f in c.files if f.path == p.path), 0)
-        if p.path not in old:
+        name = _site_name(p.path)
+        if name not in old:
+            if p.exec_lines in old_lines:
+                continue  # renamed (protobuf-<version>-nspkg.pth), same lines
             first = p.exec_lines[0] if p.exec_lines else "(no executable lines)"
             evidence.append(
                 Evidence(
@@ -99,7 +126,7 @@ def new_pth_file(
                 )
             )
         else:
-            gained = [x for x in p.exec_lines if x not in old[p.path].exec_lines]
+            gained = [x for x in p.exec_lines if x not in old[name].exec_lines]
             if gained:
                 evidence.append(
                     Evidence(
@@ -112,7 +139,7 @@ def new_pth_file(
         yield RawFinding(
             "GRN-C001",
             f"{cand.version} adds code that runs at every Python startup (.pth)",
-            tuple(evidence[:MAX_EVIDENCE]) + _tag_note(b, c),
+            tuple(evidence[:MAX_EVIDENCE]) + _compare_note(b, c),
         )
 
 
@@ -122,32 +149,45 @@ def new_build_hook(
     """GRN-C002: new sensitive calls in setup.py, or a new unusual build backend.
 
     Only sdists are compared: a wheel is already built. For npm the rule
-    compares install-time scripts instead (``_new_install_script``).
+    compares install-time scripts instead (``_new_install_script``). A
+    trusted version that shipped no sdist had no build code at all, so
+    every build-time call in the new sdist is new.
     """
     if base is None:
         return
     if change.ecosystem == "npm":
         yield from _new_install_script(base, cand)
         return
-    b, c = _pick(base, "sdist"), _pick(cand, "sdist")
-    if b is None or c is None:
+    c = _pick(cand, "sdist")
+    if c is None:
         return
+    b = _pick(base, "sdist")
+    if b is None and any(a.packagetype == "sdist" for a in base.artifacts):
+        return  # the trusted sdist couldn't be read; GRN-E001 says so
     evidence: list[Evidence] = []
-    old_names = {s.name for s in b.setup_py_calls}
+    old_names = {s.name for s in b.setup_py_calls} if b is not None else set()
+    old_backend = b.build_backend if b is not None else None
     for s in c.setup_py_calls:
         if s.name not in old_names:
+            via = f" (in {s.via}())" if s.via else ""
             evidence.append(
-                Evidence("file", f"setup.py:{s.line} calls {s.name}", path="setup.py", line=s.line)
+                Evidence(
+                    "file", f"setup.py:{s.line} calls {s.name}{via}", path="setup.py", line=s.line
+                )
             )
-    if c.build_backend != b.build_backend and c.build_backend is not None:
+    if c.build_backend != old_backend and c.build_backend is not None:
         if c.build_backend.startswith("in-tree:") or c.build_backend not in BACKEND_ALLOWLIST:
             evidence.append(
                 Evidence(
                     "file",
-                    f"build backend {b.build_backend or 'default'} → {c.build_backend}",
+                    f"build backend {old_backend or 'default'} → {c.build_backend}",
                     path="pyproject.toml",
                 )
             )
+    if evidence and b is None:
+        evidence.append(
+            Evidence("note", f"{base.version} shipped no sdist, so it had no build-time code")
+        )
     if evidence:
         yield RawFinding(
             "GRN-C002",
@@ -307,7 +347,7 @@ def new_import_time_exec(
         yield RawFinding(
             "GRN-C003",
             title,
-            tuple(evidence[:MAX_EVIDENCE]) + tail + note + _tag_note(b, c),
+            tuple(evidence[:MAX_EVIDENCE]) + tail + note + _compare_note(b, c),
             lowered_to=Severity.INFO if test_only else None,
         )
 

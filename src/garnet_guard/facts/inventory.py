@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import tomllib
 from dataclasses import dataclass, field
 
 from ..models import CallSite, FactError, FileEntry, FileKind, Limits, ModuleIndex, PthFile
 from ..safe_archive import ArchiveError, LimitExceeded, open_archive
-from .pyindex import index_module, module_name
+from .pyindex import index_build_script, index_module, module_name
 
 _NATIVE_EXT = (".so", ".pyd", ".dylib", ".dll", ".exe")
+_SITE_PREFIX = re.compile(r"^[^/]+\.data/(purelib|platlib)/")
 _NATIVE_MAGIC = (b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
 _SCRIPT_EXT = (".sh", ".bash", ".bat", ".cmd", ".ps1", ".js", ".mjs", ".cjs", ".vbs")
 
@@ -51,6 +53,16 @@ def _strip_prefix(paths: list[str]) -> str:
     if len(tops) == 1 and all("/" in p for p in paths):
         return next(iter(tops)) + "/"
     return ""
+
+
+def site_path(path: str) -> str:
+    """Where a wheel file lands relative to site-packages.
+
+    ``demo-1.1.data/purelib/demo.pth`` installs as ``demo.pth``; the folder
+    name carries the version, so comparing releases by it would see every
+    file as new.
+    """
+    return _SITE_PREFIX.sub("", path)
 
 
 def exec_lines(pth: bytes) -> tuple[str, ...]:
@@ -94,8 +106,12 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
             body = reader.read(entry.path)
             kind = _kind(rel, body[:4])
             result.files.append(FileEntry(rel, len(body), hashlib.sha256(body).hexdigest(), kind))
+            site = rel if sdist else site_path(rel)
             if kind == "pth":
-                result.pth_files.append(PthFile(rel, exec_lines(body)))
+                # In a wheel only a .pth that lands in site-packages itself runs:
+                # at the wheel root or at the root of .data/purelib or platlib.
+                if sdist or "/" not in site:
+                    result.pth_files.append(PthFile(rel, exec_lines(body)))
             elif kind == "py":
                 if len(body) > limits.max_py_file_bytes:
                     result.errors.append(
@@ -107,17 +123,17 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                         )
                     )
                     continue
-                mod_path = rel[4:] if sdist and rel.startswith("src/") else rel
+                mod_path = site[4:] if sdist and site.startswith("src/") else site
                 mod = module_name(mod_path)
                 try:
+                    if sdist and rel == "setup.py":
+                        result.setup_py_calls = index_build_script(body)
+                        continue
                     calls, imports = index_module(body, path=rel, own=own, module=mod)
                 except (SyntaxError, ValueError, RecursionError):
                     result.unparsed.append(rel)
                     continue
-                if sdist and rel == "setup.py":
-                    result.setup_py_calls = calls
-                else:
-                    result.modules.append(ModuleIndex(mod, rel, calls, imports))
+                result.modules.append(ModuleIndex(mod, rel, calls, imports))
             elif sdist and rel == "pyproject.toml":
                 result.build_backend = _build_backend(body)
                 result.entry_points |= _pyproject_entry_points(body)

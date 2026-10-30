@@ -411,3 +411,36 @@ def module_name(path: str) -> str:
     if p.endswith("/__init__"):
         p = p[: -len("/__init__")]
     return p.replace("/", ".")
+
+
+def index_build_script(source: bytes, *, path: str = "setup.py") -> tuple[CallSite, ...]:
+    """Every sensitive call in a build script, at any depth. Raises SyntaxError/ValueError.
+
+    ``setup.py`` runs as a script when the sdist is built, and a ``cmdclass``
+    hook in it runs at install, so a call inside a function or a method counts
+    too. ``via`` names the enclosing function or ``Class.method``.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        tree = ast.parse(source, filename=path)
+    resolver = _Resolver()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            resolver.note_import(node)
+    calls: list[CallSite] = []
+
+    def visit(node: ast.AST, via: str | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(child, f"{via}.{child.name}" if via else child.name)
+            elif isinstance(child, ast.ClassDef):
+                visit(child, child.name)
+            else:
+                if isinstance(child, ast.Call):
+                    name = resolver.resolve(child.func)
+                    if name is not None and is_sensitive(name, child):
+                        calls.append(CallSite(name=name, line=child.lineno, via=via))
+                visit(child, via)
+
+    visit(tree, None)
+    return tuple(sorted(set(calls), key=lambda c: (c.line, c.name, c.via or "")))

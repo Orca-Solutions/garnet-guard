@@ -19,6 +19,11 @@ status: implemented
 The new version contains a `.pth` file at a path the trusted version didn't have, or an
 existing `.pth` file gained executable lines (lines starting with `import`).
 
+In a wheel, only a `.pth` that lands in `site-packages` itself counts: at the wheel's root
+or at the root of its `<name>-<version>.data/purelib/` or `platlib/` folder (the folder's
+version is ignored when comparing releases). A `.pth` deeper in the package is never read by
+Python. A `.pth` that was only renamed, with the same `import` lines as before, is not new.
+
 ## Why it matters
 
 Python runs the `import` lines of every `.pth` file in site-packages each time the
