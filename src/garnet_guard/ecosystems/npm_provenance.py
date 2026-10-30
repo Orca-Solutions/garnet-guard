@@ -28,7 +28,13 @@ from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from OpenSSL.crypto import X509, X509Store, X509StoreContext, X509StoreContextError, X509StoreFlags
+from cryptography.x509.verification import (
+    Criticality,
+    ExtensionPolicy,
+    PolicyBuilder,
+    Store,
+)
+from cryptography.x509.verification import VerificationError as X509VerificationError
 from sigstore._internal.trust import KeyringPurpose
 from sigstore._utils import KeyID
 from sigstore.errors import VerificationError
@@ -165,16 +171,26 @@ def _verify_intoto_entry(cert: x509.Certificate, raw: dict[str, Any], root: Trus
         raise ProvenanceError(f"log entry timestamp: {err}") from err
 
     # The certificate chains to a Fulcio root and was valid when the entry was
-    # logged. OpenSSL does the path validation, as in sigstore's own verifier;
-    # cryptography's verifier only accepts TLS certificates.
-    store = X509Store()
-    store.set_flags(X509StoreFlags.X509_STRICT)
-    for ca in root.get_fulcio_certs():
-        store.add_cert(X509.from_cryptography(ca))
-    store.set_time(integrated)
+    # logged. cryptography's verifier does the path validation, as sigstore's
+    # own does. Its client profile wants a TLS client EKU, which Fulcio
+    # certificates don't carry (they are code-signing certificates), so only
+    # the extended-key-usage check is relaxed; the rest of the profile stays.
+    ca_policy = ExtensionPolicy.webpki_defaults_ca().may_be_present(
+        x509.ExtendedKeyUsage, Criticality.NON_CRITICAL, None
+    )
+    ee_policy = ExtensionPolicy.webpki_defaults_ee().may_be_present(
+        x509.ExtendedKeyUsage, Criticality.NON_CRITICAL, None
+    )
+    verifier = (
+        PolicyBuilder()
+        .store(Store(root.get_fulcio_certs()))
+        .time(integrated)
+        .extension_policies(ca_policy=ca_policy, ee_policy=ee_policy)
+        .build_client_verifier()
+    )
     try:
-        X509StoreContext(store, X509.from_cryptography(cert)).verify_certificate()
-    except X509StoreContextError as err:
+        verifier.verify(cert, [])
+    except (X509VerificationError, x509.UnsupportedGeneralNameType) as err:
         raise ProvenanceError(f"certificate chain: {err}"[:300]) from err
     if not (cert.not_valid_before_utc <= integrated <= cert.not_valid_after_utc):
         raise ProvenanceError("certificate was not valid when the entry was logged")
