@@ -25,7 +25,7 @@ from . import github, gittree, osv, source
 from .provenance import verify_provenance
 
 TRUST_RULES = ("GRN-T001", "GRN-T002", "GRN-T003", "GRN-T005", "GRN-T007")
-CONTENT_RULES = ("GRN-C001", "GRN-C002", "GRN-C003", "GRN-C007")
+CONTENT_RULES = ("GRN-C001", "GRN-C002", "GRN-C003", "GRN-C004", "GRN-C007")
 
 
 @dataclass(frozen=True)

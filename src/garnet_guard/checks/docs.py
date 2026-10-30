@@ -161,6 +161,23 @@ _DOCS: tuple[RuleDoc, ...] = (
         "release wrote them.",
     ),
     RuleDoc(
+        "GRN-C004",
+        "new-binary",
+        "diff",
+        W,
+        "The new version adds native code or bytecode the rules can't read: native code under a "
+        "name that says otherwise (a DLL named .py), any native code when the trusted release "
+        "shipped none, a .pyc with no source beside it, or an unchecked .pyc that Python loads "
+        "in place of its source. A new library in a new folder of a release that already "
+        "shipped native code is reported at info.",
+        "Content rules read Python source. A payload compiled into a library, or shipped as "
+        "bytecode, is invisible to them, and Python loads both. num2words 0.5.15 shipped a "
+        "Windows DLL named _build.py and loaded it at import.",
+        "Find out why the release needs the file: a new compiled module should appear in the "
+        "project's repository, in its build configuration and the CI that builds it. If nothing "
+        "there explains a binary, or the file's name hides what it is, don't merge.",
+    ),
+    RuleDoc(
         "GRN-C007",
         "code-not-in-source",
         "diff",
@@ -296,4 +313,4 @@ DOCS: dict[str, RuleDoc] = {d.rule_id: d for d in _DOCS}
 
 # Rules in the SPEC §6.2 catalog that aren't built yet. A policy may already
 # name them; they produce no findings until they ship.
-PLANNED: frozenset[str] = frozenset({"GRN-C004", "GRN-C005", "GRN-C006"})
+PLANNED: frozenset[str] = frozenset({"GRN-C005", "GRN-C006"})

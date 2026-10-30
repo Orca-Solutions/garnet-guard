@@ -30,7 +30,18 @@ from .pyindex import ModuleScan, index_build_script, module_name, scan_module
 
 _NATIVE_EXT = (".so", ".pyd", ".dylib", ".dll", ".exe")
 _SITE_PREFIX = re.compile(r"^[^/]+\.data/(purelib|platlib)/")
-_NATIVE_MAGIC = (b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
+# Mach-O: 64- and 32-bit, little- and big-endian, and the universal ("fat")
+# headers, 32- and 64-bit, that hold one slice per architecture.
+_MACHO_MAGIC = (
+    b"\xcf\xfa\xed\xfe",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+    b"\xfe\xed\xfa\xce",
+    b"\xca\xfe\xba\xbe",
+    b"\xca\xfe\xba\xbf",
+)
+# The rules that read the files of an archive Garnet couldn't read to the end.
+_ARCHIVE_RULES = ("GRN-C001", "GRN-C003", "GRN-C004")
 _SCRIPT_EXT = (".sh", ".bash", ".bat", ".cmd", ".ps1", ".js", ".mjs", ".cjs", ".vbs")
 
 
@@ -56,16 +67,52 @@ def git_blob_id(data: bytes) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()  # noqa: S324
 
 
-def _kind(path: str, head: bytes) -> FileKind:
-    """Classify a file by its extension and first bytes."""
+def native_format(body: bytes) -> str | None:
+    """The executable format a file's bytes say it is (ELF, Mach-O or PE), or None.
+
+    A PE file starts with ``MZ`` and names where its ``PE`` header is; both
+    are checked, so a text file that happens to start with ``MZ`` is not one.
+    """
+    if body.startswith(b"\x7fELF"):
+        return "ELF"
+    if body.startswith(_MACHO_MAGIC):
+        # 0xCAFEBABE also starts a Java class file, whose next word is its
+        # version (45 or more); a universal Mach-O binary counts its slices there.
+        if body.startswith(b"\xca\xfe\xba\xbe") and int.from_bytes(body[4:8], "big") >= 45:
+            return None
+        return "Mach-O"
+    if body.startswith(b"MZ") and len(body) >= 0x40:
+        offset = int.from_bytes(body[0x3C:0x40], "little")
+        if body[offset : offset + 4] == b"PE\0\0":
+            return "PE"
+    return None
+
+
+def unchecked_pyc(body: bytes) -> bool:
+    """Whether a ``.pyc`` is hash-based and unchecked (PEP 552, flags word set
+    to 1): Python loads it from ``__pycache__`` in place of the source beside
+    it without comparing the two."""
+    return len(body) >= 16 and (int.from_bytes(body[4:8], "little") & 3) == 1
+
+
+def _kind(path: str, body: bytes) -> FileKind:
+    """Classify a file by its extension, then its first bytes.
+
+    A ``.py`` or ``.pth`` stays one whatever it holds, so the rules that read
+    those files still see it (a DLL named ``.py`` doesn't parse: GRN-E002).
+    ``FileEntry.binary`` records native bytes under any name, for GRN-C004:
+    num2words 0.5.15 shipped a DLL as ``_build.py``.
+    """
     lower = path.lower()
     if lower.endswith(".py"):
         return "py"
     if lower.endswith(".pth"):
         return "pth"
-    if lower.endswith(_NATIVE_EXT) or ".so." in lower or head.startswith(_NATIVE_MAGIC):
+    if lower.endswith(".pyc"):
+        return "pyc"
+    if lower.endswith(_NATIVE_EXT) or ".so." in lower or native_format(body) is not None:
         return "native"
-    if lower.endswith(_SCRIPT_EXT) or head.startswith(b"#!"):
+    if lower.endswith(_SCRIPT_EXT) or body.startswith(b"#!"):
         return "script"
     if ".data/" in lower or lower.endswith((".json", ".txt", ".csv", ".yaml", ".yml", ".toml")):
         return "data"
@@ -132,8 +179,18 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
             own = _own_packages(rel_paths)
         for entry, rel in zip(entries, rel_paths, strict=True):
             body = reader.read(entry.path)
-            kind = _kind(rel, body[:4])
-            result.files.append(FileEntry(rel, len(body), hashlib.sha256(body).hexdigest(), kind))
+            kind = _kind(rel, body)
+            digest = hashlib.sha256(body).hexdigest()
+            result.files.append(
+                FileEntry(
+                    rel,
+                    len(body),
+                    digest,
+                    kind,
+                    native_format(body),
+                    unchecked=kind == "pyc" and unchecked_pyc(body),
+                )
+            )
             site = rel if sdist else site_path(rel)
             if kind == "pth":
                 # In a wheel only a .pth that lands in site-packages itself runs:
@@ -181,9 +238,9 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                     result.requirements_read = True
         _follow_calls_out(result, sources, calls_out, handed_out, own)
     except LimitExceeded as err:
-        result.errors.append(FactError("GRN-E003", f"{filename}: {err}", ("GRN-C001", "GRN-C003")))
+        result.errors.append(FactError("GRN-E003", f"{filename}: {err}", _ARCHIVE_RULES))
     except ArchiveError as err:
-        result.errors.append(FactError("GRN-E002", f"{filename}: {err}", ("GRN-C001", "GRN-C003")))
+        result.errors.append(FactError("GRN-E002", f"{filename}: {err}", _ARCHIVE_RULES))
     result.files.sort(key=lambda f: f.path)
     result.modules.sort(key=lambda m: m.path)
     result.pth_files.sort(key=lambda p: p.path)

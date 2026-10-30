@@ -69,7 +69,7 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 - [ ] A wheel whose Python files differ from the release's other wheels [#45](https://github.com/orca-solutions/garnet-guard/issues/45)
 - [ ] Widen the sensitive call set to process, loader and network APIs it doesn't list [#46](https://github.com/orca-solutions/garnet-guard/issues/46)
 - [ ] A new entry point, warning for groups other tools load automatically [#47](https://github.com/orca-solutions/garnet-guard/issues/47)
-- [ ] GRN-C004 new-binary, including sourceless `.pyc` files (pulled forward from 0.3) [#48](https://github.com/orca-solutions/garnet-guard/issues/48)
+- [x] GRN-C004 new-binary, including sourceless `.pyc` files (pulled forward from 0.3) [#48](https://github.com/orca-solutions/garnet-guard/issues/48)
 - [x] New startup files beyond `.pth` (GRN-C010): `sitecustomize.py`, `usercustomize.py`, `.data/` files [#49](https://github.com/orca-solutions/garnet-guard/issues/49)
 - [x] Evidence notes: "only content rules apply", credential reads at import, release-notes wording [#50](https://github.com/orca-solutions/garnet-guard/issues/50)
 - [x] Policy guardrails: cap an ignore's expiry, note a policy edit in the same PR (high-risk path) [#51](https://github.com/orca-solutions/garnet-guard/issues/51)

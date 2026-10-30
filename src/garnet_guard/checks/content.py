@@ -12,6 +12,7 @@ from ..models import (
     CallSite,
     Change,
     Evidence,
+    FileEntry,
     JsUse,
     ModuleIndex,
     RawFinding,
@@ -991,4 +992,178 @@ def new_js_use(
         "GRN-C011",
         f"{cand.version}'s JavaScript uses {shown}, which {base.version}'s didn't",
         tuple(evidence[:MAX_EVIDENCE]),
+    )
+
+
+# GRN-C004: a compiled extension module is named for the module it provides,
+# tagged for the interpreter it was built for: ``name.cpython-312-x86_64-linux-gnu.so``,
+# ``name.abi3.so``, ``name.cp312-win_amd64.pyd`` (a ``.pyd`` is one even untagged).
+# A shared library is ``libname.so`` or ``libname.so.1``. mypyc's shared module
+# starts with a hash (``81d243bd2c585b0f4821__mypyc.cpython-313-...so``).
+_EXTENSION_MODULE = re.compile(r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_-]+\.so|(\.[A-Za-z0-9_-]+)?\.pyd)$")
+# Name parts that say a file is native code; ``libssl.so.3`` and
+# ``libfoo.so.debug`` count. Python's own file types say it is something else.
+_NATIVE_PARTS = frozenset(
+    {"so", "pyd", "dylib", "dll", "exe", "o", "obj", "bundle", "bin", "elf", "out", "sys", "ko"}
+)
+_PYTHON_PARTS = frozenset({"py", "pyw", "pyi", "pth", "pyc"})
+_WHEEL_DATA = re.compile(r"^[^/]+\.data/([^/]+)/")
+_LIBS_FOLDER = re.compile(r"^([^/]+)\.libs/")
+
+
+def _install_key(path: str) -> str:
+    """A path keyed by where it installs, so it is the same in every release.
+
+    The wheel's ``<name>-<version>.data`` folder carries the version, and
+    auditwheel's ``<name>.libs`` folder the project's name as that release
+    spelled it (``Pillow.libs``, then ``pillow.libs``).
+    """
+    if m := _WHEEL_DATA.match(path):
+        scheme, rest = m.group(1), path[m.end() :]
+        path = rest if scheme in ("purelib", "platlib") else f".data/{scheme}/{rest}"
+    if m := _LIBS_FOLDER.match(path):
+        path = re.sub(r"[-_.]+", "_", m.group(1)).lower() + ".libs/" + path[m.end() :]
+    return path
+
+
+def _named_as(path: str) -> str:
+    """What a file's name says it is: "native", "python", "other", or "" when
+    the name has no extension (as an executable usually doesn't). Version
+    numbers at the end don't count: ``libssl.so.3`` is named native."""
+    parts = posixpath.basename(path).lower().split(".")[1:]
+    while parts and parts[-1].isdigit():
+        parts.pop()
+    if not parts:
+        return ""
+    if parts[-1] in _PYTHON_PARTS:
+        return "python"
+    return "native" if _NATIVE_PARTS.intersection(parts) else "other"
+
+
+def _native(f: FileEntry) -> bool:
+    return f.binary is not None or f.kind == "native"
+
+
+def _what(f: FileEntry) -> str:
+    if f.binary is None:
+        return f"a file named as native code ({f.size:,} bytes)"
+    return f"{f.binary} native code ({f.size:,} bytes)"
+
+
+def _platform_tag(filename: str) -> str:
+    """A wheel's platform tag (``any`` for pure Python), or "" for an sdist."""
+    return filename[:-4].rsplit("-", 1)[-1] if filename.endswith(".whl") else ""
+
+
+def _os_family(tag: str) -> str:
+    if tag.startswith("win"):
+        return "windows"
+    if tag.startswith("macosx"):
+        return "macos"
+    return "linux" if "linux" in tag else tag
+
+
+def _natives_comparable(base: ReleaseFacts, b: ArtifactFacts, c: ArtifactFacts) -> bool:
+    """Whether the trusted artifact shows what native code its release shipped
+    where the new one's would install.
+
+    It doesn't when the kinds differ (an sdist compiles its own), when the two
+    wheels are for different operating systems, or when the trusted one is a
+    pure-Python wheel read in place of compiled ones that don't fit this
+    machine. Both happen when the trusted release had no wheel for the
+    Python Garnet runs on: Garnet read pillow 10.3.0's macOS wheel and
+    frozenlist 1.4.1's pure-Python one.
+    """
+    if b.packagetype != c.packagetype:
+        return False
+    old, new = _platform_tag(b.filename), _platform_tag(c.filename)
+    if old != "any":
+        return _os_family(old) == _os_family(new)
+    return not any(_platform_tag(a.filename) not in ("", "any") for a in base.artifacts)
+
+
+def _pyc_reason(f: FileEntry, key: str, prior: FileEntry | None, sources: set[str]) -> str | None:
+    """Why a new or changed ``.pyc`` is reported, or None when Python won't run it."""
+    folder, name = posixpath.split(key)
+    if posixpath.basename(folder) == "__pycache__":
+        # Python reads a cached .pyc only for the source it was compiled from,
+        # and checks it against that source unless the file says not to.
+        source = posixpath.join(posixpath.dirname(folder), name.split(".")[0] + ".py")
+        if not f.unchecked or source not in sources:
+            return None
+        return (
+            f"compiled bytecode ({f.size:,} bytes) that Python loads in place of "
+            f"{source} without checking it against that file"
+        )
+    if "__pycache__" in key.split("/") or prior is not None or key[:-1] in sources:
+        return None
+    return f"compiled bytecode ({f.size:,} bytes) with no source beside it"
+
+
+def new_binary(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-C004: the candidate adds native code or bytecode that hides from the rules.
+
+    Warned: native bytes under a name that says otherwise (a DLL named
+    ``.py``), new or changed; any new native file when the trusted release
+    shipped none; a new sourceless ``.pyc``, which Python imports when no
+    ``.py`` of that name exists; and a new or changed unchecked ``.pyc`` in
+    ``__pycache__``, which Python loads in place of its source. A new shared
+    library or executable in a folder that held no native code, in a release
+    that already shipped some, is reported at info. New extension modules in
+    a release that already had some, and rebuilt binaries, are not reported.
+    """
+    if base is None:
+        return
+    b, c = _pair(base, cand)
+    if b is None or c is None or not (b.inspected and c.inspected):
+        return
+    old = {_install_key(f.path): f for f in b.files}
+    native_dirs = {posixpath.dirname(k) for k, f in old.items() if _native(f)}
+    comparable = _natives_comparable(base, b, c)
+    sources = {_install_key(f.path) for f in c.files if f.kind == "py"}
+    found: list[tuple[bool, str, Evidence]] = []
+    changed = False
+    for f in c.files:
+        key = _install_key(f.path)
+        prior = old.get(key)
+        if prior is not None and prior.sha256 == f.sha256:
+            continue
+        name = posixpath.basename(f.path)
+        strong = True
+        if f.binary is not None and _named_as(name) in ("python", "other"):
+            why = f"{_what(f)} under the name {name}"
+        elif _native(f):
+            if prior is not None or not comparable:
+                continue
+            if not native_dirs:
+                had = f"{base.version} shipped" if b.packagetype != "sdist" else f"{b.filename} had"
+                why = f"{_what(f)}; {had} no native code"
+            elif _EXTENSION_MODULE.match(name) or posixpath.dirname(key) in native_dirs:
+                continue
+            else:
+                strong = False
+                why = f"{_what(f)} in a folder that held no native code in {base.version}"
+        elif f.kind == "pyc" and (reason := _pyc_reason(f, key, prior, sources)) is not None:
+            why = reason
+        else:
+            continue
+        changed = changed or prior is not None
+        evidence = Evidence("file", f"{f.path}: {why}", path=f.path, sha256=f.sha256)
+        found.append((strong, f.path, evidence))
+    if not found:
+        return
+    # The files that hide code first, then the rest, each by path.
+    found.sort(key=lambda t: (not t[0], t[1]))
+    n = len(found)
+    if changed:
+        title = f"{cand.version} adds or changes {n} file(s) of native code or bytecode"
+    else:
+        title = f"{cand.version} adds {n} file(s) of native code or bytecode that {base.version} didn't have"
+    yield RawFinding(
+        "GRN-C004",
+        title,
+        tuple(e for _, _, e in found[:MAX_EVIDENCE]) + _compare_note(b, c),
+        lowered_to=None if any(strong for strong, _, _ in found) else Severity.INFO,
     )

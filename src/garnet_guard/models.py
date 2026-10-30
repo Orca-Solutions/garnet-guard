@@ -201,7 +201,7 @@ class FileProvenance:
     verification_ran: bool = True  # False: verifier unavailable, result unknown
 
 
-FileKind = Literal["py", "pth", "native", "script", "data", "other"]
+FileKind = Literal["py", "pth", "native", "pyc", "script", "data", "other"]
 
 
 @dataclass(frozen=True)
@@ -228,6 +228,8 @@ class FileEntry:
     size: int
     sha256: str
     kind: FileKind
+    binary: str | None = None  # "ELF", "Mach-O" or "PE" when the bytes are native code
+    unchecked: bool = False  # a .pyc Python loads without checking it against its source
 
 
 @dataclass(frozen=True)

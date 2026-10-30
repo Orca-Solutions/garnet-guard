@@ -160,6 +160,11 @@ def _uploaded(rel: ReleaseFacts, *hours: float) -> ReleaseFacts:
     return replace(rel, artifacts=arts)
 
 
+# Synthetic native headers: the magic bytes only, padded. Nothing executable.
+ELF = b"\x7fELF" + b"\0" * 60
+PE = b"MZ" + b"\0" * 58 + (64).to_bytes(4, "little") + b"PE\0\0" + b"\0" * 16
+
+
 def _rows() -> list[Row]:
     attested = release("1.0")
     rows: list[Row] = []
@@ -675,6 +680,72 @@ def _rows() -> list[Row]:
         _npm("1.0"),
         _npm("1.1"),
         eco=NPM,
+    )
+
+    # GRN-C004 new-binary
+    # The num2words 0.5.15 shape: a Windows DLL shipped under a .py name.
+    fires(
+        "GRN-C004",
+        "native code named .py",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "demo/_build.py": PE}),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C004",
+        "a pure-Python package starts shipping an executable",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "demo/bin/helper": ELF}),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C004",
+        "a sourceless .pyc",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "demo/_boot.pyc": b"\xcb\r\r\n" + b"\0" * 12}),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C004",
+        "an unchecked .pyc that Python loads in place of its source",
+        release("1.0", {**PKG, "demo/a.py": ""}),
+        release(
+            "1.1",
+            {
+                **PKG,
+                "demo/a.py": "",
+                "demo/__pycache__/a.cpython-313.pyc": b"\xcb\r\r\n\x01" + b"\0" * 11,
+            },
+        ),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C004",
+        "a rebuilt executable in the versioned .data folder",
+        release("1.0", {**PKG, "demo-1.0.data/scripts/demo": ELF}),
+        release("1.1", {**PKG, "demo-1.1.data/scripts/demo": ELF + b"\1"}),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C004",
+        "a new extension module beside the existing ones",
+        release("1.0", {**PKG, "demo/_speed.cpython-313-x86_64-linux-gnu.so": ELF}),
+        release(
+            "1.1",
+            {
+                **PKG,
+                "demo/_speed.cpython-313-x86_64-linux-gnu.so": ELF + b"\1",
+                "demo/_extra.cpython-313-x86_64-linux-gnu.so": ELF,
+            },
+        ),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C004",
+        "the same binary as before",
+        release("1.0", {**PKG, "demo/bin/helper": ELF}),
+        release("1.1", {**PKG, "demo/bin/helper": ELF}),
+        eco=PYPI,
     )
 
     # GRN-K001 known-malicious
