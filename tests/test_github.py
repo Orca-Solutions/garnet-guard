@@ -36,6 +36,22 @@ def test_monorepo_directory_tags() -> None:
     assert match_tag({"pkgs/demo/1.0": "e"}, "demo", "1.0.0").name == "pkgs/demo/1.0"
 
 
+def test_release_word_and_monorepo_separators() -> None:
+    # Real tag names: explosion/confection, langchain-ai/langgraph, Azure/azure-sdk-for-python.
+    tags = {"release-v1.0.0": "a", "prebuilt==1.0.11": "b", "azure-mgmt-core_1.1.0": "c"}
+    assert match_tag(tags, "confection", "1.0.0").name == "release-v1.0.0"
+    assert match_tag(tags, "langgraph-prebuilt", "1.0.11").name == "prebuilt==1.0.11"
+    assert match_tag(tags, "azure-mgmt-core", "1.1.0").name == "azure-mgmt-core_1.1.0"
+    assert match_tag({"Release-1.0": "d"}, "x", "1.0.0").name == "Release-1.0"
+
+
+def test_prefix_must_name_the_package_or_a_release() -> None:
+    tags = {"checkpoint==1.0.11": "a", "azure-core_1.1.0": "b", "nightly-v1.0.0": "c"}
+    assert match_tag(tags, "langgraph-prebuilt", "1.0.11") is None
+    assert match_tag(tags, "azure-mgmt-core", "1.1.0") is None
+    assert match_tag(tags, "x", "1.0.0") is None
+
+
 def test_monorepo_directory_tag_must_name_the_package() -> None:
     tags = {"api/v1.4.1": "a", "sdk-metrics/v2.0.0": "b", "utils/v2.8.1": "c"}
     assert match_tag(tags, "@opentelemetry/sdk-trace", "1.4.1", npm=True) is None

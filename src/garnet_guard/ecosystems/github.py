@@ -9,7 +9,7 @@ repositories. One request per repository covers every version.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 
 from packaging.version import InvalidVersion, Version
 
@@ -93,32 +93,41 @@ class TagLookup:
         return self._cache[repo]
 
 
-def _prefixes(package: str, *, npm: bool = False) -> list[str]:
-    """Tag prefixes to try: none, then ``<name>-`` in each spelling of the name.
-
-    npm monorepos tag ``<name>@X`` (lerna, changesets), with or without the
-    ``@scope/``, so those forms are added for npm packages.
-    """
-    out = [""]
-    names = {package, package.replace("-", "_"), package.replace("_", "-")}
-    if npm and "/" in package:
-        names.add(package.rpartition("/")[2])
-    for n in sorted(names):
-        out.append(f"{n}-")
-        if npm:
-            out.append(f"{n}@")
-    return out
+# Separators between a tag's prefix and its version: ``lightning-2.6.1``,
+# ``azure-mgmt-core_1.1.0``, ``prebuilt==1.0.11``, ``api/v1.4.1`` and, for npm,
+# ``@ctrl/tinycolor@4.2.2``.
+_SEPARATORS = ("-", "_", "==", "/")
+# Prefixes that name a release rather than a package: ``release-v1.0.0``.
+_RELEASE_WORDS = frozenset({"release"})
 
 
-def _dir_names(package: str) -> set[str]:
-    """Directory names a monorepo may tag the package under, as ``<dir>/vX``.
+def _package_names(package: str) -> set[str]:
+    """The names a tag prefix may use for the package, lowercased, ``_`` as ``-``.
 
     The name without its npm scope, and each run of its trailing hyphenated
-    words: ``eslint-module-utils`` is tagged ``utils/v2.8.1`` and
-    ``eslint-import-resolver-node`` is tagged ``resolvers/node/v0.3.3``.
+    words, since monorepos tag a package by its folder: ``eslint-module-utils``
+    is tagged ``utils/v2.8.1``, ``eslint-import-resolver-node``
+    ``resolvers/node/v0.3.3`` and ``langgraph-prebuilt`` ``prebuilt==1.0.11``.
     """
-    words = package.rpartition("/")[2].replace("_", "-").split("-")
+    words = package.rpartition("/")[2].lower().replace("_", "-").split("-")
     return {"-".join(words[i:]) for i in range(len(words)) if words[i]}
+
+
+def _readings(name: str, *, npm: bool) -> Iterator[tuple[str, str]]:
+    """Each (prefix, rest) split of a tag name at a separator, and ("", name)."""
+    yield "", name
+    for sep in (*_SEPARATORS, *(("@",) if npm else ())):
+        start = name.find(sep, 1)
+        while start != -1:
+            yield name[:start], name[start + len(sep) :]
+            start = name.find(sep, start + 1)
+
+
+def _names_package(prefix: str, names: set[str]) -> bool:
+    if not prefix:
+        return True
+    last = prefix.rpartition("/")[2].lower().replace("_", "-")
+    return last in names or last in _RELEASE_WORDS
 
 
 def _as_version(text: str) -> Version | None:
@@ -136,36 +145,29 @@ def match_tag(
     *,
     npm: bool = False,
 ) -> TagInfo | None:
-    """SPEC GRN-T004: accept X, vX, <name>-X and <name>-vX (and <name>@X for npm).
+    """SPEC GRN-T004: a tag whose name is the version, alone or after a prefix.
 
-    Monorepos that tag by directory (``api/v1.4.1``, ``resolvers/node/v0.3.3``)
-    match too, when the directory names the package: see ``_dir_names``.
-    An exact name wins. Otherwise X is compared as a PEP 440 version, so
-    tag ``2026.01.04`` matches release ``2026.1.4``.
+    The version is ``X`` or ``vX``. The prefix, before a ``-``, ``_``, ``==``
+    or ``/`` (and ``@`` for npm), must name the package (see
+    ``_package_names``) or be ``release``: ``2.6.1``, ``v1.18.0``,
+    ``lightning-2.6.1``, ``release-v1.0.0``, ``api/v1.4.1``. ``X`` alone wins,
+    then an exact name, in sorted order; otherwise X is compared as a PEP 440
+    version, so tag ``2026.01.04`` matches release ``2026.1.4``.
     """
-    prefixes = _prefixes(package, npm=npm)
-    dirs = _dir_names(package)
-    for p in prefixes:
-        for name in (f"{p}{version}", f"{p}v{version}"):
-            if name in tags:
-                return TagInfo(name=name, sha=tags[name], repo=repo)
-    for name in sorted(tags):
-        folder, _, leaf = name.rpartition("/")
-        if folder.rpartition("/")[2] in dirs and leaf in (version, f"v{version}"):
+    names = _package_names(package)
+    for name in (version, f"v{version}"):
+        if name in tags:
             return TagInfo(name=name, sha=tags[name], repo=repo)
     wanted = _as_version(version)
-    if wanted is None:
-        return None
+    loose: str | None = None
     for name in sorted(tags):
-        folder, _, leaf = name.rpartition("/")
-        candidates = [(p, name) for p in prefixes]
-        if folder.rpartition("/")[2] in dirs:
-            candidates.append(("", leaf))
-        for p, text in candidates:
-            if not text.startswith(p):
+        for prefix, rest in _readings(name, npm=npm):
+            if not _names_package(prefix, names):
                 continue
-            rest = text[len(p) :]
             rest = rest[1:] if rest[:1] in ("v", "V") else rest
-            if rest and rest[0].isdigit() and _as_version(rest) == wanted:
+            if rest == version:
                 return TagInfo(name=name, sha=tags[name], repo=repo)
-    return None
+            if loose is None and wanted is not None and rest[:1].isdigit():
+                if _as_version(rest) == wanted:
+                    loose = name
+    return TagInfo(name=loose, sha=tags[loose], repo=repo) if loose is not None else None

@@ -59,9 +59,10 @@ _DOCS: tuple[RuleDoc, ...] = (
         "The trusted version had a matching git tag in the source repository; the new version has none.",
         "Projects that tag releases normally tag every release. A version on the registry with no tag "
         "was probably not built from the repository's history, which is typical of a token-based upload. "
-        "Accepted tag forms are X, vX, <name>-X and <name>-vX (and <name>@X for npm), and a "
-        "monorepo's <dir>/vX when the folder names the package (api/v1.4.1 for @opentelemetry/api), "
-        "with X compared as a version (tag 2026.01.04 matches 2026.1.4). Both the attested repository "
+        "A tag matches when it is X or vX, alone or after a prefix that names the package or says "
+        "release, joined by -, _, == or / (and @ for npm): lightning-2.6.1, release-v1.0.0, "
+        "api/v1.4.1 for @opentelemetry/api, prebuilt==1.0.11 for langgraph-prebuilt. X is compared "
+        "as a version (tag 2026.01.04 matches 2026.1.4). Both the attested repository "
         "and the project's source URL are searched. chalk 5.6.1 and debug 4.4.2, published from a "
         "phished npm account, had no tag.",
         "Check the repository's tags and releases page. A missing tag can be an oversight, so confirm "
