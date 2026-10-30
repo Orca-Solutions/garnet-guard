@@ -20,6 +20,13 @@ def test_explain(capsys) -> None:
     assert main(["explain", "GRN-X999"]) == 3
 
 
+def test_explain_shows_the_call_set_for_every_rule_that_uses_it(capsys) -> None:
+    """SPEC §6.3: the set is shown by ``garnet explain``."""
+    assert main(["explain", "GRN-C012"]) == 0
+    out = capsys.readouterr().out
+    assert "Sensitive calls (set " in out and "ctypes.*" in out
+
+
 def test_escape_strips_control_and_bidi() -> None:
     assert escape("a\x1b[31mb\u202ec") == "a\\x1b[31mb\\x202ec"
 

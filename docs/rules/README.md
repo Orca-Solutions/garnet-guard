@@ -12,8 +12,8 @@ Severities: `block` and `warn` set the verdict; `info` is reported but counts as
 A warning is a reason to look, not a finding that the release is malicious.
 
 The trust rules, GRN-C002, GRN-C008 and GRN-K001 apply to PyPI and npm releases. GRN-C001,
-GRN-C003 and GRN-C007 read Python code, and GRN-C010 reads wheels, so they apply to PyPI
-only; GRN-C011 reads JavaScript, so it applies to npm only.
+GRN-C003, GRN-C007 and GRN-C012 read Python code, and GRN-C010 reads wheels, so they apply to
+PyPI only; GRN-C011 reads JavaScript, so it applies to npm only.
 
 ## Trust
 
@@ -46,6 +46,7 @@ What the release contains that the trusted version didn't.
 | [GRN-C008](GRN-C008.md) | new-dependency | diff | `warn` (`info` for an established dependency) | 0.2 |
 | [GRN-C010](GRN-C010.md) | new-startup-file | diff | `warn` (`info` for other scripts and data files) | 0.2 |
 | [GRN-C011](GRN-C011.md) | new-js-capability | diff | `info` | 0.2 |
+| [GRN-C012](GRN-C012.md) | wheels-differ | diff | `warn` (`info` beside a GRN-E002 warning for a read copy that doesn't parse) | 0.2 |
 
 ## Known bad
 

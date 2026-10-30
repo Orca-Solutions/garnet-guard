@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import ast
+import builtins
 import hashlib
 import re
+import sys
 import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -26,7 +29,15 @@ from ..models import (
     Requirement,
 )
 from ..safe_archive import ArchiveError, ArchiveReader, LimitExceeded, open_archive
-from .pyindex import ModuleScan, index_build_script, module_name, scan_module
+from .pyindex import (
+    ModuleScan,
+    index_build_script,
+    module_name,
+    parse,
+    scan_module,
+    sensitive_calls,
+    sensitive_set,
+)
 
 _NATIVE_EXT = (".so", ".pyd", ".dylib", ".dll", ".exe")
 _SITE_PREFIX = re.compile(r"^[^/]+\.data/(purelib|platlib)/")
@@ -41,7 +52,18 @@ _MACHO_MAGIC = (
     b"\xca\xfe\xba\xbf",
 )
 # The rules that read the files of an archive Garnet couldn't read to the end.
+# GRN-C012 also reads every Python file of a wheel.
 _ARCHIVE_RULES = ("GRN-C001", "GRN-C003", "GRN-C004")
+_WHEEL_RULES = (*_ARCHIVE_RULES, "GRN-C012")
+# Names GRN-C012 never counts as the release's own: the standard library's
+# modules, the builtins, and the first name of each entry of the §6.3 list
+# (exec, os, subprocess, requests, ...), so a top-level ``exec.py`` or
+# ``requests.py`` can't hide a call the list names.
+_NEVER_OWN = (
+    frozenset(sys.stdlib_module_names)
+    | frozenset(dir(builtins))
+    | frozenset(m[0] for s in sensitive_set() if (m := re.match(r"\w+", s)))
+)
 _SCRIPT_EXT = (".sh", ".bash", ".bat", ".cmd", ".ps1", ".js", ".mjs", ".cjs", ".vbs")
 
 
@@ -59,6 +81,7 @@ class Inspection:
     requirements: tuple[Requirement, ...] = ()
     requirements_read: bool = False
     errors: list[FactError] = field(default_factory=list)
+    complete: bool = True  # False: the archive couldn't be read to the end
 
 
 def git_blob_id(data: bytes) -> str:
@@ -157,13 +180,24 @@ def _own_packages(paths: list[str]) -> frozenset[str]:
     return frozenset(own)
 
 
+def wheel_own(paths: list[str]) -> frozenset[str]:
+    """The release's own top-level packages as GRN-C012 counts them: without
+    a name the sensitive call set depends on. A top-level ``subprocess.py``
+    never shadows the standard library's, a module file never stands in for
+    the builtin ``exec``, and a call to ``requests.post`` counts whether a
+    ``requests.py`` beside the package or the requests project answers it."""
+    return _own_packages(paths) - _NEVER_OWN
+
+
 def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool) -> Inspection:
     """Read every file in a wheel or sdist and record what it contains.
 
     Python files are parsed, never run. Archive problems and limits become
-    ``FactError``s in the result.
+    ``FactError``s in the result. In a wheel, each module also records every
+    sensitive call it makes anywhere, for GRN-C012.
     """
     result = Inspection()
+    rules = _ARCHIVE_RULES if sdist else _WHEEL_RULES
     sources: dict[str, bytes] = {}  # module → source, for calls across modules
     calls_out: dict[str, tuple[str, ...]] = {}  # module → own callables it calls at import
     handed_out: dict[str, tuple[tuple[str, str], ...]] = {}  # module → own callables it hands on
@@ -177,6 +211,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
             own = _own_packages([p[4:] if p.startswith("src/") else p for p in rel_paths])
         else:
             own = _own_packages(rel_paths)
+        anywhere_own = wheel_own(rel_paths)
         for entry, rel in zip(entries, rel_paths, strict=True):
             body = reader.read(entry.path)
             kind = _kind(rel, body)
@@ -203,7 +238,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                         FactError(
                             "GRN-E003",
                             f"{filename}: {rel} is larger than the parse limit",
-                            ("GRN-C003",),
+                            ("GRN-C003",) if sdist else ("GRN-C003", "GRN-C012"),
                             rel,
                         )
                     )
@@ -214,12 +249,14 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                     if sdist and rel == "setup.py":
                         result.setup_py_calls = index_build_script(body)
                         continue
-                    scan = scan_module(body, path=rel, own=own, module=mod)
+                    tree = parse(body, path=rel)
+                    scan = scan_module(body, path=rel, own=own, module=mod, tree=tree)
                 except (SyntaxError, ValueError, RecursionError):
                     result.unparsed.append(rel)
                     continue
+                anywhere = None if sdist else _names(body, rel, anywhere_own, tree)
                 result.modules.append(
-                    ModuleIndex(mod, rel, scan.calls, scan.imports, git_blob_id(body))
+                    ModuleIndex(mod, rel, scan.calls, scan.imports, git_blob_id(body), anywhere)
                 )
                 sources[mod] = body
                 calls_out[mod] = scan.calls_out
@@ -238,14 +275,51 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                     result.requirements_read = True
         _follow_calls_out(result, sources, calls_out, handed_out, own)
     except LimitExceeded as err:
-        result.errors.append(FactError("GRN-E003", f"{filename}: {err}", _ARCHIVE_RULES))
+        result.errors.append(FactError("GRN-E003", f"{filename}: {err}", rules))
+        result.complete = False
     except ArchiveError as err:
-        result.errors.append(FactError("GRN-E002", f"{filename}: {err}", _ARCHIVE_RULES))
+        result.errors.append(FactError("GRN-E002", f"{filename}: {err}", rules))
+        result.complete = False
     result.files.sort(key=lambda f: f.path)
     result.modules.sort(key=lambda m: m.path)
     result.pth_files.sort(key=lambda p: p.path)
     result.unparsed.sort()
     return result
+
+
+def _names(body: bytes, rel: str, own: frozenset[str], tree: ast.Module) -> tuple[str, ...] | None:
+    """The names of the sensitive calls anywhere in a parsed file, or None if
+    the file is nested too deep to walk."""
+    try:
+        calls = sensitive_calls(body, path=rel, own=own, tree=tree)
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+    return tuple(sorted({c.name for c in calls}))
+
+
+def wheel_files(
+    filename: str, data: bytes, limits: Limits
+) -> tuple[list[FileEntry], frozenset[str], list[FactError]]:
+    """Every file in a wheel with its size, hash and kind, and the wheel's own
+    top-level packages, without parsing anything. GRN-C012 lists another wheel
+    of the release this way and parses only the files that differ."""
+    files: list[FileEntry] = []
+    errors: list[FactError] = []
+    own: frozenset[str] = frozenset()
+    try:
+        reader = open_archive(data, filename, limits)
+        entries = reader.entries()
+        own = _own_packages([e.path for e in entries])
+        for entry in entries:
+            body = reader.read(entry.path)
+            kind = _kind(entry.path, body[:4])
+            files.append(FileEntry(entry.path, len(body), hashlib.sha256(body).hexdigest(), kind))
+    except LimitExceeded as err:
+        errors.append(FactError("GRN-E003", f"{filename}: {err}", ("GRN-C012",)))
+    except ArchiveError as err:
+        errors.append(FactError("GRN-E002", f"{filename}: {err}", ("GRN-C012",)))
+    files.sort(key=lambda f: f.path)
+    return files, own, errors
 
 
 def file_reader(

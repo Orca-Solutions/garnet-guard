@@ -51,8 +51,10 @@ ALL_CHECKS: tuple[tuple[str, CheckFn, frozenset[str]], ...] = (
     ("GRN-C008", content.new_dependency, BOTH),
     ("GRN-C010", content.new_startup_file, PYPI),
     ("GRN-C011", content.new_js_use, NPM),
+    ("GRN-C012", content.wheels_differ, PYPI),
     ("GRN-K001", known_malicious, BOTH),
     ("GRN-E002", content.unparsed_changed, PYPI),
+    ("GRN-E003", content.late_wheels_not_compared, PYPI),
 )
 
 __all__ = ["ALL_CHECKS", "DOCS", "CheckFn"]

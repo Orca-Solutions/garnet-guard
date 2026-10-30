@@ -48,8 +48,9 @@ Every run goes through the same five stages, whichever command started it.
    stage: you name the package and both versions yourself.
 2. **Gather the facts.** `engine.py` asks `ecosystems/pypi.py` or `ecosystems/npm.py` for a
    `ReleaseFacts` record for each version. The PyPI module fetches PyPI's metadata, the
-   attestation for every file, the sdist and one wheel; the npm module fetches the
-   registry's package document, the release's attestations and the tarball. Both look up
+   attestation for every file, the sdist and one wheel (and, for GRN-C012, one wheel per other
+   platform and up to 30 late ones); the npm module fetches the registry's package document, the
+   release's attestations and the tarball. Both look up
    the project's git tags (`ecosystems/github.py`) and malware advisories
    (`ecosystems/osv.py`), and verify attestations (`ecosystems/provenance.py` for PEP 740,
    `ecosystems/npm_provenance.py` for npm provenance). When a PyPI release has a matching tag,
@@ -207,7 +208,7 @@ one is refused.
 | Import time | The moment Python loads a module. Code at the top level of a module runs then, before any of its functions are called. |
 | Lockfile | A project's exact list of packages and versions, such as `uv.lock`. |
 | `.pth` file | A small file Python reads at every startup. A line in it that starts with `import` runs automatically. |
-| sdist, wheel | A package's source archive, and its ready-to-install archive. Garnet reads the sdist and one wheel. |
+| sdist, wheel | A package's source archive, and its ready-to-install archive. Garnet reads the sdist and one wheel, and compares a few of the release's other wheels with it. |
 | Severity, verdict | `block`, `warn` or `info` on each finding. The verdict is the worst severity in the report; `info` counts as a pass. |
 | Trusted Publishing | PyPI's way of letting a specific CI workflow upload releases without a long-lived password. |
 | OSV | A public database of vulnerabilities and malware, at [osv.dev](https://osv.dev). |

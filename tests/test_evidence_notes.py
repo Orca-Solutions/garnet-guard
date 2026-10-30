@@ -58,6 +58,20 @@ def test_note_reaches_every_output_without_changing_the_verdict() -> None:
     assert "publishing not compared (no attestation or tag)" in to_markdown(rep)
 
 
+def test_late_wheels_garnet_left_out_are_a_finding_not_a_note() -> None:
+    """GRN-C012 not comparing a late wheel is a check it couldn't run, so it
+    is GRN-E003 and never a pass; it isn't about how 1.0 was published.
+    (This was a note, and the update passed.)"""
+    left = ("demo-1.1-cp314-cp314-win32.whl",)
+    cand = replace(release("1.1"), wheels_not_compared=left)
+    result = run_checks(CHANGE, release("1.0"), cand)
+    assert result.verdict.value == "warn" and result.notes == ()
+    assert [f.rule_id for f in result.findings] == ["GRN-E003"]
+    rep = report([result])
+    assert "demo-1.1-cp314-cp314-win32.whl" in to_text(rep)
+    assert "GRN-E003" in to_markdown(rep) and "publishing not compared" not in to_markdown(rep)
+
+
 def test_json_has_no_notes_key_when_there_is_nothing_to_say() -> None:
     result = run_checks(CHANGE, release("1.0"), release("1.1"))
     assert result.notes == ()

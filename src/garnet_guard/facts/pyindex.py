@@ -488,6 +488,15 @@ def _decoded_inputs(
     return sorted(set(out))
 
 
+def parse(source: bytes, *, path: str = "<module>") -> ast.Module:
+    """Parse source with ``ast``, never compiling or running it. Raises
+    SyntaxError/ValueError. ``scan_module`` and ``sensitive_calls`` take the
+    tree, so a file both read is parsed once."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # package source triggers SyntaxWarnings
+        return ast.parse(source, filename=path)
+
+
 @dataclass(frozen=True)
 class ModuleScan:
     """What one module runs, from its body or from one of its callables."""
@@ -506,6 +515,7 @@ def scan_module(
     module: str | None = None,
     entry: str | None = None,
     handed: str | None = None,
+    tree: ast.Module | None = None,
 ) -> ModuleScan:
     """Index what runs at import, or what runs when ``entry`` is called.
 
@@ -517,10 +527,10 @@ def scan_module(
     (instantiation) or ``Class.method`` defined in the module; an unknown
     entry runs nothing. ``handed`` names the call that ``entry`` was handed to
     when that call is not known to run it; it is carried on every call site.
+    ``tree`` is ``source`` already parsed.
     """
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")  # package source triggers SyntaxWarnings
-        tree = ast.parse(source, filename=path)
+    if tree is None:
+        tree = parse(source, path=path)
     resolver = _Resolver()
     if module is not None:
         is_pkg = path.endswith("__init__.py")
@@ -663,7 +673,11 @@ def module_name(path: str) -> str:
 
 
 def sensitive_calls(
-    source: bytes, *, path: str = "<module>", own: frozenset[str] = frozenset()
+    source: bytes,
+    *,
+    path: str = "<module>",
+    own: frozenset[str] = frozenset(),
+    tree: ast.Module | None = None,
 ) -> tuple[CallSite, ...]:
     """Every sensitive call in a file, at any depth. Raises SyntaxError/ValueError.
 
@@ -674,11 +688,12 @@ def sensitive_calls(
     same file in the source repository, where a call that only exists in the
     published copy matters whether or not anything calls it at import.
     ``via`` names the enclosing function or ``Class.method``. Calls into the
-    release's ``own`` packages are not sensitive.
+    release's ``own`` packages are not sensitive. ``tree`` is ``source``
+    already parsed. A file nested deeper than Python's recursion limit raises
+    RecursionError.
     """
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        tree = ast.parse(source, filename=path)
+    if tree is None:
+        tree = parse(source, path=path)
     resolver = _Resolver()
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):

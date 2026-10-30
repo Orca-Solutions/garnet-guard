@@ -4,7 +4,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from backtest import corpus
-from garnet_guard.models import ArtifactFacts, FactError, ReleaseFacts
+from garnet_guard.models import (
+    ArtifactFacts,
+    FactError,
+    ReleaseFacts,
+    UnparsedWheelFile,
+    WheelCalls,
+)
 from tests.builders import release
 
 
@@ -36,8 +42,19 @@ def test_cache_round_trips_release_facts(tmp_path: Path) -> None:
                 ArtifactFacts(**{**art.__dict__, "uploaded_at": datetime(2026, 1, 2, tzinfo=UTC)}),
             ),
             "errors": (FactError("GRN-E002", "x", ("GRN-C003",), path="a.py"),),
+            "wheel_calls": (
+                WheelCalls("Windows", "demo/legacy.py", None, "a" * 64),
+                WheelCalls("any", "demo/__init__.py", ("os.system",), "b" * 64),
+            ),
+            "read_wheel_family": "any",
+            "wheel_unparsed": (
+                UnparsedWheelFile(
+                    "demo-1.0-cp313-cp313-win_amd64.whl", "Windows", "demo/legacy.py", "a" * 64
+                ),
+            ),
         }
     )
+    assert rel.artifacts[0].modules[0].sensitive == ("os.system",)
     cache = corpus.FactCache(tmp_path)
     assert cache.get("pypi", "demo", "1.0") is None
     cache.put(rel)
