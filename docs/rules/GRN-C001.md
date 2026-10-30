@@ -19,6 +19,11 @@ status: implemented
 The new version contains a `.pth` file at a path the trusted version didn't have, or an
 existing `.pth` file gained executable lines (lines starting with `import`).
 
+In a wheel, only a `.pth` that lands in `site-packages` itself counts: at the wheel's root
+or at the root of its `<name>-<version>.data/purelib/` or `platlib/` folder (the folder's
+version is ignored when comparing releases). A `.pth` deeper in the package is never read by
+Python. A `.pth` that was only renamed, with the same `import` lines as before, is not new.
+
 ## Why it matters
 
 Python runs the `import` lines of every `.pth` file in site-packages each time the
@@ -40,7 +45,14 @@ elementary-data 0.23.2 → 0.23.3: WARN
 ```
 
 The same rule reported litellm 1.82.8 ([PYSEC-2026-2](https://osv.dev/vulnerability/PYSEC-2026-2))
-in the replay, for a new `litellm_init.pth` that starts a base64 payload.
+for a new `litellm_init.pth` that starts a base64 payload, and 23 releases of 23 packages from the
+June 2026 Hades campaign (gpsea, pyphetools, ppkt2synergy, bramin, cmd2func, coolbox, dreamgen,
+ensmallen, executor-engine, executor-http, funcdesc, magique, magique-ai, mem8, mrbios, napari-ufish,
+nucbox, okite, pantheon-agents, pantheon-toolsets, phenopacket-store-toolkit, synago and uprobe) for
+a new `<name>-setup.pth` that downloads and runs Bun. For twelve of those packages it was the only
+rule that fired. It missed embiggen 0.11.97 from the same campaign: the trusted 0.11.96 shipped only
+an sdist and 0.11.97 only a wheel, so there was no pair of artifacts to compare, and the content
+rules passed without saying so. That's a bug, and a fix is planned.
 
 ## How to resolve it
 

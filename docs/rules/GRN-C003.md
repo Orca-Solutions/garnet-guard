@@ -17,16 +17,51 @@ status: implemented
 ## What it checks
 
 Code that runs when a module is imported gains a call in the
-[sensitive call set](#sensitive-call-set). That covers module top-level code and functions it
-calls, including code reached from `__init__.py`. Calls are resolved through imports and simple
-aliasing by reading the source with `ast`; nothing is executed.
+[sensitive call set](#sensitive-call-set). That covers module top-level code and what it runs:
+functions it calls or hands to another call, lambdas it calls, classes it instantiates (their
+`__init__`) and methods it calls on them, including code reached from `__init__.py`. A
+function defined inside one of those and handed to a call is followed too (mrmustard 0.7.4
+called a checker at import that started a thread on a `_run` defined inside it). A call
+into one of the package's own other modules is followed there, as deep as it goes
+(memoryos 2.0.34 ran `get_logger()` at module level, which called a helper, which imported
+`_stage0` and ran the function that started a bundled binary), and the finding names the
+module whose import started the chain. Calls are resolved through imports and simple
+aliasing (`sp = subprocess`), `from os import *`, and `getattr(os, "system")`,
+`getattr(sys.modules[__name__], "ctypes")`, `__import__("os")` or
+`importlib.import_module("os")` with a literal name, by reading the source with `ast`;
+nothing is executed. A dotted name counts only when its first part is a module the file
+imports (a local list called `requests` is not the `requests` library), and a function or
+class the module defines shadows a builtin of the same name. A `base64` decode whose result
+reaches a sensitive call counts as a call of its own, so `exec(base64.b64decode(...))` is
+new even in a module that already used `exec`.
 
-In test files (`tests/`, `test_*.py`, `conftest.py`) it reports at `info`, unless a non-test
-module imports the file (directly or through other test modules) or an entry point names it.
-Test files usually run only with the package's own test suite, which often starts processes
-or opens sockets at module level. An imported test file runs whenever the package is
-imported, and one named by an entry point, such as a `pytest11` plugin, loads in every
-pytest run, so those stay at `warn`.
+A module is new when the trusted version had no module of that name; a file that only moved
+or was renamed with a leading underscore is compared with the file it came from. When the
+trusted version has the file but it couldn't be parsed (a wheel built for Python 2), the
+finding says so in its title and notes that the calls may not be new, because Garnet
+couldn't compare.
+
+Three kinds of call are reported at `info`, each in its own finding, because the source
+does not show them running when the package is imported. A call that a package module
+reaches at import is reported once, at `warn`, whatever else reaches it:
+
+- Calls in test files (a `tests/` folder, a top-level `test/` folder, `test_*.py`,
+  `conftest.py`), or reached only from one,
+  unless a non-test module imports the file (directly or through other test modules) or an
+  entry point names it. Test files usually run only with the package's own test suite,
+  which often starts processes or opens sockets at module level. An imported test file
+  runs whenever the package is imported, and one named by an entry point, such as a
+  `pytest11` plugin, loads in every pytest run, so those stay at `warn`.
+- Calls in sdist files outside the package, or reached only from one: `docs/conf.py`,
+  `examples/`, `benchmarks/`, or a lexer that ply 3.6's `example/` scripts build at import.
+  They ship in the sdist but not in the installed package, and run only when run on their
+  own.
+- Calls in a function that import-time code only handed to another call, when nothing says
+  that call runs it: `functools.partial(f)`, `map(f, xs)`, a wrapper or compose helper.
+  The evidence reads `handed to functools.partial() at import`. A function handed to a
+  call that does run it, such as `threading.Thread(target=f)`, `atexit.register(f)` or
+  `executor.submit(f)`, is reported at `warn` as reached at import, which is how lightning
+  2.6.2 and mrmustard 0.7.4 ran their payloads.
 
 ## Why it matters
 
@@ -47,10 +82,23 @@ lightning 2.6.1 → 2.6.2: WARN
 ```
 
 The same rule reported lightning 2.6.3, litellm 1.82.7 and 1.82.8
-([PYSEC-2026-2](https://osv.dev/vulnerability/PYSEC-2026-2)), and telnyx 4.87.1 and 4.87.2
-([PYSEC-2026-3](https://osv.dev/vulnerability/PYSEC-2026-3)) in the replay. In telnyx 4.87.1 a
-typo stopped the payload before it ran; the rule reads code and reports what a module calls
-at import, not whether the call succeeds.
+([PYSEC-2026-2](https://osv.dev/vulnerability/PYSEC-2026-2)), telnyx 4.87.1 and 4.87.2
+([PYSEC-2026-3](https://osv.dev/vulnerability/PYSEC-2026-3)), ultralytics 8.3.45 and 8.3.46,
+xinference 2.6.0 to 2.6.2, mistralai 2.4.6, guardrails-ai 0.10.1 and durabletask 1.4.1 to 1.4.3
+in the replay. In telnyx 4.87.1 a typo stopped the payload before it ran; the rule reads code
+and reports what a module calls at import, not whether the call succeeds.
+
+What it missed in the replay, and why:
+
+- **ultralytics 8.3.41 and 8.3.42**: the miner runs when a model is downloaded, not at import.
+- **num2words 0.5.15 and 0.5.16**: `__init__.py` loads a DLL through
+  `getattr(ctypes, "CDLL")`, and the rule doesn't follow calls made through `getattr`.
+- **memoryos 2.0.34**: the payload starts from a logging setup function in another module.
+- **mrmustard 0.7.4** ([MAL-2026-11049](https://osv.dev/vulnerability/MAL-2026-11049)):
+  `__init__.py` calls a new function at import, and the rule follows it. That function starts
+  a thread whose target is a function defined inside it, where `subprocess` and
+  `urllib.request` are called. The rule follows a function handed to a call only when it is
+  defined at module level, so it stopped one step short. A fix is planned.
 
 ## How to resolve it
 

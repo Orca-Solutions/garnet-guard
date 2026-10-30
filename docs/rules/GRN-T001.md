@@ -54,14 +54,27 @@ In the replay of lightning 2.6.2 and 2.6.3, also uploaded with a stolen token, t
 could not fire: lightning had not attested releases before the incident, so there was no
 provenance to lose. [GRN-T004](GRN-T004.md) and [GRN-C003](GRN-C003.md) reported those
 releases instead ([replay](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml)).
-The Python example below is illustrative, not from a real release.
+
+On PyPI, from the replay of ultralytics 8.3.45
+([PYSEC-2024-154](https://osv.dev/vulnerability/PYSEC-2024-154)). ultralytics published 8.3.44
+through Trusted Publishing with attestations; 8.3.45 was uploaded with a PyPI API token left in
+CI from before Trusted Publishing. PyPI no longer serves provenance for the removed release, so
+the replay records its missing attestations from
+[PyPI's analysis](https://blog.pypi.org/posts/2024-12-11-ultralytics-attack-analysis/).
 
 ```text
-examplelib 2.6.1 → 2.6.2: WARN
-  WARN  GRN-T001 lost-provenance: 1 file(s) in 2.6.2 have no attestation; every file of 2.6.1 had one
-           - examplelib-2.6.2-py3-none-any.whl: no attestation
-           - 2.6.1 was attested by github.com/example/examplelib .github/workflows/release.yml
+ultralytics 8.3.44 → 8.3.45: WARN
+  WARN  GRN-T001 lost-provenance: 2 file(s) in 8.3.45 have no attestation; every file of 8.3.44 had one
+           - ultralytics-8.3.45-py3-none-any.whl: no attestation
+           - ultralytics-8.3.45.tar.gz: no attestation
+           - 8.3.44 was attested by github.com/ultralytics/ultralytics .github/workflows/publish.yml
 ```
+
+The same rule reported ultralytics 8.3.46. It couldn't fire for the other replayed
+token uploads (lightning, litellm, telnyx, xinference, mistralai, durabletask and others):
+none of those projects attested releases before the attack, so there was no provenance to
+lose. Nor could it fire for ultralytics 8.3.41 and 8.3.42, which the project's own hijacked
+workflow built and attested.
 
 ## How to resolve it
 

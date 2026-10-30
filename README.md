@@ -12,7 +12,7 @@
   <a href="https://scorecard.dev/viewer/?uri=github.com/orca-solutions/garnet-guard"><img src="https://api.scorecard.dev/projects/github.com/orca-solutions/garnet-guard/badge" alt="OpenSSF Scorecard" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-8E1B2C" alt="License: Apache-2.0" height="20"></a>
   <img src="https://img.shields.io/badge/status-pre--alpha-5C636B" alt="Status: pre-alpha" height="20">
-  <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20releases-7%2F7%20warn-8E1B2C" alt="Replayed malicious releases: 7 of 7 warn" height="20"></a>
+  <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20releases-48%2F51%20warn-8E1B2C" alt="Replayed malicious releases: 48 of 51 warn" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/clean.toml"><img src="https://img.shields.io/badge/clean%20updates-0%2F20%20warn-1B1F24" alt="Clean updates: 0 of 20 warn" height="20"></a>
 </p>
 
@@ -34,6 +34,7 @@ The most damaging supply-chain attacks of 2025–26 did not come from obscure ty
 - **lightning 2.6.2 / 2.6.3 (PyPI, April 2026)** was uploaded outside the project's CI, with no matching git tag, and ran its payload at import time.
 - **elementary-data 0.23.3 (PyPI, April 2026)** was published by the project's own hijacked pipeline and added a `.pth` file that runs on every Python start.
 - **litellm 1.82.7 / 1.82.8 and telnyx 4.87.1 / 4.87.2 (PyPI, March 2026)** were uploaded with publish tokens stolen through a poisoned security scanner in CI, and ran their payloads at import time; litellm 1.82.8 also added a `.pth` file.
+- **ultralytics 8.3.41 / 8.3.42 (PyPI, December 2024)** were built and signed by the project's own release workflow after its build cache was poisoned; 8.3.45 / 8.3.46 followed days later with a publish token left in CI.
 - **chalk, debug and the Shai-Hulud worm (npm, September 2025)** spread through hijacked accounts to 500+ packages.
 
 Malware feeds caught these only after the fact. Cooldowns only buy time. pip and uv do not verify PyPI's signing attestations at all. But each malicious release *differed from the previous good release* in ways a machine can check. Garnet checks them.
@@ -90,19 +91,33 @@ Until the Action has a tagged release, `<release-commit-sha>` is a placeholder. 
 
 ## Replays of real attacks
 
-We fed the original malicious files from the 2026 PyPI compromises through `garnet diff`, using each project's previous release as the baseline. The files are still served by files.pythonhosted.org and are checked against PyPI's published hashes. Nothing was executed. Known-bad feeds were switched off, so these results show only what the release diff found by itself.
+We fed the original malicious files from 36 compromised PyPI packages (47 malicious releases, December 2024 to September 2026) through `garnet diff`, using each project's previous release as the baseline. The files are still served by files.pythonhosted.org and are checked against PyPI's published hashes. Nothing was executed. Known-bad feeds were switched off, so these results show only what the release diff found by itself. Git tags are checked as they stood on the day of each upload.
 
-| Release | Result | Rules that fired |
-|---|---|---|
-| lightning 2.6.1 → 2.6.2 | warn | GRN-C003 `subprocess.Popen` reached at import from `lightning/__init__.py:14`; GRN-T004 no tag `2.6.2` |
-| lightning 2.6.1 → 2.6.3 | warn | GRN-C003, GRN-T004 |
-| elementary-data 0.23.2 → 0.23.3 | warn | GRN-C001 new `elementary.pth` with an `exec` of a base64 payload |
-| litellm 1.82.6 → 1.82.7 | warn | GRN-C003 `subprocess.run` at import in `litellm/proxy/proxy_server.py:139` |
-| litellm 1.82.6 → 1.82.8 | warn | GRN-C001 new `litellm_init.pth` that starts a base64 payload; GRN-C003 |
-| telnyx 4.87.0 → 4.87.1 | warn | GRN-C003 `subprocess.Popen` reached at import in `telnyx/_client.py:7810`; GRN-T004 no tag `v4.87.1` |
-| telnyx 4.87.0 → 4.87.2 | warn | GRN-C003 `subprocess`, `urllib.request` reached at import in `telnyx/_client.py`; GRN-T004 no tag `v4.87.2` |
-| 20 clean updates ([list](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/clean.toml)) | 0 warn | none |
-| 9,439 updates of the top 1,000 PyPI packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-pypi-1000/REPORT.md)) | 220 flagged for a look (2.3%); none makes a false claim | GRN-C003 65, GRN-C002 57, GRN-T004 49, GRN-T001 18, GRN-T003 16, GRN-T002 14, GRN-C001 3 |
+**44 of 47 malicious releases got a warning. 3 got none.**
+
+| Package | Malicious releases | Result | Rules that fired |
+|---|---|---|---|
+| lightning | 2.6.2, 2.6.3 | warn | GRN-C003 `subprocess.Popen` reached at import from `lightning/__init__.py:14`; GRN-T004 no tag |
+| elementary-data | 0.23.3 | warn | GRN-C001 new `elementary.pth` with an `exec` of a base64 payload |
+| litellm | 1.82.7, 1.82.8 | warn | GRN-C003 `subprocess.run` at import in `litellm/proxy/proxy_server.py`; 1.82.8 also GRN-C001 new `litellm_init.pth` |
+| telnyx | 4.87.1, 4.87.2 | warn | GRN-C003 `subprocess`, `urllib.request` reached at import in `telnyx/_client.py`; GRN-T004 no tag |
+| ultralytics | 8.3.45, 8.3.46 | warn | GRN-T001 no attestation where 8.3.44 had one; GRN-C003 `os.system` at import in `ultralytics/__init__.py`; GRN-T004 no tag |
+| ultralytics | 8.3.41 | warn | GRN-T004 only: no tag `v8.3.41` |
+| ultralytics | **8.3.42** | **pass (missed)** | none: see the limits below |
+| num2words | 0.5.15, 0.5.16 | warn | GRN-T004 no tag; GRN-E002 couldn't parse `num2words/_build.py`, a Windows DLL named `.py` |
+| xinference | 2.6.0, 2.6.1, 2.6.2 | warn | GRN-C003 `subprocess` at import in `xinference/__init__.py`; GRN-T004 no tag |
+| mistralai | 2.4.6 | warn | GRN-C003 `subprocess` reached at import in `mistralai/client/__init__.py`; GRN-T004 no tag |
+| guardrails-ai | 0.10.1 | warn | GRN-C003 `urllib.request`, `subprocess.run` at import in `guardrails/__init__.py` |
+| durabletask | 1.4.1, 1.4.2, 1.4.3 | warn | GRN-C003 `urllib.request.urlretrieve`, `subprocess.Popen` at import in `durabletask/__init__.py`; GRN-T004 no tag |
+| memoryos | 2.0.34 | warn | GRN-C002 build backend changed to an in-tree `sckit_poetry_build` |
+| gpsea, pyphetools, ppkt2synergy | 0.9.14, 0.9.120, 0.1.1 | warn | GRN-C001 new `.pth` file that downloads and runs Bun; gpsea also GRN-T004 |
+| embiggen | **0.11.97** | **pass (missed)** | none: see the limits below |
+| cmd2func, coolbox, executor-engine, executor-http, funcdesc, mrbios, okite, uprobe | 0.2.2, 0.4.1, 0.3.4, 0.1.3, 0.2.2, 0.1.1, 0.0.7, 0.1.3 | warn | GRN-C001 new `<name>-setup.pth` (the same Hades payload); GRN-T004 no tag |
+| mem8, phenopacket-store-toolkit | 6.0.1, 0.1.7 | warn | GRN-C001 new `<name>-setup.pth`; GRN-T004 no tag |
+| bramin, dreamgen, ensmallen, magique, magique-ai, napari-ufish, nucbox, pantheon-agents, pantheon-toolsets, synago | 0.0.3, 1.8.1, 0.8.101, 0.6.9, 0.4.5, 0.0.3, 0.1.2, 0.6.1, 0.5.5, 0.1.1 | warn | GRN-C001 new `<name>-setup.pth` only; GRN-T004 had nothing to check, see the limits below |
+| mrmustard | **0.7.4** | **pass (missed)** | none: see the limits below |
+| 20 clean updates ([list](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/clean.toml)) | | 0 warn | none |
+| 9,439 updates of the top 1,000 PyPI packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-pypi-1000/REPORT.md)) | | 220 flagged for a look (2.3%); none makes a false claim | GRN-C003 65, GRN-C002 57, GRN-T004 49, GRN-T001 18, GRN-T003 16, GRN-T002 14, GRN-C001 3 |
 
 The same replay covers the npm account takeovers of August and September 2025. npm deletes the tarball of a removed version, so these use the registry facts the public write-ups recorded (provenance present or not, the `package.json` scripts) and fetch the previous release and the repository's tags live. The malicious tarballs were not inspected.
 
@@ -115,15 +130,20 @@ The same replay covers the npm account takeovers of August and September 2025. n
 | 8,742 updates of the top 1,000 npm packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-npm-1000/REPORT.md)) | 146 flagged for a look (1.7%); none makes a false claim | GRN-T004 89, GRN-T001 48, GRN-T002 3, GRN-C002 3, GRN-T003 2, GRN-T005 1 |
 
 Limits, stated plainly:
-- GRN-T001 (lost provenance) couldn't fire in any case, because none of these projects signed its releases before the attack.
-- GRN-T004 uses the git tags as they stood when each release was uploaded, recorded with evidence in [incidents.toml](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml). Against today's tags it would also report elementary-data 0.23.3 (the attacker's tag was deleted later) and miss telnyx 4.87.1 (Telnyx tagged its own 4.87.1 that evening).
-- GRN-T004 couldn't fire for litellm, which doesn't tag plain version numbers.
+- **ultralytics 8.3.42 was missed.** The project's own release workflow built and published it through Trusted Publishing, with valid attestations and its usual git tag, after a GitHub Actions cache-poisoning attack. The miner runs when a model is downloaded, not at import, so no current rule sees it. Against today's tags GRN-T004 would report it, but only because the tag was deleted afterwards.
+- **embiggen 0.11.97 was missed.** The trusted release, 0.11.96, shipped only an sdist, and 0.11.97 shipped only a wheel. Content rules found no pair of artifacts to compare, and they passed silently instead of saying they couldn't check. That's a bug, and a fix is planned. embiggen doesn't tag releases, so GRN-T004 couldn't fire either.
+- **mrmustard 0.7.4 was missed.** `mrmustard/__init__.py` calls a new function at import, and GRN-C003 follows it. That function starts a thread whose target is a function defined inside it, and the thread body is where `subprocess` and `urllib.request` are called. GRN-C003 follows a function handed to a call only when it is defined at module level, so it stopped one step short. A fix is planned. No `v0.7.4` tag exists, but the package's metadata links no repository, so GRN-T004 had nowhere to look.
+- **24 of the 47 releases carry the same June 2026 Hades `<name>-setup.pth` payload**, one release in each of 24 packages. They are 24 instances of one technique, mostly in small projects: four of those packages had a single earlier release, and bramin's trusted release dates from 2020. Counted by technique, the set covers five: a `.pth` startup hook, code that runs at import, a swapped build backend, a DLL named `.py`, and a payload that runs on use rather than at import.
+- GRN-T001 (lost provenance) fired only for ultralytics 8.3.45 and 8.3.46. ultralytics is the only one of these projects that attested its releases before the attack. PyPI no longer serves provenance for removed releases, so the replay records ultralytics' missing attestations from [PyPI's analysis](https://blog.pypi.org/posts/2024-12-11-ultralytics-attack-analysis/).
+- When the attacker controls the project's CI (elementary-data, ultralytics 8.3.41/8.3.42, memoryos), provenance looks normal, and content rules carry the result. memoryos' payload hides behind a logging setup function, so GRN-C003 missed it, and only its sdist's changed build backend was flagged. num2words' payload loads a DLL through `getattr(ctypes, "CDLL")`, which GRN-C003 doesn't follow. Planned GRN-C004 (new binary) would report both.
+- GRN-T004 uses the git tags as they stood when each release was uploaded, recorded with evidence in [incidents.toml](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml). Against today's tags it would also report elementary-data 0.23.3 and ultralytics 8.3.42 (both tags were deleted later), and miss telnyx 4.87.1, gpsea 0.9.14 and uprobe 0.1.3 (all three projects later tagged a real release with that number). It couldn't fire for litellm, embiggen and bramin, which don't tag plain version numbers or don't tag at all; for the nine packages whose metadata links no repository (ensmallen, guardrails-ai, magique, magique-ai, mrmustard, napari-ufish, nucbox, pantheon-toolsets, synago) and ppkt2synergy, whose repository has no tags; or for pyphetools and dreamgen, whose repositories are no longer public (reported as GRN-E001). pantheon-agents has a `v0.6.1` tag today that points at a commit from eleven days before the upload; a lightweight tag carries no date of its own, so the replay treats it as already there and the rule stays quiet.
+- ensmallen's `datasets/` modules are larger than Garnet's parse limit in both releases. It reported that as GRN-E003 and still found the `.pth`.
 - In telnyx 4.87.1 a typo stopped the payload from running. GRN-C003 reads code; it reports what the module calls at import, not whether the call would succeed.
-- The litellm 1.82.7 and telnyx 4.87.1 sdists aren't replayed, because no public source gives their URLs. The wheels are, and content rules compare wheels.
-- Twenty clean updates is a small sample. The clean-corpus backtests cover the last 11 releases of the top 1,000 PyPI and npm packages: every warning there states something true, but none of those updates is malicious, so each is a false alarm a reviewer has to dismiss.
+- The litellm 1.82.7 sdist isn't replayed, because no public source gives its URL. Its wheel is, and content rules compare wheels.
 - chalk and debug are reported by the missing tag alone: they never used provenance, and the one changed file, `index.js`, is gone from the registry. A JavaScript content rule is still to come.
+- Twenty clean updates is a small sample. The clean-corpus backtests cover the last 11 releases of the top 1,000 PyPI and npm packages: every warning there states something true, but none of those updates is malicious, so each is a false alarm a reviewer has to dismiss.
 
-Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightning](https://snyk.io/blog/lightning-pypi-compromise-bun-based-credential-stealer), [CSA on elementary-data](https://labs.cloudsecurityalliance.org/research/csa-research-note-pypi-elementarydata-supply-chain-20260429/), [PyPI's incident report on litellm and telnyx](https://blog.pypi.org/posts/2026-04-02-incident-report-litellm-telnyx-supply-chain-attack/), and the files from DataDog's malicious-software-packages dataset.
+Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightning](https://snyk.io/blog/lightning-pypi-compromise-bun-based-credential-stealer), [CSA on elementary-data](https://labs.cloudsecurityalliance.org/research/csa-research-note-pypi-elementarydata-supply-chain-20260429/), [PyPI's incident report on litellm and telnyx](https://blog.pypi.org/posts/2026-04-02-incident-report-litellm-telnyx-supply-chain-attack/), [PyPI's analysis of ultralytics](https://blog.pypi.org/posts/2024-12-11-ultralytics-attack-analysis/), [The Hacker News on the Hades campaign](https://thehackernews.com/2026/06/hades-pypi-attack-19-packages-poisoned.html), [StepSecurity on mrmustard](https://www.stepsecurity.io/blog/compromised-pypi-mrmustard-0-7-4-credential-stealer), the OSV advisory named on each entry in incidents.toml, the PyPI snapshots in DataDog's malicious-software-packages dataset, and the file hashes in [ossf/malicious-packages](https://github.com/ossf/malicious-packages).
 
 ## Try it today (0.1 preview)
 
@@ -144,7 +164,7 @@ The replays run from a checkout of this repository:
 
 ```sh
 uv sync
-uv run python -m backtest      # replay the 2026 attacks (7 malicious releases) and the clean corpus
+uv run python -m backtest      # replay 51 malicious releases and the clean corpus
 ```
 
 `garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files. Lines it can't check (not pinned with `==`, or from git, a path or a private index) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. `garnet --help` lists every option.
