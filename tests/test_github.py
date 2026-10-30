@@ -27,6 +27,23 @@ def test_no_match() -> None:
     assert match_tag(TAGS, "x", "not a version") is None
 
 
+def test_monorepo_directory_tags() -> None:
+    # Real tag names: open-telemetry/opentelemetry-js and import-js/eslint-plugin-import.
+    tags = {"api/v1.4.1": "a", "v1.4.0": "b", "utils/v2.8.1": "c", "resolvers/node/v0.3.3": "d"}
+    assert match_tag(tags, "@opentelemetry/api", "1.4.1", npm=True).name == "api/v1.4.1"
+    assert match_tag(tags, "eslint-module-utils", "2.8.1", npm=True).name == "utils/v2.8.1"
+    assert match_tag(tags, "eslint-import-resolver-node", "0.3.3").name == "resolvers/node/v0.3.3"
+    assert match_tag({"pkgs/demo/1.0": "e"}, "demo", "1.0.0").name == "pkgs/demo/1.0"
+
+
+def test_monorepo_directory_tag_must_name_the_package() -> None:
+    tags = {"api/v1.4.1": "a", "sdk-metrics/v2.0.0": "b", "utils/v2.8.1": "c"}
+    assert match_tag(tags, "@opentelemetry/sdk-trace", "1.4.1", npm=True) is None
+    assert match_tag(tags, "@opentelemetry/api", "2.0.0", npm=True) is None
+    assert match_tag(tags, "eslint-module-utils", "2.8.2") is None
+    assert match_tag(tags, "utils-extra", "2.8.1") is None
+
+
 def _pkt(line: str) -> bytes:
     data = line.encode() + b"\n"
     return f"{len(data) + 4:04x}".encode() + data

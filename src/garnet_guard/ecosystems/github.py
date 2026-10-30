@@ -110,6 +110,17 @@ def _prefixes(package: str, *, npm: bool = False) -> list[str]:
     return out
 
 
+def _dir_names(package: str) -> set[str]:
+    """Directory names a monorepo may tag the package under, as ``<dir>/vX``.
+
+    The name without its npm scope, and each run of its trailing hyphenated
+    words: ``eslint-module-utils`` is tagged ``utils/v2.8.1`` and
+    ``eslint-import-resolver-node`` is tagged ``resolvers/node/v0.3.3``.
+    """
+    words = package.rpartition("/")[2].replace("_", "-").split("-")
+    return {"-".join(words[i:]) for i in range(len(words)) if words[i]}
+
+
 def _as_version(text: str) -> Version | None:
     try:
         return Version(text)
@@ -127,22 +138,33 @@ def match_tag(
 ) -> TagInfo | None:
     """SPEC GRN-T004: accept X, vX, <name>-X and <name>-vX (and <name>@X for npm).
 
+    Monorepos that tag by directory (``api/v1.4.1``, ``resolvers/node/v0.3.3``)
+    match too, when the directory names the package: see ``_dir_names``.
     An exact name wins. Otherwise X is compared as a PEP 440 version, so
     tag ``2026.01.04`` matches release ``2026.1.4``.
     """
     prefixes = _prefixes(package, npm=npm)
+    dirs = _dir_names(package)
     for p in prefixes:
         for name in (f"{p}{version}", f"{p}v{version}"):
             if name in tags:
                 return TagInfo(name=name, sha=tags[name], repo=repo)
+    for name in sorted(tags):
+        folder, _, leaf = name.rpartition("/")
+        if folder.rpartition("/")[2] in dirs and leaf in (version, f"v{version}"):
+            return TagInfo(name=name, sha=tags[name], repo=repo)
     wanted = _as_version(version)
     if wanted is None:
         return None
     for name in sorted(tags):
-        for p in prefixes:
-            if not name.startswith(p):
+        folder, _, leaf = name.rpartition("/")
+        candidates = [(p, name) for p in prefixes]
+        if folder.rpartition("/")[2] in dirs:
+            candidates.append(("", leaf))
+        for p, text in candidates:
+            if not text.startswith(p):
                 continue
-            rest = name[len(p) :]
+            rest = text[len(p) :]
             rest = rest[1:] if rest[:1] in ("v", "V") else rest
             if rest and rest[0].isdigit() and _as_version(rest) == wanted:
                 return TagInfo(name=name, sha=tags[name], repo=repo)

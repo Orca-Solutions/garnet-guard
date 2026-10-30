@@ -19,8 +19,12 @@ status: implemented
 The trusted version has a matching git tag in the project's source repository and the new
 version has none. A tag matches if it is named `X`, `vX`, `<name>-X` or `<name>-vX`, where
 `<name>` is the package name. For npm packages `<name>@X` also matches, with or without
-the `@scope/`, since monorepo tools tag that way. An exact name wins; otherwise `X` is
-compared as a PEP 440 version, so tag `2026.01.04` matches release `2026.1.4`.
+the `@scope/`, since monorepo tools tag that way. Monorepos that tag by folder match too:
+`<dir>/X` or `<dir>/vX`, when the folder's last part is the package name without its scope
+or the end of it (`api/v1.4.1` for `@opentelemetry/api`, `utils/v2.8.1` for
+`eslint-module-utils`, `resolvers/node/v0.3.3` for `eslint-import-resolver-node`). An exact
+name wins; otherwise `X` is compared as a PEP 440 version, so tag `2026.01.04` matches
+release `2026.1.4`.
 
 Garnet Guard looks for the tag in the repository named by the attestation first, then in
 the repository in the package's project URLs, and accepts a tag in either. Some projects

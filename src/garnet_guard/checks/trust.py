@@ -42,19 +42,26 @@ def lost_provenance(
     """
     if base is None or not _all_verified(base):
         return
-    missing = [a for a, p in _provs(cand) if p is not None and not p.present]
+    missing = [(a, p) for a, p in _provs(cand) if p is not None and not p.present]
     if missing:
+        # An attestation the registry lists but doesn't serve is still missing,
+        # but the title says so instead of claiming there is none.
+        what = (
+            "no attestation"
+            if any(p.error is None for _, p in missing)
+            else "no attestation served"
+        )
         yield RawFinding(
             "GRN-T001",
-            f"{len(missing)} file(s) in {cand.version} have no attestation; every file of {base.version} had one",
+            f"{len(missing)} file(s) in {cand.version} have {what}; every file of {base.version} had one",
             tuple(
                 Evidence(
                     "attestation",
-                    f"{a.filename}: no attestation",
+                    f"{a.filename}: {p.error or 'no attestation'}",
                     path=a.filename,
                     sha256=a.sha256 or None,
                 )
-                for a in missing
+                for a, p in missing
             )
             + (_base_identity(base),),
         )
