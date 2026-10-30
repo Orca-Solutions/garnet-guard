@@ -13,7 +13,7 @@
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-8E1B2C" alt="License: Apache-2.0" height="20"></a>
   <a href="https://pypi.org/project/garnet-guard/"><img src="https://img.shields.io/pypi/v/garnet-guard?color=8E1B2C" alt="PyPI version" height="20"></a>
   <img src="https://img.shields.io/badge/status-pre--alpha-5C636B" alt="Status: pre-alpha" height="20">
-  <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20releases-51%2F51%20warn-8E1B2C" alt="Replayed malicious releases: 51 of 51 warn" height="20"></a>
+  <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20releases-52%2F52%20warn-8E1B2C" alt="Replayed malicious releases: 52 of 52 warn" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard#replays-of-real-malicious-releases"><img src="https://img.shields.io/badge/clean%20updates-2.0%25%20flagged%20(366%2F18%2C181)-1B1F24" alt="Clean updates: 366 of 18,181 flagged for a look (2.0%), none a false claim" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/actions/workflows/garnet-guard.yml"><img src="https://raw.githubusercontent.com/orca-solutions/garnet-guard/main/docs/brand/badge/checked-by-garnet-guard.svg" alt="Dependencies checked by Garnet Guard" height="20"></a>
 </p>
@@ -161,7 +161,7 @@ The replays run from a checkout of this repository:
 
 ```sh
 uv sync
-uv run python -m backtest      # replay 51 malicious releases and the clean corpus
+uv run python -m backtest      # replay 52 malicious releases and the clean corpus
 ```
 
 `garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files. Lines it can't check (not pinned with `==`, or from git, a path or a private index) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. `garnet --help` lists every option.
