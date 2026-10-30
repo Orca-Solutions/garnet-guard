@@ -4,7 +4,7 @@
 - Date: 2026-10-10
 - Companion to: [SPEC-v1.md](SPEC-v1.md) (what Garnet does) and [ARCHITECTURE.md](../ARCHITECTURE.md) (the overview). This document says how the code is organized and what the Python API looks like.
 
-> **This is the 1.0 design; 0.1 builds part of it.** The layers and import rules in §2 are enforced today. Of the API in §3, 0.1 exports `compare`, `report`, `explain`, `Options`, `Report` and the models; `evaluate` and `diff_lockfiles` exist in `garnet_guard.engine` but aren't exported yet; `load_policy`, `Policy`, `Ignore` and `PolicyError` are exported; the cache and npm aren't built; SARIF is `garnet_guard.sarif.to_sarif`, not yet a `Report` method. [CODE_TOUR.md](CODE_TOUR.md) describes the code as it is now, module by module.
+> **This is the 1.0 design; 0.1 builds part of it.** The layers and import rules in §2 are enforced today. Of the API in §3, 0.1 exports `compare`, `report`, `explain`, `Options`, `Report` and the models; `evaluate` and `diff_lockfiles` exist in `garnet_guard.engine` but aren't exported yet; `load_policy`, `Policy`, `Ignore` and `PolicyError` are exported; the cache isn't built; SARIF is `garnet_guard.sarif.to_sarif`, not yet a `Report` method. npm is built for `compare` and `evaluate` (`ecosystems/npm.py`, `ecosystems/npm_provenance.py`, `facts/npmmeta.py`); the npm lockfile parsers aren't. [CODE_TOUR.md](CODE_TOUR.md) describes the code as it is now, module by module.
 
 ## 1. Design goals
 

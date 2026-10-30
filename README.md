@@ -114,6 +114,16 @@ We fed the original malicious files from 15 compromised PyPI packages (26 malici
 | embiggen | **0.11.97** | **pass (missed)** | none: see the limits below |
 | 20 clean updates ([list](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/clean.toml)) | | 0 warn | none |
 
+The same replay covers the npm account takeovers of August and September 2025. npm deletes the tarball of a removed version, so these use the registry facts the public write-ups recorded (provenance present or not, the `package.json` scripts) and fetch the previous release and the repository's tags live. The malicious tarballs were not inspected.
+
+| Release | Result | Rules that fired |
+|---|---|---|
+| chalk 5.6.0 → 5.6.1 | warn | GRN-T004 no tag `v5.6.1` where `v5.6.0` exists |
+| debug 4.4.1 → 4.4.2 | warn | GRN-T004 no tag `4.4.2` |
+| nx 21.4.1 → 21.5.0 | warn | GRN-T001 21.4.1 had provenance, 21.5.0 has none; GRN-C002 `postinstall` became `node telemetry.js`; GRN-T004 no tag |
+| @ctrl/tinycolor 4.1.0 → 4.1.1 | warn | GRN-C002 new `postinstall` running `node bundle.js`; GRN-T004 no tag |
+| 1,809 updates of the top 200 npm packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-npm/REPORT.md)) | 33 warn (1.8%) | GRN-T004 25, GRN-T001 5, GRN-T002 2, GRN-T003 1 |
+
 Limits, stated plainly:
 - **ultralytics 8.3.42 was missed.** The project's own release workflow built and published it through Trusted Publishing, with valid attestations and its usual git tag, after a GitHub Actions cache-poisoning attack. The miner runs when a model is downloaded, not at import, so no current rule sees it. Against today's tags GRN-T004 would report it, but only because the tag was deleted afterwards.
 - **embiggen 0.11.97 was missed.** The trusted release, 0.11.96, shipped only an sdist, and 0.11.97 shipped only a wheel. Content rules found no pair of artifacts to compare, and they passed silently instead of saying they couldn't check. That's a bug, and a fix is planned. embiggen doesn't tag releases, so GRN-T004 couldn't fire either.
@@ -122,18 +132,20 @@ Limits, stated plainly:
 - GRN-T004 uses the git tags as they stood when each release was uploaded, recorded with evidence in [incidents.toml](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml). Against today's tags it would also report elementary-data 0.23.3 and ultralytics 8.3.42 (both tags were deleted later), and miss telnyx 4.87.1 and gpsea 0.9.14 (both projects later tagged a real release with that number). It couldn't fire for litellm and embiggen, which don't tag plain version numbers, for guardrails-ai and ppkt2synergy, whose package links no repository or has no tags, or for pyphetools, whose repository is no longer public (reported as GRN-E001).
 - In telnyx 4.87.1 a typo stopped the payload from running. GRN-C003 reads code; it reports what the module calls at import, not whether the call would succeed.
 - The litellm 1.82.7 sdist isn't replayed, because no public source gives its URL. Its wheel is, and content rules compare wheels.
+- chalk and debug are reported by the missing tag alone: they never used provenance, and the one changed file, `index.js`, is gone from the registry. A JavaScript content rule is still to come.
 - Twenty clean updates is a small sample. The [clean-corpus backtest](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results/REPORT.md) covers 974 updates of the top 100 PyPI packages.
 
 Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightning](https://snyk.io/blog/lightning-pypi-compromise-bun-based-credential-stealer), [CSA on elementary-data](https://labs.cloudsecurityalliance.org/research/csa-research-note-pypi-elementarydata-supply-chain-20260429/), [PyPI's incident report on litellm and telnyx](https://blog.pypi.org/posts/2026-04-02-incident-report-litellm-telnyx-supply-chain-attack/), [PyPI's analysis of ultralytics](https://blog.pypi.org/posts/2024-12-11-ultralytics-attack-analysis/), the OSV advisory named on each entry in incidents.toml, and the files and PyPI snapshots from DataDog's malicious-software-packages dataset.
 
 ## Try it today (0.1 preview)
 
-`garnet diff` compares two releases of one PyPI package, and `garnet check` compares two lockfiles:
+`garnet diff` compares two releases of one PyPI or npm package, and `garnet check` compares two lockfiles:
 
 ```sh
 pip install --pre garnet-guard   # or run it without installing: uvx garnet-guard check --git-base main
 garnet diff requests 2.32.4 2.32.5
 garnet diff pypi:lightning 2.6.4 2.6.5 --format json
+garnet diff npm:chalk 5.6.0 5.6.2
 garnet check --git-base main   # every lockfile here, against the same files on main
 garnet check --base old/uv.lock --head uv.lock
 garnet policy check            # validate garnet.toml and list its ignores
@@ -153,7 +165,7 @@ The exit code is 0 below `--fail-on` (default: the policy's `fail_on`, else `blo
 
 ## Ecosystems
 
-Python first (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt). npm (package-lock, pnpm-lock, yarn.lock) follows.
+Python first (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt). npm is checked by `garnet diff npm:<name> <old> <new>` (provenance, tags, install scripts, OSV); the npm lockfile parsers (package-lock, pnpm-lock, yarn.lock) follow.
 
 ## Project
 

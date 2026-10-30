@@ -29,20 +29,23 @@ def known_malicious(
         )
 
 
+BOTH = frozenset({"pypi", "npm"})
+PYPI = frozenset({"pypi"})
+
 # (rule id, function, ecosystems). Diff rules return nothing without a baseline.
 ALL_CHECKS: tuple[tuple[str, CheckFn, frozenset[str]], ...] = (
-    ("GRN-T001", trust.lost_provenance, frozenset({"pypi"})),
-    ("GRN-T002", trust.publisher_changed, frozenset({"pypi"})),
-    ("GRN-T003", trust.workflow_changed, frozenset({"pypi"})),
-    ("GRN-T004", trust.no_matching_tag, frozenset({"pypi"})),
-    ("GRN-T005", trust.outside_trusted_publishing, frozenset({"pypi"})),
-    ("GRN-T007", trust.invalid_attestation, frozenset({"pypi"})),
-    ("GRN-T008", trust.hash_mismatch, frozenset({"pypi"})),
-    ("GRN-C001", content.new_pth_file, frozenset({"pypi"})),
-    ("GRN-C002", content.new_build_hook, frozenset({"pypi"})),
-    ("GRN-C003", content.new_import_time_exec, frozenset({"pypi"})),
-    ("GRN-K001", known_malicious, frozenset({"pypi"})),
-    ("GRN-E002", content.unparsed_changed, frozenset({"pypi"})),
+    ("GRN-T001", trust.lost_provenance, BOTH),
+    ("GRN-T002", trust.publisher_changed, BOTH),
+    ("GRN-T003", trust.workflow_changed, BOTH),
+    ("GRN-T004", trust.no_matching_tag, BOTH),
+    ("GRN-T005", trust.outside_trusted_publishing, BOTH),
+    ("GRN-T007", trust.invalid_attestation, BOTH),
+    ("GRN-T008", trust.hash_mismatch, BOTH),
+    ("GRN-C001", content.new_pth_file, PYPI),
+    ("GRN-C002", content.new_build_hook, BOTH),
+    ("GRN-C003", content.new_import_time_exec, PYPI),
+    ("GRN-K001", known_malicious, BOTH),
+    ("GRN-E002", content.unparsed_changed, PYPI),
 )
 
 __all__ = ["ALL_CHECKS", "DOCS", "CheckFn"]

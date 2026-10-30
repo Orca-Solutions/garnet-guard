@@ -238,7 +238,7 @@ def render(doc: Mapping[str, Any]) -> dict[str, Any]:
             {
                 "tool": {
                     "driver": {
-                        "name": "garnet",
+                        "name": "Garnet Guard",
                         "fullName": "Garnet Guard",
                         "version": __version__,
                         "informationUri": INFO_URI,
