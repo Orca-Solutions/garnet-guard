@@ -14,7 +14,7 @@ HTTPS). Nothing is executed.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 
 from ..facts.pyindex import sensitive_calls
 from ..models import ArtifactFacts, SourceMatch, TagInfo, UnsourcedFile
@@ -80,14 +80,18 @@ def find_prefix(paths: Iterable[str], files: Mapping[str, object]) -> str:
     return max(votes, key=lambda k: (votes[k], -len(k), k))
 
 
-def match_artifact(trees: TreeLookup, tag: TagInfo, art: ArtifactFacts) -> SourceMatch:
+def match_artifact(
+    trees: TreeLookup, tag: TagInfo, art: ArtifactFacts, source_of: Callable[[str], bytes]
+) -> SourceMatch:
     """Compare the artifact's parsed Python files with the tag's source tree.
 
     A published file counts as sourced when its exact bytes are anywhere in
-    the tree (submodules included). Otherwise it is compared with the file at
-    the same path under ``prefix``, when there is one. Raises ``NetError``
-    when the tree or a needed file can't be read. Source files are fetched
-    only for published files that have sensitive calls.
+    the tree (submodules included). Otherwise ``source_of`` reads it back
+    from the artifact, its sensitive calls are indexed, and it is compared
+    with the file at the same path under ``prefix``, when there is one.
+    Raises ``NetError`` when the tree or a needed file can't be read. Only
+    the files that differ are read back and parsed again, and source files
+    are fetched only for those that have sensitive calls.
     """
     assert tag.sha is not None and tag.repo is not None
     files, unreadable = repo_files(trees, tag.repo, tag.sha)
@@ -109,7 +113,10 @@ def match_artifact(trees: TreeLookup, tag: TagInfo, art: ArtifactFacts) -> Sourc
         if source is None and any(full.startswith(u + "/") for u in unreadable):
             unchecked.append(m.path)
             continue
-        calls = m.sensitive_calls
+        try:
+            calls = sensitive_calls(source_of(m.path), path=m.path, own=own)
+        except (SyntaxError, ValueError, RecursionError):
+            calls = ()  # inventory parsed it once; nothing more can be said
         if calls and source is not None:
             repo, sha = source
             try:

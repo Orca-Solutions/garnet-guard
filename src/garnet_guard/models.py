@@ -232,7 +232,6 @@ class ModuleIndex:
     top_level_calls: tuple[CallSite, ...]
     imports: tuple[str, ...]
     blob_sha1: str = ""  # the id git gives these bytes, to compare with the source tree
-    sensitive_calls: tuple[CallSite, ...] = ()  # §6.3 calls anywhere in the module
 
 
 @dataclass(frozen=True)

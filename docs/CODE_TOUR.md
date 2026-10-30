@@ -55,17 +55,16 @@ Every run goes through the same five stages, whichever command started it.
    `ecosystems/npm_provenance.py` for npm provenance). When a PyPI release has a matching tag,
    `ecosystems/gittree.py` reads the repository's file list at that commit over the same git
    endpoint as the tag lookup, and `ecosystems/source.py` compares the wheel's Python files
-   with it. When the new version declares a dependency the trusted one didn't, `engine.py`
-   asks the registry about that package (`package_profile()` in each ecosystem module) and
-   attaches the answer to the facts for GRN-C008, so the check itself stays free of I/O. A
-   failure in any step is recorded on the facts as an error naming the rules it kept from
-   running.
+   with it, reading back and indexing only the few files that aren't in the tree. When the
+   new version declares a dependency the trusted one didn't, `engine.py` asks the registry
+   about that package (`package_profile()` in each ecosystem module) and attaches the answer
+   to the facts for GRN-C008, so the check itself stays free of I/O. A failure in any step is
+   recorded on the facts as an error naming the rules it kept from running.
 3. **Read the files.** `facts/inventory.py` lists every file in an archive with its size,
    hash and kind. `facts/pyindex.py` parses each Python file with `ast` (Python's own
    parser, which reads code as a tree without running it) and records the sensitive calls
-   that run at import time, every sensitive call anywhere in the file, and the id git would
-   give the file's bytes. `facts/npmmeta.py` reads an npm tarball's file list and the
-   install-time scripts in its `package.json`.
+   that run at import time and the id git would give the file's bytes. `facts/npmmeta.py`
+   reads an npm tarball's file list and the install-time scripts in its `package.json`.
 4. **Judge.** `checks/` holds one function per rule. Each takes the baseline facts and the
    candidate facts and returns findings. Checks do no network or file access at all, so a
    test can hand them made-up facts and know exactly what should come back.

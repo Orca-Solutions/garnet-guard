@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 
 import pytest
 
 from garnet_guard.ecosystems.gittree import CommitFiles
 from garnet_guard.ecosystems.source import find_prefix, match_artifact, repo_files
-from garnet_guard.facts.inventory import git_blob_id
-from garnet_guard.models import TagInfo
+from garnet_guard.facts.inventory import file_reader, git_blob_id
+from garnet_guard.models import Limits, TagInfo
 from garnet_guard.net import NetError
-from tests.builders import release
+from tests.builders import release, sdist, wheel
 
 INIT = "def hello():\n    return 1\n"
 CLEAN_DL = "import subprocess\n\ndef run(cmd):\n    return cmd\n"
@@ -41,6 +42,17 @@ class FakeTrees:
 
 def blobs(*sources: str) -> dict[str, bytes]:
     return {git_blob_id(s.encode()): s.encode() for s in sources}
+
+
+def published(files: dict[str, str]) -> tuple[Callable[[str], bytes], list[str]]:
+    """A ``source_of`` reader over the wheel's files that records what was read back."""
+    asked: list[str] = []
+
+    def read(path: str) -> bytes:
+        asked.append(path)
+        return files[path].encode()
+
+    return read, asked
 
 
 def test_git_blob_id_matches_git() -> None:
@@ -83,10 +95,9 @@ def test_repo_files_expands_github_submodules_and_names_the_rest() -> None:
 
 
 def test_match_reports_calls_the_source_lacks_and_fetches_only_what_it_needs() -> None:
-    cand = release(
-        "1.1",
-        {"demo/__init__.py": INIT, "demo/dl.py": PAYLOAD_DL, "demo/_version.py": VERSION},
-    )
+    files = {"demo/__init__.py": INIT, "demo/dl.py": PAYLOAD_DL, "demo/_version.py": VERSION}
+    cand = release("1.1", files)
+    source_of, asked = published(files)
     trees = FakeTrees(
         {
             ("o/r", "c" * 40): CommitFiles(
@@ -99,7 +110,7 @@ def test_match_reports_calls_the_source_lacks_and_fetches_only_what_it_needs() -
         },
         blobs(INIT, CLEAN_DL),
     )
-    match = match_artifact(trees, TAG, cand.artifacts[0])  # type: ignore[arg-type]
+    match = match_artifact(trees, TAG, cand.artifacts[0], source_of)  # type: ignore[arg-type]
     assert (match.repo, match.tag, match.prefix, match.matched) == ("o/r", "v1.1", "src/", 1)
     assert [(u.path, u.in_source, [c.name for c in u.calls]) for u in match.unmatched] == [
         ("demo/_version.py", False, []),
@@ -107,10 +118,12 @@ def test_match_reports_calls_the_source_lacks_and_fetches_only_what_it_needs() -
     ]
     assert match.unmatched[1].calls[0].via == "run"
     assert trees.blob_requests == [git_blob_id(CLEAN_DL.encode())]  # not the version file
+    assert asked == ["demo/_version.py", "demo/dl.py"]  # the sourced file is never read back
 
 
 def test_identical_file_counts_as_sourced_wherever_the_build_put_it() -> None:
     cand = release("1.1", {"demo/_vendor/x.py": PAYLOAD_DL})
+    source_of, asked = published({})  # reading anything back would raise KeyError
     trees = FakeTrees(
         {
             ("o/r", "c" * 40): CommitFiles(
@@ -119,22 +132,24 @@ def test_identical_file_counts_as_sourced_wherever_the_build_put_it() -> None:
         },
         {},
     )
-    match = match_artifact(trees, TAG, cand.artifacts[0])  # type: ignore[arg-type]
+    match = match_artifact(trees, TAG, cand.artifacts[0], source_of)  # type: ignore[arg-type]
     assert (match.matched, match.unmatched) == (1, ())
 
 
 def test_match_is_quiet_when_the_source_has_the_same_call() -> None:
-    cand = release("1.1", {"demo/dl.py": PAYLOAD_DL + "\n# built\n"})
+    files = {"demo/dl.py": PAYLOAD_DL + "\n# built\n"}
+    cand = release("1.1", files)
     trees = FakeTrees(
         {("o/r", "c" * 40): CommitFiles({"demo/dl.py": git_blob_id(PAYLOAD_DL.encode())}, {})},
         blobs(PAYLOAD_DL),
     )
-    match = match_artifact(trees, TAG, cand.artifacts[0])  # type: ignore[arg-type]
+    match = match_artifact(trees, TAG, cand.artifacts[0], published(files)[0])  # type: ignore[arg-type]
     assert [(u.path, u.calls) for u in match.unmatched] == [("demo/dl.py", ())]
 
 
 def test_files_under_an_unreadable_submodule_are_unchecked_not_passed() -> None:
-    cand = release("1.1", {"demo/__init__.py": INIT, "demo/vendored/x.py": PAYLOAD_DL})
+    files = {"demo/__init__.py": INIT, "demo/vendored/x.py": PAYLOAD_DL}
+    cand = release("1.1", files)
     trees = FakeTrees(
         {
             ("o/r", "c" * 40): CommitFiles(
@@ -143,7 +158,7 @@ def test_files_under_an_unreadable_submodule_are_unchecked_not_passed() -> None:
         },
         {},
     )
-    match = match_artifact(trees, TAG, cand.artifacts[0])  # type: ignore[arg-type]
+    match = match_artifact(trees, TAG, cand.artifacts[0], published(files)[0])  # type: ignore[arg-type]
     assert match.unchecked == ("demo/vendored/x.py",)
     assert match.unmatched == ()
 
@@ -151,4 +166,12 @@ def test_files_under_an_unreadable_submodule_are_unchecked_not_passed() -> None:
 def test_tree_fetch_failure_propagates_as_net_error() -> None:
     cand = release("1.1", {"demo/__init__.py": INIT})
     with pytest.raises(NetError):
-        match_artifact(FakeTrees({}, {}), TAG, cand.artifacts[0])  # type: ignore[arg-type]
+        match_artifact(FakeTrees({}, {}), TAG, cand.artifacts[0], published({})[0])  # type: ignore[arg-type]
+
+
+def test_file_reader_reads_recorded_paths_back_from_wheels_and_sdists() -> None:
+    files = {"demo/__init__.py": INIT, "demo/dl.py": PAYLOAD_DL}
+    read = file_reader("demo-1.1-py3-none-any.whl", wheel(files), Limits(), sdist=False)
+    assert read("demo/dl.py") == PAYLOAD_DL.encode()
+    read = file_reader("demo-1.1.tar.gz", sdist("demo-1.1", files), Limits(), sdist=True)
+    assert read("demo/dl.py") == PAYLOAD_DL.encode()  # the name-version/ prefix is implied
