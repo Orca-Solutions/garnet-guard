@@ -3,7 +3,7 @@
 What stands behind each rule ID, as of 2026-10-30 on `main`. Three kinds of evidence:
 
 - **Crafted releases** (`tests/test_rule_matrix.py`): tiny wheels and sdists built in memory,
-  one that makes the rule fire and one that keeps it quiet (54 rows today), run for every
+  one that makes the rule fire and one that keeps it quiet (60 rows today), run for every
   ecosystem the rule is registered for. No real malware is stored in the
   repository. `test_every_built_rule_has_rows` fails when a rule is registered without both.
 - **Real attacks** (`python -m backtest`): the compromised releases in
@@ -34,6 +34,7 @@ That is said in the table, not hidden.
 | GRN-C001 new-pth-file | yes / yes | elementary-data 0.23.3, litellm 1.82.8; in #31 gpsea 0.9.14, pyphetools 0.9.120 and ppkt2synergy 0.1.1 (the Hades campaign), and embiggen 0.11.97 once #33 lands | none (no top-100 release added a `.pth`) | 0 | — |
 | GRN-C002 new-build-hook | yes / yes (PyPI: `setup.py` and the build backend; npm: install scripts) | memoryos 2.0.34 (#31); nx 21.5.0 and @ctrl/tinycolor 4.1.1 on npm, through install scripts | 5 in the corpus, every one an in-tree build backend or a version read in `setup.py` (accurate) | 5 warns, accurate; 7 with #33 (pycparser 2.19 and multidict 7.1.0 each added a build-time subprocess call, accurate) | a real PyPI attack through a `cmdclass` install hook, the classic shape |
 | GRN-C003 new-import-time-exec | yes / yes | lightning 2.6.2 and 2.6.3, litellm 1.82.7 and 1.82.8, telnyx 4.87.1 and 4.87.2, ultralytics 8.3.45 and 8.3.46; in #31 xinference 2.6.0–2.6.2, mistralai 2.4.6, guardrails-ai 0.10.1 and durabletask 1.4.1–1.4.3, with #34 num2words 0.5.15 and 0.5.16 and memoryos 2.0.34, and with #36 mrmustard 0.7.4 | requests 2.32.2, typing-inspection 0.1.0, wheel 0.45.0 (accurate) | 3 warns, accurate (unchanged by #32) | — |
+| GRN-C007 code-not-in-source | yes / yes | ultralytics 8.3.42 (Dec 2024) with the tags of the day: `ultralytics/utils/downloads.py:292 calls subprocess.Popen (in safe_run()); the source differs from ultralytics/utils/downloads.py at v8.3.42` (with today's tags the tag is gone, so GRN-T004 reports it); telnyx 4.87.1 with today's tags, which point at a clean commit | none: 158 of the 974 updates ship a Python file that isn't the one at the tag (a generated `_version.py`, Cython output, scipy's relocated submodule files), none with a sensitive call the source file lacks | 0 | a build-injected payload seen live; a repository off GitHub, which the rule can't read (a release there has no tag lookup either, so nothing is compared and nothing is claimed) |
 | GRN-K001 known-malicious | yes / yes | off in the backtest by design (the question is what Garnet catches before a feed lists a release) | none | n/a | the live OSV lookup has not been exercised in any recorded run; the cloud sandbox cannot reach api.osv.dev. Run `garnet diff` on a listed release from a machine that can |
 | GRN-E001 fetch-failed | yes / yes | the replays (provenance of a removed release is unknown) | 1 in the corpus (a tag lookup) | 1 | — |
 | GRN-E002 parse-failed | yes / yes | none | 32 in the corpus, 30 of them an sdist with a symlink, which `safe_archive` refuses | 32 | — |
@@ -100,17 +101,18 @@ seeing less than it should, with a trust rule or nothing carrying the result:
   inside the function called at import, which GRN-C003 could not see. #36 follows it:
   `mrmustard/__init__.py:227 calls subprocess.check_output (in _run(), reached at import)`.
 
-The one that no rule sees:
+The one that only GRN-C007 sees:
 
 **ultralytics 8.3.42** (Dec 5, 2024) was published by the project's own release workflow after
 a GitHub Actions cache-poisoning injection. Its attestation is valid, from the usual repository
 and workflow; a `v8.3.42` tag existed that day (deleted since); and the payload sits in
-`YOLO.__init__`, so it runs when a model is created, not when the package is imported. No
-current rule looks at that. A rule that reports a changed module gaining a sensitive call
-anywhere, not only at import, would have seen `subprocess.Popen` arrive in
-`utils/downloads.py`; whether it stays quiet enough on routine updates is a measurement to
-make before adding it. Until then the honest line is: a payload that waits to be called is
-caught by the trust rules or not at all.
+`YOLO.__init__`, so it runs when a model is created, not when the package is imported. The trust
+rules and GRN-C003 are quiet. GRN-C007 asks a different question: is every Python file in the
+wheel the file at the tag? Two aren't, and only the published copy of `utils/downloads.py` calls
+`subprocess.Popen`; that is the report, with a link to the file at the tag. The rule weighed
+first, a changed module gaining a sensitive call anywhere, not only at import, warned on 87 of
+the 974 routine updates (8.9%) and was not built. GRN-C007 warned on none of them: the twelve
+warnings of the corpus report are the same twelve, from the same rules.
 
 The other round of the same attack, 8.3.45 and 8.3.46, was uploaded with a leftover API token:
 no attestation, no tag, and four `os.system` lines at module level. Garnet reports those three
