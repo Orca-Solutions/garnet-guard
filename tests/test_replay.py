@@ -6,6 +6,7 @@ from typing import cast
 import pytest
 
 from garnet_guard.ecosystems.github import TagLookup
+from garnet_guard.ecosystems.gittree import TreeLookup
 from garnet_guard.ecosystems.pypi import FetchContext, RegistryFile, ReplayRelease, release_facts
 from garnet_guard.models import FileProvenance, Limits
 from garnet_guard.net import Http, Response
@@ -29,7 +30,7 @@ class _ReplayHttp:
 
 def _facts(attested: bool | None) -> list[FileProvenance | None]:
     http = cast(Http, _ReplayHttp())
-    ctx = FetchContext(http=http, limits=Limits(), tags=TagLookup(http))
+    ctx = FetchContext(http=http, limits=Limits(), tags=TagLookup(http), trees=TreeLookup(http))
     replay = ReplayRelease(
         files=(
             RegistryFile(

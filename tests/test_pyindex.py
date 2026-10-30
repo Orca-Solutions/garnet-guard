@@ -273,3 +273,25 @@ def test_a_handed_function_carries_the_call_it_went_to() -> None:
         path="memos/api.py",
     )
     assert scan.calls_out == () and scan.handed_out == (("memos.work.go", "functools.partial"),)
+
+
+def test_sensitive_calls_anywhere_names_the_enclosing_function() -> None:
+    from garnet_guard.facts.pyindex import sensitive_calls
+
+    src = (
+        "import subprocess as sp\n"
+        "import demo.helpers\n"
+        "class Model:\n"
+        "    def __init__(self):\n"
+        "        sp.Popen(['x'])\n"
+        "def dl():\n"
+        "    demo.helpers.run()\n"
+        "    return sp.run(['y'])\n"
+        "sp.call(['z'])\n"
+    )
+    calls = sensitive_calls(src.encode(), own=frozenset({"demo"}))
+    assert [(c.name, c.line, c.via) for c in calls] == [
+        ("subprocess.Popen", 5, "Model.__init__"),
+        ("subprocess.run", 8, "dl"),
+        ("subprocess.call", 9, None),
+    ]

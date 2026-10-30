@@ -13,11 +13,11 @@ from packaging.utils import canonicalize_name, parse_wheel_filename
 from ..facts.inventory import inspect_artifact
 from ..models import ArtifactFacts, FactError, FileProvenance, Limits, ReleaseFacts
 from ..net import Http, NetError
-from . import github, osv
+from . import github, gittree, osv, source
 from .provenance import verify_provenance
 
 TRUST_RULES = ("GRN-T001", "GRN-T002", "GRN-T003", "GRN-T005", "GRN-T007")
-CONTENT_RULES = ("GRN-C001", "GRN-C002", "GRN-C003")
+CONTENT_RULES = ("GRN-C001", "GRN-C002", "GRN-C003", "GRN-C007")
 
 
 @dataclass(frozen=True)
@@ -45,11 +45,13 @@ class ReplayRelease:
 
 @dataclass
 class FetchContext:
-    """What every fetch shares: the HTTP client, the limits and the tag cache."""
+    """What every fetch shares: the HTTP client, the limits, and the tag and
+    source-tree caches."""
 
     http: Http
     limits: Limits
     tags: github.TagLookup
+    trees: gittree.TreeLookup
 
 
 def normalize(package: str) -> str:
@@ -235,6 +237,35 @@ def release_facts(
         tag_checked = True
     else:
         errors.extend(tag_errors)
+
+    # GRN-C007: are the release's Python files the ones at the tag? The wheel
+    # is what gets installed; the sdist stands in when there is no wheel.
+    if tag is not None and tag.sha and tag.repo:
+        for i, art in enumerate(artifacts):
+            if not art.inspected or art.downloaded_sha256 != art.sha256.lower():
+                continue
+            if not (
+                art.filename.endswith(".whl") or (wheel is None and art.packagetype == "sdist")
+            ):
+                continue
+            try:
+                match = source.match_artifact(ctx.trees, tag, art)
+            except NetError as err:
+                errors.append(
+                    FactError("GRN-E001", f"source at tag {tag.name}: {err}", ("GRN-C007",))
+                )
+                break
+            if match.unchecked:
+                errors.append(
+                    FactError(
+                        "GRN-E001",
+                        f"{len(match.unchecked)} file(s) in {art.filename} come from a submodule "
+                        f"Garnet couldn't read: {', '.join(match.unchecked[:5])}",
+                        ("GRN-C007",),
+                    )
+                )
+            artifacts[i] = replace(art, source_match=match)
+            break
 
     mal: tuple[str, ...] = ()
     advisories_checked = False

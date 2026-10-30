@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, replace
 
 from ..models import CallSite, FactError, FileEntry, FileKind, Limits, ModuleIndex, PthFile
 from ..safe_archive import ArchiveError, LimitExceeded, open_archive
-from .pyindex import ModuleScan, index_build_script, module_name, scan_module
+from .pyindex import ModuleScan, index_build_script, module_name, scan_module, sensitive_calls
 
 _NATIVE_EXT = (".so", ".pyd", ".dylib", ".dll", ".exe")
 _SITE_PREFIX = re.compile(r"^[^/]+\.data/(purelib|platlib)/")
@@ -30,6 +30,12 @@ class Inspection:
     unparsed: list[str] = field(default_factory=list)
     entry_points: set[str] = field(default_factory=set)
     errors: list[FactError] = field(default_factory=list)
+
+
+def git_blob_id(data: bytes) -> str:
+    """The id git gives a file with these bytes (GRN-C007 compares it with the
+    source tree). Git names objects by SHA-1; it is an identifier, not a check."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()  # noqa: S324
 
 
 def _kind(path: str, head: bytes) -> FileKind:
@@ -134,10 +140,13 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                         result.setup_py_calls = index_build_script(body)
                         continue
                     scan = scan_module(body, path=rel, own=own, module=mod)
+                    anywhere = sensitive_calls(body, path=rel, own=own)
                 except (SyntaxError, ValueError, RecursionError):
                     result.unparsed.append(rel)
                     continue
-                result.modules.append(ModuleIndex(mod, rel, scan.calls, scan.imports))
+                result.modules.append(
+                    ModuleIndex(mod, rel, scan.calls, scan.imports, git_blob_id(body), anywhere)
+                )
                 sources[mod] = body
                 calls_out[mod] = scan.calls_out
                 handed_out[mod] = scan.handed_out

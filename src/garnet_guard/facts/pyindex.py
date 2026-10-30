@@ -543,12 +543,19 @@ def module_name(path: str) -> str:
     return p.replace("/", ".")
 
 
-def index_build_script(source: bytes, *, path: str = "setup.py") -> tuple[CallSite, ...]:
-    """Every sensitive call in a build script, at any depth. Raises SyntaxError/ValueError.
+def sensitive_calls(
+    source: bytes, *, path: str = "<module>", own: frozenset[str] = frozenset()
+) -> tuple[CallSite, ...]:
+    """Every sensitive call in a file, at any depth. Raises SyntaxError/ValueError.
 
-    ``setup.py`` runs as a script when the sdist is built, and a ``cmdclass``
-    hook in it runs at install, so a call inside a function or a method counts
-    too. ``via`` names the enclosing function or ``Class.method``.
+    ``scan_module`` asks what runs at import. This asks what the file can do
+    at all. ``setup.py`` runs as a script when the sdist is built, and a
+    ``cmdclass`` hook in it runs at install, so a call inside a function or a
+    method counts too (GRN-C002). GRN-C007 compares a published file with the
+    same file in the source repository, where a call that only exists in the
+    published copy matters whether or not anything calls it at import.
+    ``via`` names the enclosing function or ``Class.method``. Calls into the
+    release's ``own`` packages are not sensitive.
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -568,9 +575,15 @@ def index_build_script(source: bytes, *, path: str = "setup.py") -> tuple[CallSi
             else:
                 if isinstance(child, ast.Call):
                     name = resolver.resolve(child.func)
-                    if name is not None and is_sensitive(name, child):
-                        calls.append(CallSite(name=name, line=child.lineno, via=via))
+                    if name is not None and name.split(".")[0] not in own:
+                        if is_sensitive(name, child):
+                            calls.append(CallSite(name=name, line=child.lineno, via=via))
                 visit(child, via)
 
     visit(tree, None)
     return tuple(sorted(set(calls), key=lambda c: (c.line, c.name, c.via or "")))
+
+
+def index_build_script(source: bytes, *, path: str = "setup.py") -> tuple[CallSite, ...]:
+    """Every sensitive call in a build script, at any depth (see ``sensitive_calls``)."""
+    return sensitive_calls(source, path=path)

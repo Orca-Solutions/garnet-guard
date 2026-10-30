@@ -13,7 +13,7 @@ from . import __version__
 from . import policy as pol
 from .checks import ALL_CHECKS, DOCS
 from .checks.docs import rule_url
-from .ecosystems import github, npm, pypi
+from .ecosystems import github, gittree, npm, pypi
 from .models import (
     Change,
     ChangeResult,
@@ -61,7 +61,10 @@ class Fetcher:
         self.options = options
         self.http = Http(github_token=options.github_token)
         tags = github.TagLookup(self.http, options.tags_then)
-        self._pypi = pypi.FetchContext(http=self.http, limits=options.limits, tags=tags)
+        trees = gittree.TreeLookup(self.http)
+        self._pypi = pypi.FetchContext(
+            http=self.http, limits=options.limits, tags=tags, trees=trees
+        )
         self._npm = npm.FetchContext(http=self.http, limits=options.limits, tags=tags)
 
     def __enter__(self) -> Fetcher:
