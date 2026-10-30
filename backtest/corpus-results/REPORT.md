@@ -106,7 +106,7 @@ The results at `09bcd75` are in [after-pr8/summary.json](after-pr8/summary.json)
 
 ## Re-run on main, 2026-10-29
 
-**On main at `ce133f4`: 12 of 974 clean updates warned (1.23%), in 12 of 100 packages, and none of the 12 is a false alarm.** [summary.json](summary.json) and [updates.json](updates.json) now hold this run.
+**On main at `ce133f4`: 12 of 974 clean updates warned (1.23%), in 12 of 100 packages, and none of the 12 makes a false claim.** [summary.json](summary.json) and [updates.json](updates.json) now hold this run.
 
 - By rule: C002 5, C003 3, T001 3, T004 1. Coverage gaps are unchanged at 33 (E002 32, E001 1).
 - Compared with the first run, the same 974 updates were checked and exactly five changed, all from warn to pass: certifi 2025.11.12 → 2026.1.4 (T004), pip 26.1.2 → 26.2 (C003), scipy 1.16.3 → 1.17.0 (C003, now info in a test file), scipy 1.17.1 → 1.18.0 (C003 and T004) and setuptools 80.9.0 → 80.10.1 (C003). No update gained a warning.
