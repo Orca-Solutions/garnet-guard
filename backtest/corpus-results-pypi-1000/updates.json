@@ -64724,21 +64724,31 @@
     "findings": [
       {
         "evidence": [
-          "ply/lex.py:898 calls exec (in lex(), reached at import from test/calclex.py)",
-          "ply/yacc.py:3212 calls exec (in yacc(), reached at import from test/pkg_test1/parsing/calcparse.py)"
+          "ply/lex.py:898 calls exec (in lex(), reached at import from example/ansic/clex.py)",
+          "ply/yacc.py:3212 calls exec (in yacc(), reached at import from example/ansic/cparse.py)",
+          "these files ship in the sdist but not in the installed package, so they run only when run on their own; reported at info"
         ],
         "release": null,
         "rule": "GRN-C003",
-        "severity": "warn",
-        "title": "3.6 adds import-time calls to sensitive APIs in 2 module(s)"
+        "severity": "info",
+        "title": "3.6 adds import-time calls to sensitive APIs reached only from 2 file(s) outside the package"
+      },
+      {
+        "evidence": [
+          "ply/lex.py:898 calls exec (in lex(), reached at import from test/calclex.py)",
+          "ply/yacc.py:3212 calls exec (in yacc(), reached at import from test/pkg_test1/parsing/calcparse.py)",
+          "test files run only when the package's own tests run, so this is reported at info"
+        ],
+        "release": null,
+        "rule": "GRN-C003",
+        "severity": "info",
+        "title": "3.6 adds import-time calls to sensitive APIs reached only from 2 test module(s) that no other module imports"
       }
     ],
     "package": "ply",
-    "verdict": "warn",
-    "warn_rules": [
-      "GRN-C003"
-    ],
-    "warned": true
+    "verdict": "pass",
+    "warn_rules": [],
+    "warned": false
   },
   {
     "baseline": "3.6",

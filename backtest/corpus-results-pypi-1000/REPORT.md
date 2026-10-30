@@ -13,22 +13,23 @@ uv run python -m backtest corpus pypi 1000   # writes this folder's summary.json
 ```
 
 The run used main (`255946a`) with the rule-testing branches stacked on it, up to
-`claude/project-thread-sm89m3-claims` at `1063252` (PRs #32, #33, #34, #36 and #38), and
+`claude/project-thread-sm89m3-claims` at `dae4777` (PRs #32, #33, #34, #36 and #38), and
 this PR's commits: the rules as they are about to ship. On this PR alone the content-rule
-numbers would differ; the trust rules would not. The full run was on `935d188`; `1063252`
-changes how GRN-C003 grades and attributes the call sites it finds, not which sites exist,
-so the 105 updates with any GRN-C003 finding were re-run on it from fresh facts, and
-nothing else could change.
+numbers would differ; the trust rules would not. The full run was on `935d188`. The two
+later commits, `1063252` and `dae4777`, change how GRN-C003 grades and attributes the call
+sites it finds, not which sites exist, so the 105 updates with any GRN-C003 finding were
+re-run from fresh facts on `1063252`, then the whole corpus again from the same facts on
+`dae4777`. Nothing outside GRN-C003 could change, and nothing did.
 
 ## Result
 
-**221 of 9,439 updates were flagged for a look (2.3%), in 173 packages. Each of the 221
+**220 of 9,439 updates were flagged for a look (2.3%), in 172 packages. Each of the 220
 was checked on its own against PyPI, GitHub and the release files, and none made a false
 claim.**
 
 | Rule | Updates | Packages |
 |---|---|---|
-| GRN-C003 new-import-time-exec | 66 | 53 |
+| GRN-C003 new-import-time-exec | 65 | 52 |
 | GRN-C002 new-build-hook | 57 | 51 |
 | GRN-T004 no-matching-tag | 49 | 39 |
 | GRN-T001 lost-provenance | 18 | 18 |
@@ -36,17 +37,17 @@ claim.**
 | GRN-T002 publisher-changed | 14 | 13 |
 | GRN-C001 new-pth-file | 3 | 3 |
 
-Two updates carry two rules, so the rows add up to 223.
+Two updates carry two rules, so the rows add up to 222.
 
 "None made a false claim" means every finding states something true about the release.
 It does not mean no warning was a false alarm: none of these 9,439 updates is known to be
-malicious, so from a user's point of view every one of the 221 is a false alarm, a true
+malicious, so from a user's point of view every one of the 220 is a false alarm, a true
 observation about a legitimate release that a reviewer has to look at and dismiss.
 
-44 more GRN-C003 findings were reported at info, not warn: 25 where a function is only
+46 more GRN-C003 findings were reported at info, not warn: 25 where a function is only
 handed to another call that isn't known to run it (`functools.partial`, `map`, a wrapper),
-17 in test files nothing else imports, and 2 in sdist files outside the package (`docs/`,
-`demo/`).
+18 in or reached only from test files nothing else imports, and 3 in or reached only from
+sdist files outside the package (`docs/`, `demo/`, `example/`).
 
 291 updates (3.1%) carry a couldn't-check finding (GRN-E), which names what wasn't
 checked. Some carry more than one kind:
@@ -64,7 +65,7 @@ checked. Some carry more than one kind:
 
 The same corpus first ran on main plus the rule-testing branches up to PR #34 (`-reach`):
 242 updates warned. 22 of them rested on a false claim (9 GRN-T004, 13
-GRN-C003), and 4 more were true but are now reported at info.
+GRN-C003), and 5 more were true but are now reported at info.
 
 - **GRN-T004 said 9 releases had no tag, and they did.** explosion's packages tag
   `release-v1.0.0` (confection 1.0.0, cymem 2.0.10, murmurhash 1.0.11, preshed 3.0.10,
@@ -89,8 +90,10 @@ GRN-C003), and 4 more were true but are now reported at info.
     "handed to X() at import", unless the call is one known to run it (`threading.Thread`,
     `atexit.register` and the like).
   - Two kinds of true finding moved to info for the same reason test files are: a chain that
-    starts in a test file nothing imports (passlib 1.6, skops 0.8.0) and sdist files
-    outside the package (flask-login 0.5.0's `docs/conf.py`, mpmath 1.2.1's `demo/`).
+    starts in a test file nothing imports (passlib 1.6, skops 0.8.0, and ply 3.6, whose
+    `lex()` and `yacc()` run `exec` when the sdist's `test/` and `example/` files call them)
+    and sdist files outside the package (flask-login 0.5.0's `docs/conf.py`, mpmath 1.2.1's
+    `demo/`).
 
 Three GRN-C003 warnings are new in the final run: triton 3.4.0 (its download timed out in
 the first pass), and awscli 1.46.0 and mpmath 0.18, each of which added a copy of `six`,
@@ -100,7 +103,7 @@ whose module body runs `exec` through `six.exec_`.
 
 Every warning is listed with its check in [triage.json](triage.json).
 
-**GRN-C003 (66).** Each evidence line was read back from the release files with `ast`: the
+**GRN-C003 (65).** Each evidence line was read back from the release files with `ast`: the
 call is on the cited line (16 of them through a local alias such as `_DWORD`,
 `_find_library` or `_PyCapsule_New`), the name's head is imported, no builtin is shadowed
 by the module's own function, "new module" matches the trusted release, and each function
@@ -113,7 +116,7 @@ named in "(in f(), reached at import)" is called in the package. By kind of call
 - 18 import a module by a computed name: optional dependencies and plugins (requests
   2.32.2 picking `chardet` or `charset_normalizer`, polars, snowflake-connector-python,
   triton's backends, huey's Django integration, wheel's `__import__("setuptools.logging")`).
-- 13 generate code with `exec`, `eval` or `compile`: typing-inspection, anyio's lazy-import
+- 12 generate code with `exec`, `eval` or `compile`: typing-inspection, anyio's lazy-import
   map, patsy, scipy's and scikit-learn's vendored array-api-compat, and two new copies of
   `six` (awscli 1.46.0, mpmath 0.18).
 - 5 use network APIs at import: altair builds a URL opener, google-genai builds `httpx`
@@ -123,13 +126,10 @@ named in "(in f(), reached at import)" is called in the package. By kind of call
   version string, and pymupdf 2.0's `get_tessdata()`, reached from pymupdf4llm's OCR
   module, runs one to find Tesseract's data.
 
-Three need a word. multiprocess 0.70.12.2's trusted wheel is Python 2 code that doesn't
+Two need a word. multiprocess 0.70.12.2's trusted wheel is Python 2 code that doesn't
 parse, so the calls can't be compared; the finding warns and its title says the trusted
-copy couldn't be parsed, since Garnet doesn't treat "couldn't compare" as a pass. ply
-3.6's calls are in `ply/lex.py` and `ply/yacc.py`, and the chains that reach them start in
-the sdist's `test/` folder (`test/calclex.py`): the rule lowers chains from `tests/`
-folders and `test_*.py` files to info, and `test/` is neither. In the six copies, the
-cited line is the Python 2 definition of `exec_`; on Python 3 the module runs the builtin
+copy couldn't be parsed, since Garnet doesn't treat "couldn't compare" as a pass. In the
+six copies, the cited line is the Python 2 definition of `exec_`; on Python 3 the module runs the builtin
 `exec` through the same name a few lines later.
 
 **GRN-C002 (57).** Both sdists were read for each: the cited setup.py line has the call
@@ -167,7 +167,7 @@ every Python startup. True, and the kind of file the rule is for.
 ## Compared with the top-100 run
 
 Within this run, the top 100 packages give 20 of 974 updates (2.1%) and the next 900 give
-201 of 8,465 (2.4%). The [top-100 run](../corpus-results/REPORT.md) on main reported 12 of
+200 of 8,465 (2.4%). The [top-100 run](../corpus-results/REPORT.md) on main reported 12 of
 974 (1.2%), on versions picked three weeks earlier. Most of the difference is the
 rule-testing branches: GRN-C003 now follows import-time code through the package's own
 modules (lazy imports and code generation in anyio 4.15.0, charset-normalizer 3.4.6, scipy

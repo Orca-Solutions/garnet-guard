@@ -1,13 +1,13 @@
 {
   "updates": 9439,
   "packages": 975,
-  "updates_warned": 221,
-  "warn_rate": 0.0234,
-  "packages_with_a_warn": 173,
+  "updates_warned": 220,
+  "warn_rate": 0.0233,
+  "packages_with_a_warn": 172,
   "warns_by_rule": {
     "GRN-C003": {
-      "updates": 66,
-      "packages": 53
+      "updates": 65,
+      "packages": 52
     },
     "GRN-C002": {
       "updates": 57,

@@ -1001,17 +1001,6 @@
     "title": "1.0.1 adds import-time calls to sensitive APIs in 1 module(s)"
   },
   {
-    "baseline": "3.4",
-    "baseline_published": "2012-04-18",
-    "candidate": "3.6",
-    "candidate_published": "2015-04-26",
-    "claim": "true",
-    "note": "2 evidence line(s) checked in the release files with ast: the call is on the cited line (directly or through a local alias), its head is imported, no builtin is shadowed, new-module claims match the trusted release, and each function named is called in the package. The exec calls are in ply/lex.py and ply/yacc.py; the chains that reach them start in the sdist's test/ folder (test/calclex.py), which GRN-C003 doesn't count as a test folder (it looks for tests/).",
-    "package": "ply",
-    "rule": "GRN-C003",
-    "title": "3.6 adds import-time calls to sensitive APIs in 2 module(s)"
-  },
-  {
     "baseline": "1.43.2",
     "baseline_published": "2026-08-01",
     "candidate": "1.44.1",

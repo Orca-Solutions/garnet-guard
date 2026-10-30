@@ -102,7 +102,7 @@ We fed the original malicious files from the 2026 PyPI compromises through `garn
 | telnyx 4.87.0 → 4.87.1 | warn | GRN-C003 `subprocess.Popen` reached at import in `telnyx/_client.py:7810`; GRN-T004 no tag `v4.87.1` |
 | telnyx 4.87.0 → 4.87.2 | warn | GRN-C003 `subprocess`, `urllib.request` reached at import in `telnyx/_client.py`; GRN-T004 no tag `v4.87.2` |
 | 20 clean updates ([list](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/clean.toml)) | 0 warn | none |
-| 9,439 updates of the top 1,000 PyPI packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-pypi-1000/REPORT.md)) | 221 flagged for a look (2.3%); none makes a false claim | GRN-C003 66, GRN-C002 57, GRN-T004 49, GRN-T001 18, GRN-T003 16, GRN-T002 14, GRN-C001 3 |
+| 9,439 updates of the top 1,000 PyPI packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-pypi-1000/REPORT.md)) | 220 flagged for a look (2.3%); none makes a false claim | GRN-C003 65, GRN-C002 57, GRN-T004 49, GRN-T001 18, GRN-T003 16, GRN-T002 14, GRN-C001 3 |
 
 The same replay covers the npm account takeovers of August and September 2025. npm deletes the tarball of a removed version, so these use the registry facts the public write-ups recorded (provenance present or not, the `package.json` scripts) and fetch the previous release and the repository's tags live. The malicious tarballs were not inspected.
 
