@@ -149,27 +149,67 @@ matched. How to write one is in [the policy guide](../policy.md); the format is 
 A call is sensitive if it resolves, through imports and simple aliasing and without running
 any code, to one of these ([SPEC §6.3](../SPEC-v1.md#63-sensitive-call-set)):
 
-- `exec`, `eval`, `compile`, `__import__`
+- `exec`, `eval`, `compile`, `__import__`, `importlib.__import__`
 - `importlib.import_module` with a non-literal argument
 - code loaded from a file or built from a code object: `runpy.*`, `zipimport.*`,
   `importlib.util.spec_from_file_location`, `importlib.util.spec_from_loader`,
   `importlib.machinery.SourceFileLoader`, `SourcelessFileLoader` and `ExtensionFileLoader`,
-  `types.FunctionType`, `types.CodeType`
+  `imp.load_source`, `load_compiled`, `load_dynamic`, `load_module` and `load_package`,
+  `types.FunctionType` and its alias `types.LambdaType`, `types.CodeType`
 - `os.system`, `os.popen`, `os.exec*`, `os.spawn*`, `os.posix_spawn*`, `os.fork`, `os.forkpty`,
   `os.startfile`, `pty.spawn`, `pty.fork`
 - `subprocess.*`, `_posixsubprocess.*`, `asyncio.create_subprocess_exec`,
-  `asyncio.create_subprocess_shell`, `multiprocessing.Process`, `_winapi.CreateProcess`
+  `asyncio.create_subprocess_shell`, `multiprocessing.Process`, the `SpawnProcess`,
+  `ForkProcess` and `ForkServerProcess` classes in `multiprocessing.context`,
+  `_winapi.CreateProcess`, `distutils.spawn.spawn` and the same function in `distutils.util`,
+  `distutils.ccompiler` and `distutils.archive_util`, `pydoc.pipepager`, `pydoc.tempfilepager`
 - `ctypes.*`
-- `socket.*`, `asyncio.open_connection`, `urllib.request.*`, `http.client.*`, `httpx.*`,
-  `requests.*`, `aiohttp.*`, `urllib3`'s pool managers and `urllib3.request`, `ftplib.*`,
-  `smtplib.*`, `poplib.*`, `imaplib.*`, `telnetlib.*`, `xmlrpc.client.*`, `webbrowser.*`
+- `socket.*` and the `ssl.create_connection` and `ssl.socket` that `ssl` imports from it,
+  `asyncio.open_connection`, `asyncio.open_unix_connection`, `asyncio.start_server`,
+  `asyncio.start_unix_server`, `ftplib.*`, `smtplib.*`, `poplib.*`, `imaplib.*`, `telnetlib.*`,
+  `xmlrpc.client.*`, `webbrowser.*`
+- `urllib.request.*`, `http.client.*`, `httpx.*`, `requests.*`, `aiohttp.*`, and urllib3's pool
+  managers, connection pools and connections: `urllib3.PoolManager`, `ProxyManager`,
+  `HTTPConnectionPool`, `HTTPSConnectionPool`, `connection_from_url`, `proxy_from_url` and
+  `request`, `urllib3.connection.HTTPConnection`, `HTTPSConnection` and its alias
+  `VerifiedHTTPSConnection`, `urllib3.contrib.socks.SOCKSProxyManager`
 - `base64.*decode` followed by any of the above
 - `marshal.loads`, `pickle.loads`
 
+A name under a module that holds the same object as a listed name, because it defines it or
+imports it, counts as the listed name: `builtins` for the bare names (`builtins.exec` is
+`exec`, and in a script `__builtins__` is the same module), `posix` and `nt` for `os`
+(`posix.system` is `os.system`), `_socket` for `socket`, `_ctypes` for `ctypes`, `_pickle`
+for `pickle`, `asyncio.subprocess` and `asyncio.streams` for `asyncio`,
+`multiprocessing.context` for `multiprocessing`, `importlib._bootstrap` and
+`_frozen_importlib` for `importlib` and `importlib.util`, `importlib._bootstrap_external`
+and `_frozen_importlib_external` for `importlib.util` and `importlib.machinery`,
+`setuptools._distutils` for `distutils`, `urllib3.poolmanager` for `urllib3`, and
+`urllib3.connectionpool` for `urllib3` and `urllib3.connection`. The evidence names the call
+as the code writes it.
+
+GRN-C003 follows a call into one of the release's own top-level packages into that module. When
+the call's name is in the set it counts as a sensitive call as well, unless the release is the
+library of that name: the `requests` project, as its wheel or sdist filename names it, calling
+its own `requests.adapters` isn't reported, and GRN-C007 leaves it out. A module that any other
+release ships under a name in the set may not be what Python imports: the standard library's
+`os` comes before an `os.py` in site-packages, an installed `requests` package before a
+`requests.py` beside it, and `builtins` is built in. So with an empty `os.py`, `requests.py` or
+`builtins.py` beside the package, `os.system`, `requests.post` and `builtins.exec` still count,
+and the call is followed into the release's module too, in case that is the one Python imports.
+
 Set `2026-10-c` (October 30, 2026) added the file loaders, the process calls outside
-`subprocess` and the network clients outside the HTTP libraries. Calls packages make at import
-for ordinary reasons stay out: `importlib.util.find_spec` and `module_from_spec`,
-`urllib3.disable_warnings`, `multiprocessing.cpu_count`.
+`subprocess`, more network clients (`asyncio` streams, `urllib3`, mail, FTP, telnet, XML-RPC and
+the browser), and the modules that define or import listed names. Left out, because packages
+make these calls at import for ordinary reasons: `importlib.util.find_spec` and
+`module_from_spec`, `urllib3.disable_warnings`, `multiprocessing.cpu_count`,
+`distutils.spawn.find_executable`. Not in the set, because no corpus run has measured what they
+would add: `pickle.load` and `pickle.Unpickler`, `multiprocessing.Pool`,
+`concurrent.futures.ProcessPoolExecutor` and `importlib.machinery.PathFinder`. A listed function
+passed to another call rather than called (`atexit.register(os.system, cmd)`,
+`threading.Thread(target=os.system)`) isn't seen, and neither is a listed name reached through
+what a call returns (`multiprocessing.get_context("spawn").Process`) or looked up by subscript
+(`__builtins__["exec"]`).
 
 The set is versioned with the rule. `garnet explain GRN-C003` prints the set your version uses.
 

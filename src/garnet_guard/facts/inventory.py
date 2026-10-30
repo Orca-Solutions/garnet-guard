@@ -190,8 +190,23 @@ def exec_lines(pth: bytes) -> tuple[str, ...]:
     return tuple(out)
 
 
+def project_name(filename: str) -> str:
+    """The project a wheel or sdist belongs to, normalized (PEP 503).
+
+    ``requests-2.32.3-py3-none-any.whl`` and ``requests-2.32.3.tar.gz`` are
+    both ``requests``. The scans use it to tell the ``requests`` project
+    calling its own modules from a release that ships a ``requests.py``.
+    """
+    if filename.endswith(".whl"):
+        name = filename.split("-", 1)[0]
+    else:
+        stem = re.sub(r"\.(tar\.gz|tar\.bz2|tar\.xz|tgz|tar|zip)$", "", filename)
+        name = stem.rpartition("-")[0] or stem
+    return canonicalize_name(name)
+
+
 def _own_packages(paths: list[str]) -> frozenset[str]:
-    """The release's own top-level packages, so calls into them aren't flagged."""
+    """The release's own top-level packages, so calls into them are followed."""
     own = set()
     for p in paths:
         if p.endswith(".py"):
@@ -232,6 +247,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
         else:
             own = _own_packages(rel_paths)
         anywhere_own = wheel_own(rel_paths)
+        project = project_name(filename)
         for entry, rel in zip(entries, rel_paths, strict=True):
             body = reader.read(entry.path)
             kind = _kind(rel, body)
@@ -270,7 +286,9 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                         result.setup_py_calls = index_build_script(body)
                         continue
                     tree = parse(body, path=rel)
-                    scan = scan_module(body, path=rel, own=own, module=mod, tree=tree)
+                    scan = scan_module(
+                        body, path=rel, own=own, project=project, module=mod, tree=tree
+                    )
                 except (SyntaxError, ValueError, RecursionError):
                     result.unparsed.append(rel)
                     continue
@@ -294,7 +312,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                 if reqs is not None:
                     result.requirements = reqs
                     result.requirements_read = True
-        _follow_calls_out(result, sources, calls_out, handed_out, own)
+        _follow_calls_out(result, sources, calls_out, handed_out, own, project)
         result.entry_points_read = not sdist
     except LimitExceeded as err:
         result.errors.append(FactError("GRN-E003", f"{filename}: {err}", rules))
@@ -383,6 +401,7 @@ def _follow_calls_out(
     calls_out: Mapping[str, tuple[str, ...]],
     handed_out: Mapping[str, tuple[tuple[str, str], ...]],
     own: frozenset[str],
+    project: str,
 ) -> None:
     """Follow import-time calls into the package's other modules.
 
@@ -416,7 +435,13 @@ def _follow_calls_out(
             index = result.modules[by_module[mod]]
             try:
                 scans[target, to] = scan_module(
-                    sources[mod], path=index.path, own=own, module=mod, entry=entry, handed=to
+                    sources[mod],
+                    path=index.path,
+                    own=own,
+                    project=project,
+                    module=mod,
+                    entry=entry,
+                    handed=to,
                 )
             except (SyntaxError, ValueError, RecursionError):
                 scans[target, to] = None

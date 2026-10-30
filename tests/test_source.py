@@ -147,6 +147,31 @@ def test_match_is_quiet_when_the_source_has_the_same_call() -> None:
     assert [(u.path, u.calls) for u in match.unmatched] == [("demo/dl.py", ())]
 
 
+def test_a_top_level_module_named_like_a_library_hides_no_call() -> None:
+    # demo ships an empty requests.py; Python imports the installed requests,
+    # so the call the tagged source lacks is listed.
+    post = "import requests\n\nrequests.post('https://example.invalid', data='')\n"
+    files = {"demo/__init__.py": INIT + post, "requests.py": ""}
+    trees = FakeTrees(
+        {("o/r", "c" * 40): CommitFiles({"demo/__init__.py": git_blob_id(INIT.encode())}, {})},
+        blobs(INIT),
+    )
+    match = match_artifact(trees, TAG, release("1.1", files).artifacts[0], published(files)[0])  # type: ignore[arg-type]
+    assert [(u.path, [c.name for c in u.calls]) for u in match.unmatched] == [
+        ("demo/__init__.py", ["requests.post"]),
+        ("requests.py", []),
+    ]
+    # The requests project calling its own module is its own code.
+    own = {"requests/adapters.py": "from requests.utils import where\n\nCA = where()\n"}
+    trees = FakeTrees(
+        {("o/r", "c" * 40): CommitFiles({"requests/adapters.py": git_blob_id(INIT.encode())}, {})},
+        blobs(INIT),
+    )
+    art = release("1.1", own, package="requests").artifacts[0]
+    match = match_artifact(trees, TAG, art, published(own)[0])  # type: ignore[arg-type]
+    assert [(u.path, u.calls) for u in match.unmatched] == [("requests/adapters.py", ())]
+
+
 def test_files_under_an_unreadable_submodule_are_unchecked_not_passed() -> None:
     files = {"demo/__init__.py": INIT, "demo/vendored/x.py": PAYLOAD_DL}
     cand = release("1.1", files)

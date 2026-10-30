@@ -3,7 +3,7 @@
 What stands behind each rule ID, as of 2026-10-30 on `main`. Three kinds of evidence:
 
 - **Crafted releases** (`tests/test_rule_matrix.py`): tiny wheels and sdists built in memory,
-  one that makes the rule fire and one that keeps it quiet (68 rows today), run for every
+  one that makes the rule fire and one that keeps it quiet (100 rows today), run for every
   ecosystem the rule is registered for. No real malware is stored in the
   repository. `test_every_built_rule_has_rows` fails when a rule is registered without both.
 - **Real attacks** (`python -m backtest`): 52 malicious releases. The 47 PyPI releases in

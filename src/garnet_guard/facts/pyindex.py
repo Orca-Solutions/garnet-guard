@@ -19,9 +19,12 @@ across modules.
 Names are resolved through imports and simple aliasing (``sp = subprocess``),
 ``from x import *`` of a sensitive module, ``getattr(x, "name")`` with a
 literal name, and ``__import__("x")`` or ``importlib.import_module("x")``
-with a literal name. A ``base64.*decode`` whose result reaches a sensitive
-call is reported with that call, so ``exec(base64.b64decode(...))`` is new
-even where ``exec`` was already used.
+with a literal name. A name under the module that defines a listed one counts
+as that name (``posix.system`` as ``os.system``, ``builtins.exec`` as
+``exec``) and is recorded as written.
+A ``base64.*decode`` whose result reaches a sensitive call is reported with
+that call, so ``exec(base64.b64decode(...))`` is new even where ``exec`` was
+already used.
 
 Reads of credentials and CI settings in the same code are indexed too, as
 call sites marked ``read``: an environment variable such as ``GITHUB_TOKEN``
@@ -63,20 +66,46 @@ _EXACT = frozenset(
         "asyncio.create_subprocess_exec",
         "asyncio.create_subprocess_shell",
         "multiprocessing.Process",
+        "multiprocessing.context.SpawnProcess",  # what get_context("spawn").Process is
+        "multiprocessing.context.ForkProcess",
+        "multiprocessing.context.ForkServerProcess",
         "_winapi.CreateProcess",
+        "distutils.spawn.spawn",
+        "distutils.util.spawn",  # distutils.spawn.spawn, imported into these modules
+        "distutils.ccompiler.spawn",
+        "distutils.archive_util.spawn",
+        "pydoc.pipepager",
+        "pydoc.tempfilepager",
         # 2026-10-c: code loaded from a file or built from a code object.
+        "importlib.__import__",  # importlib's own __import__, which imports as the builtin does
         "importlib.util.spec_from_file_location",
         "importlib.util.spec_from_loader",
+        "imp.load_source",  # imp is deprecated, and present up to Python 3.11
+        "imp.load_compiled",
+        "imp.load_dynamic",
+        "imp.load_module",
+        "imp.load_package",
         "types.FunctionType",
+        "types.LambdaType",  # the same type
         "types.CodeType",
-        # 2026-10-c: network connections outside the HTTP clients above.
+        # 2026-10-c: network connections the prefixes below don't cover.
         "asyncio.open_connection",
+        "asyncio.open_unix_connection",
+        "asyncio.start_server",
+        "asyncio.start_unix_server",
+        "ssl.create_connection",  # the socket module's, imported into ssl
+        "ssl.socket",
         "urllib3.PoolManager",
         "urllib3.ProxyManager",
         "urllib3.HTTPConnectionPool",
         "urllib3.HTTPSConnectionPool",
         "urllib3.connection_from_url",
+        "urllib3.proxy_from_url",
         "urllib3.request",
+        "urllib3.connection.HTTPConnection",
+        "urllib3.connection.HTTPSConnection",
+        "urllib3.connection.VerifiedHTTPSConnection",  # HTTPSConnection under another name
+        "urllib3.contrib.socks.SOCKSProxyManager",
     }
 )
 _PREFIXES = (
@@ -105,6 +134,30 @@ _PREFIXES = (
     "xmlrpc.client.",
     "webbrowser.",
 )
+# 2026-10-c: modules that define what a module above re-exports, or that
+# re-export it, so a name under them is the same object: ``posix.system is
+# os.system``. An empty target is the bare name: ``builtins.exec is exec``.
+_SAME_AS: Mapping[str, tuple[str, ...]] = {
+    "builtins": ("",),
+    "posix": ("os",),
+    "nt": ("os",),
+    "_socket": ("socket",),
+    "_ctypes": ("ctypes",),
+    "_pickle": ("pickle",),
+    "asyncio.subprocess": ("asyncio",),
+    "asyncio.streams": ("asyncio",),
+    "multiprocessing.context": ("multiprocessing",),
+    "importlib._bootstrap": ("importlib", "importlib.util"),
+    "_frozen_importlib": ("importlib", "importlib.util"),
+    "importlib._bootstrap_external": ("importlib.machinery", "importlib.util"),
+    "_frozen_importlib_external": ("importlib.machinery", "importlib.util"),
+    "setuptools._distutils": ("distutils",),
+    "urllib3.poolmanager": ("urllib3",),
+    "urllib3.connectionpool": ("urllib3", "urllib3.connection"),
+}
+# Top-level names in the set that are packages on PyPI, each the import name of
+# its project. Every other one is in the standard library or a builtin.
+_THIRD_PARTY = frozenset({"requests", "httpx", "aiohttp", "urllib3", "setuptools"})
 _BUILTINS = frozenset(dir(builtins))
 
 
@@ -115,7 +168,16 @@ def sensitive_set() -> tuple[str, ...]:
         "importlib.import_module (non-literal argument)",
         *(p + "*" for p in _PREFIXES),
         "base64.*decode (when the result reaches one of the above)",
+        *(
+            f"{twin}.<name>, counted as {' or '.join(_under(t, '<name>') for t in targets)}"
+            for twin, targets in sorted(_SAME_AS.items())
+        ),
     )
+
+
+def _under(module: str, name: str) -> str:
+    """``module.name``, or the bare name for the empty module (builtins)."""
+    return f"{module}.{name}" if module else name
 
 
 # Reads of credentials and CI settings at import (GRN-C003 reports new ones at info).
@@ -194,8 +256,17 @@ def _reads(node: ast.AST, resolver: _Resolver) -> list[str]:
 def is_sensitive(name: str, call: ast.Call | None = None) -> bool:
     """True if calling ``name`` is in the sensitive set.
 
-    ``importlib.import_module`` counts only with a non-literal argument.
+    ``importlib.import_module`` counts only with a non-literal argument. A
+    name under a module in ``_SAME_AS`` counts as the name it re-exports.
     """
+    names = [name]
+    for twin, targets in _SAME_AS.items():
+        if name.startswith(twin + "."):
+            names += [_under(t, name[len(twin) + 1 :]) for t in targets]
+    return any(_listed(n, call) for n in names)
+
+
+def _listed(name: str, call: ast.Call | None) -> bool:
     if name in _EXACT:
         return True
     if name == "importlib.import_module":
@@ -203,6 +274,27 @@ def is_sensitive(name: str, call: ast.Call | None = None) -> bool:
             return True
         return not (call.args and isinstance(call.args[0], ast.Constant))
     return any(name.startswith(p) for p in _PREFIXES)
+
+
+def _own(name: str, own: Container[str], project: str | None, call: ast.Call | None = None) -> bool:
+    """Whether a call to ``name`` is the release's own code, not a call in the set.
+
+    A call in the set stays one whatever top-level modules the release ships:
+    Python may not import an empty ``os.py``, ``requests.py`` or ``builtins.py``
+    beside the package under that name at all, because the standard library
+    comes first on ``sys.path``, an installed package directory comes before a
+    module of the same name in site-packages, and ``builtins`` is built in.
+    The one exception is the library itself: the ``requests`` project
+    (``project``, the release's normalized name) calling its own
+    ``requests.adapters``. ``scan_module`` follows a call into a module the
+    release ships either way.
+    """
+    head = name.split(".")[0]
+    if head not in own:
+        return False
+    if not is_sensitive(name, call):
+        return True
+    return head in _THIRD_PARTY and head == project
 
 
 def _is_decode(name: str) -> bool:
@@ -276,7 +368,8 @@ class _Resolver:
     """Tracks imports and aliases, so ``sp.run`` resolves to ``subprocess.run``."""
 
     def __init__(self) -> None:
-        self.aliases: dict[str, str] = {}
+        # ``__builtins__`` is the builtins module in a script (``setup.py``).
+        self.aliases: dict[str, str] = {"__builtins__": "builtins"}
         self.imports: set[str] = set()
         self.star_modules: list[str] = []  # ``from m import *``, in order
         self.defined: set[str] = set()  # names the module defines itself
@@ -512,6 +605,7 @@ def scan_module(
     *,
     path: str = "<module>",
     own: frozenset[str] = frozenset(),
+    project: str | None = None,
     module: str | None = None,
     entry: str | None = None,
     handed: str | None = None,
@@ -520,9 +614,11 @@ def scan_module(
     """Index what runs at import, or what runs when ``entry`` is called.
 
     Raises SyntaxError/ValueError. ``own`` names the release's own top-level
-    packages; calls into them are not sensitive even if the names collide
-    (the ``requests`` package calling its own ``requests.adapters``) and are
-    returned as ``calls_out`` instead. ``module`` is the dotted module name,
+    packages, and calls into them are returned as ``calls_out``. A call in the
+    set among them is a sensitive call as well, unless ``project`` (the
+    release's normalized name) is the library it belongs to: the ``requests``
+    project calling its own ``requests.adapters`` (see ``_own``). ``module`` is
+    the dotted module name,
     used to resolve relative imports. ``entry`` is a function, ``Class``
     (instantiation) or ``Class.method`` defined in the module; an unknown
     entry runs nothing. ``handed`` names the call that ``entry`` was handed to
@@ -577,11 +673,17 @@ def scan_module(
                 args = [*node.args, *(k.value for k in node.keywords)]
                 name = resolver.resolve(node.func)
                 if name is not None and name.split(".")[0] in own:
+                    # Followed into the module the release ships, also when the
+                    # call counts below: that module may be the one Python imports.
                     if handed is None:
                         calls_out.add(name)
                     else:
                         handed_out.add((name, handed))
-                elif name is not None and is_sensitive(name, node):
+                if (
+                    name is not None
+                    and is_sensitive(name, node)
+                    and not _own(name, own, project, node)
+                ):
                     calls.append(CallSite(name, node.lineno, via, handed_to=handed))
                     for decode in _decoded_inputs(args, resolver, decoded):
                         calls.append(
@@ -594,7 +696,7 @@ def scan_module(
                     inner = node.func
                     called += _local_refs([*inner.args, *(k.value for k in inner.keywords)], local)
                 reached += [(key, handed) for key in called]
-                to = handed or _display(node.func, resolver, own)
+                to = handed or _display(node.func, resolver, own, project)
                 reached += [(key, to) for key in _local_refs(args, local)]
                 for arg in args:
                     if isinstance(arg, (ast.Name, ast.Attribute)):
@@ -644,10 +746,10 @@ def scan_module(
     )
 
 
-def _display(func: ast.expr, resolver: _Resolver, own: frozenset[str]) -> str:
+def _display(func: ast.expr, resolver: _Resolver, own: frozenset[str], project: str | None) -> str:
     """The call a function was handed to, as the finding names it."""
     name = resolver.resolve(func)
-    if name is not None and name.split(".")[0] not in own:
+    if name is not None and not _own(name, own, project):
         return name
     return ast.unparse(func)[:60]
 
@@ -657,10 +759,11 @@ def index_module(
     *,
     path: str = "<module>",
     own: frozenset[str] = frozenset(),
+    project: str | None = None,
     module: str | None = None,
 ) -> tuple[tuple[CallSite, ...], tuple[str, ...]]:
     """Return (import-time call sites, imports). Raises SyntaxError/ValueError."""
-    scan = scan_module(source, path=path, own=own, module=module)
+    scan = scan_module(source, path=path, own=own, project=project, module=module)
     return scan.calls, scan.imports
 
 
@@ -677,6 +780,7 @@ def sensitive_calls(
     *,
     path: str = "<module>",
     own: frozenset[str] = frozenset(),
+    project: str | None = None,
     tree: ast.Module | None = None,
 ) -> tuple[CallSite, ...]:
     """Every sensitive call in a file, at any depth. Raises SyntaxError/ValueError.
@@ -687,10 +791,10 @@ def sensitive_calls(
     method counts too (GRN-C002). GRN-C007 compares a published file with the
     same file in the source repository, where a call that only exists in the
     published copy matters whether or not anything calls it at import.
-    ``via`` names the enclosing function or ``Class.method``. Calls into the
-    release's ``own`` packages are not sensitive. ``tree`` is ``source``
-    already parsed. A file nested deeper than Python's recursion limit raises
-    RecursionError.
+    ``via`` names the enclosing function or ``Class.method``. ``own`` and
+    ``project`` leave out calls into the release's own packages, as in
+    ``scan_module``. ``tree`` is ``source`` already parsed. A file nested
+    deeper than Python's recursion limit raises RecursionError.
     """
     if tree is None:
         tree = parse(source, path=path)
@@ -709,7 +813,7 @@ def sensitive_calls(
             else:
                 if isinstance(child, ast.Call):
                     name = resolver.resolve(child.func)
-                    if name is not None and name.split(".")[0] not in own:
+                    if name is not None and not _own(name, own, project, child):
                         if is_sensitive(name, child):
                             calls.append(CallSite(name=name, line=child.lineno, via=via))
                 visit(child, via)

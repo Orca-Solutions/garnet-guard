@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 
+from ..facts.inventory import project_name
 from ..facts.pyindex import sensitive_calls
 from ..models import ArtifactFacts, SourceMatch, TagInfo, UnsourcedFile
 from ..net import NetError
@@ -98,6 +99,7 @@ def match_artifact(
     modules = sorted((m for m in art.modules if m.blob_sha1), key=lambda m: m.path)
     prefix = find_prefix([m.path for m in modules], files)
     own = frozenset(m.module.split(".")[0] for m in modules)
+    project = project_name(art.filename)
     # A file with the same bytes anywhere in the tree is sourced, wherever the
     # build put it: scipy copies a submodule's inner package up two levels.
     in_tree = {sha for _, sha in files.values()}
@@ -114,14 +116,15 @@ def match_artifact(
             unchecked.append(m.path)
             continue
         try:
-            calls = sensitive_calls(source_of(m.path), path=m.path, own=own)
+            calls = sensitive_calls(source_of(m.path), path=m.path, own=own, project=project)
         except (SyntaxError, ValueError, RecursionError):
             calls = ()  # inventory parsed it once; nothing more can be said
         if calls and source is not None:
             repo, sha = source
             try:
+                blob = trees.blob(repo, sha)
                 in_source = {
-                    c.name for c in sensitive_calls(trees.blob(repo, sha), path=full, own=own)
+                    c.name for c in sensitive_calls(blob, path=full, own=own, project=project)
                 }
             except (SyntaxError, ValueError, RecursionError):
                 in_source = set()  # unreadable source explains nothing

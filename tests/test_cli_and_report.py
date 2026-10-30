@@ -17,6 +17,10 @@ def test_explain(capsys) -> None:
     out = capsys.readouterr().out
     assert "new-import-time-exec" in out and "subprocess.*" in out
     assert "https://garnetguard.dev/rules/GRN-C003" in out
+    # GRN-C007 reads the same set, so it prints it too (SPEC §6.3).
+    assert main(["explain", "GRN-C007"]) == 0
+    out = capsys.readouterr().out
+    assert "Sensitive calls (set " in out and "posix.<name>, counted as os.<name>" in out
     assert main(["explain", "GRN-X999"]) == 3
 
 

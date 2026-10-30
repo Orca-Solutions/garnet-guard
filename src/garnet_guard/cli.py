@@ -368,7 +368,8 @@ def _explain(rule_id: str) -> int:
     print("Why it matters: " + doc.explanation + "\n")
     print("What to do: " + doc.remediation)
     print("More: " + rule_url(doc.rule_id))
-    if doc.rule_id in ("GRN-C002", "GRN-C003", "GRN-C012"):
+    # the rules that read the set
+    if doc.rule_id in ("GRN-C002", "GRN-C003", "GRN-C007", "GRN-C012"):
         print(f"\nSensitive calls (set {SENSITIVE_SET_VERSION}):")
         for s in sensitive_set():
             print(f"  {s}")

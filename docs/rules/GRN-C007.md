@@ -112,7 +112,8 @@ matched. How to write one is in [the policy guide](../policy.md); the format is 
 
 ## See also
 
-- `garnet explain GRN-C007` prints this rule's summary in your terminal.
+- `garnet explain GRN-C007` prints this rule's summary and the sensitive call set your version
+  uses.
 - [GRN-C003](GRN-C003.md), the sensitive call set this rule shares.
 - [GRN-T004](GRN-T004.md), which reports a release with no tag at all.
 - [SPEC §6.2](../SPEC-v1.md#62-rule-catalog), the normative rule catalog.
