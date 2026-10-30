@@ -141,6 +141,16 @@ def _profile(name: str, age_days: int | None, releases: int = 1) -> DependencyPr
     )
 
 
+def _uploaded(rel: ReleaseFacts, *hours: float) -> ReleaseFacts:
+    """``rel`` with its files uploaded ``hours`` after the first, in order."""
+    start = datetime(2026, 9, 1, 12, tzinfo=UTC)
+    arts = tuple(
+        replace(a, uploaded_at=start + timedelta(hours=h))
+        for a, h in zip(rel.artifacts, hours, strict=True)
+    )
+    return replace(rel, artifacts=arts)
+
+
 def _rows() -> list[Row]:
     attested = release("1.0")
     rows: list[Row] = []
@@ -263,6 +273,28 @@ def _rows() -> list[Row]:
             "1.0", provenance=replace(prov("demo-1.0-py3-none-any.whl"), trusted_publishing=False)
         ),
         release("1.1", provenance=outside),
+    )
+
+    # GRN-T006 files-uploaded-late
+    # A wheel added to a release days after its sdist: the shape of a file
+    # slipped into an already-reviewed version.
+    fires(
+        "GRN-T006",
+        "a wheel uploaded three days after the sdist",
+        release("1.0", PKG, sdist_files=SRC),
+        _uploaded(release("1.1", PKG, sdist_files=SRC), 72, 0),
+    )
+    quiet(
+        "GRN-T006",
+        "every file uploaded within the hour",
+        release("1.0", PKG, sdist_files=SRC),
+        _uploaded(release("1.1", PKG, sdist_files=SRC), 0.5, 0),
+    )
+    quiet(
+        "GRN-T006",
+        "no upload times on record",
+        release("1.0", PKG, sdist_files=SRC),
+        release("1.1", PKG, sdist_files=SRC),
     )
 
     # GRN-T007 invalid-attestation

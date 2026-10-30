@@ -106,7 +106,7 @@ IDs are stable forever. A retired rule keeps its ID reserved. Exact firing condi
 | GRN-T003 | workflow-changed | Same repo, different publishing workflow file or environment. |
 | GRN-T004 | no-matching-tag | No git tag for the new version in the attested or declared repo. |
 | GRN-T005 | outside-trusted-publishing | Old files came through Trusted Publishing; new ones were uploaded with a token. |
-| GRN-T006 | files-uploaded-late (planned) | A file was added to a release long after the release was first published. |
+| GRN-T006 | files-uploaded-late | A file was added to a release more than 24 hours after its first file; a warning when pip would install it in place of a file uploaded on time. |
 | GRN-C001 | new-pth-file | A `.pth` file appears that the old release didn't have. |
 | GRN-C002 | new-build-hook | New `setup.py` logic, custom build backend, or new npm install-time script. |
 | GRN-C003 | new-import-time-exec | New module-level calls to `exec`, `eval`, `compile`, `subprocess`, `os.system`, `ctypes`, sockets or HTTP clients. |
@@ -114,7 +114,7 @@ IDs are stable forever. A retired rule keeps its ID reserved. Exact firing condi
 | GRN-C005 | obfuscated-blob (planned) | New long base64/hex/compressed literals, especially passed to exec or decode. |
 | GRN-C006 | sdist-wheel-mismatch (planned) | Wheel contains files with no counterpart in the sdist. |
 | GRN-C007 | code-not-in-source | A Python file in the release isn't the one at its git tag and has sensitive calls the source lacks (code injected by the build, as in ultralytics 8.3.42). |
-| GRN-C008 | new-dependency | A dependency the old release didn't declare, a warning when it is new to the registry and owned by someone else, missing from it, or installed from outside it (event-stream 3.3.6). |
+| GRN-C008 | new-dependency | A dependency the old release didn't declare, a warning when it is missing from the registry, less than 90 days old there, or installed from outside it, whoever owns it (event-stream 3.3.6). |
 | GRN-T007 | invalid-attestation | An attestation exists but fails verification (blocks by default). |
 | GRN-T008 | hash-mismatch | A download doesn't match the registry's published hash (blocks by default). |
 | GRN-K001 | known-malicious | OSV `MAL-` advisory for this package version. |

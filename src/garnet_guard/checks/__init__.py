@@ -39,6 +39,7 @@ ALL_CHECKS: tuple[tuple[str, CheckFn, frozenset[str]], ...] = (
     ("GRN-T003", trust.workflow_changed, BOTH),
     ("GRN-T004", trust.no_matching_tag, BOTH),
     ("GRN-T005", trust.outside_trusted_publishing, BOTH),
+    ("GRN-T006", trust.files_uploaded_late, PYPI),
     ("GRN-T007", trust.invalid_attestation, BOTH),
     ("GRN-T008", trust.hash_mismatch, BOTH),
     ("GRN-C001", content.new_pth_file, PYPI),

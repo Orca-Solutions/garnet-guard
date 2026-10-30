@@ -64,8 +64,9 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 
 **Launch (0.2):**
 
-- [ ] GRN-C008 new-dependency: a dependency the trusted release didn't declare, a warning when it is new to the registry [#44](https://github.com/orca-solutions/garnet-guard/issues/44)
-- [ ] A wheel whose Python files differ from the release's other wheels, and GRN-T006 files-uploaded-late (pulled forward from 0.3) [#45](https://github.com/orca-solutions/garnet-guard/issues/45)
+- [x] GRN-C008 new-dependency: a dependency the trusted release didn't declare, a warning when it is new to the registry [#44](https://github.com/orca-solutions/garnet-guard/issues/44)
+- [x] GRN-T006 files-uploaded-late, and content rules read the wheel pip would install (pulled forward from 0.3) [#45](https://github.com/orca-solutions/garnet-guard/issues/45)
+- [ ] A wheel whose Python files differ from the release's other wheels [#45](https://github.com/orca-solutions/garnet-guard/issues/45)
 - [ ] Widen the sensitive call set to process, loader and network APIs it doesn't list [#46](https://github.com/orca-solutions/garnet-guard/issues/46)
 - [ ] A new entry point, warning for groups other tools load automatically [#47](https://github.com/orca-solutions/garnet-guard/issues/47)
 - [ ] GRN-C004 new-binary, including sourceless `.pyc` files (pulled forward from 0.3) [#48](https://github.com/orca-solutions/garnet-guard/issues/48)

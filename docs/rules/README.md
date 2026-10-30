@@ -25,7 +25,7 @@ How the release was published: attestations, publisher, workflow, tags, hashes.
 | [GRN-T003](GRN-T003.md) | workflow-changed | diff | `warn` | 0.1 |
 | [GRN-T004](GRN-T004.md) | no-matching-tag | diff | `warn` | 0.1 |
 | [GRN-T005](GRN-T005.md) | outside-trusted-publishing | diff | `warn` | 0.1 |
-| [GRN-T006](GRN-T006.md) | files-uploaded-late | absolute | `warn` | planned |
+| [GRN-T006](GRN-T006.md) | files-uploaded-late | absolute | `warn` (`info` for a backfill) | 0.2 |
 | [GRN-T007](GRN-T007.md) | invalid-attestation | absolute | `block` | 0.1 |
 | [GRN-T008](GRN-T008.md) | hash-mismatch | absolute | `block` | 0.1 |
 
