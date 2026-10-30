@@ -1,6 +1,7 @@
 # Clean updates: legitimate consecutive releases. Any warn here is a false
-# positive (or a real finding worth a look). The month-2 corpus replaces this
-# with the last ~20 releases of the top ~500 PyPI packages.
+# positive (or a real finding worth a look). It is a quick smoke test; the
+# clean-corpus runs (`python -m backtest corpus pypi|npm 1000`) cover the last
+# 11 releases of the top 1,000 PyPI and npm packages.
 pairs = [
   ["lightning", "2.6.4", "2.6.5"],
   ["lightning", "2.6.5", "2.6.6"],

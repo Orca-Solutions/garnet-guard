@@ -24,8 +24,8 @@ From [Publishing actions in GitHub Marketplace](https://docs.github.com/en/actio
 
 ## Before the first listing
 
-1. Merge `garnet check` (lockfile diffing). The Action calls it, so the Action can't run without it.
-2. Try the Action on a test repository: a Dependabot pull request, a Renovate pull request and a fork pull request with the two-workflow pattern. Put a link to a real comment in the README, ideally the lightning 2.6.2 replay (brand kit, The PR comment).
+1. Merge `garnet check` (lockfile diffing). Done: it is on `main` and in 0.1.0a1.
+2. Try the Action on real pull requests: a Dependabot pull request, a Renovate pull request and a fork pull request with the two-workflow pattern. The dogfood workflow has run on this repository's own pull requests since 2026-10-29; a Dependabot-opened run, a Renovate run and a fork run are still to be seen. Put a link to a real comment in the README, ideally the lightning 2.6.2 replay (brand kit, The PR comment).
 3. Turn on immutable releases in the repository settings, so a published tag can't be moved.
 
 ## Publishing (maintainer)

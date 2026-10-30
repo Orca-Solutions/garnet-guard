@@ -50,7 +50,7 @@ Enterprise or a quoted project: private registry and mirror support, managed cac
 
 **Public repositories are never counted and never charged,** on any tier. "Developers" means active committers: someone counts only through commits to private repositories where the app is installed in the last 90 days, so there's no seat admin. The count is set at purchase or renewal, with no true-ups during the term. Every tier, Free included, keeps the whole open-source engine, every rule, the CLI, the Action and the hooks; tiers limit only hosted conveniences.
 
-*The tier shape is agreed; prices are a working draft, revised with pilot data.* The full tier table, features and reasoning are in [plans/monetization.md](../plans/monetization.md), along with sequencing and the go/no-go gates (ADR-0010). The pricing decision is ADR-0015. No paid work starts before Gate A in month 4.
+*The tier shape is agreed; prices are a working draft, revised with pilot data.* The pricing decision and its reasoning are in [ADR-0015](docs/decisions/0015-core-and-premium-pricing.md), and the go/no-go gates in [ADR-0010](docs/decisions/0010-funding-gates.md). No paid work starts before Gate A in month 4.
 
 ## Commitments
 

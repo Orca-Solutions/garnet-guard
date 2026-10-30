@@ -68,7 +68,8 @@ Removed packages produce no findings. Added packages (no base version) get only 
 | Release metadata and file hashes | JSON API (`/pypi/<name>/<version>/json`) | Registry packument |
 | Provenance | Integrity API (`/integrity/<name>/<version>/<file>/provenance`), verified with Sigstore | Registry attestations endpoint, verified with Sigstore |
 | Artifacts | Files listed by the JSON API | Tarball |
-| Tags | GitHub REST API for the repository named in provenance, else in project URLs | Same |
+| Tags | GitHub's public git ref advertisement (`/<repo>.git/info/refs`) for the repository named in provenance, else in project URLs | Same |
+| Source files at the tag (GRN-C007) | GitHub's git protocol v2 endpoint (`/<repo>.git/git-upload-pack`), one request per tagged release | Not read |
 | Known bad | OSV API (`MAL-` advisories) | OSV API |
 
 ### 4.2 Artifact selection
@@ -127,7 +128,7 @@ Default severities are what applies with no policy file.
 | GRN-T008 | hash-mismatch | absolute | A downloaded artifact doesn't match its published hash. | block |
 | GRN-C001 | new-pth-file | diff | The candidate contains a `.pth` file at a path the baseline did not have, or an existing `.pth` file gained executable lines (lines starting with `import`). | warn |
 | GRN-C002 | new-build-hook | diff | A new or changed `setup.py` adds calls in the §6.3 sensitive set; the build backend changed to a non-allowlisted backend or an in-tree backend; or an npm `preinstall`/`install`/`postinstall` script was added or changed. (`prepare` was dropped on 2026-10-29: npm doesn't run it for a published tarball, and every `prepare` change in the top-200 backtest was a build-tool switch.) | warn |
-| GRN-C003 | new-import-time-exec | diff | A module's top level (including code reached from `__init__.py` at import) gains a call in the §6.3 sensitive set. In test files (`tests/`, `test_*.py`, `conftest.py`) it reports at info, unless a non-test module imports the file (directly or through other test modules) or an entry point names it. | warn (info in test files) |
+| GRN-C003 | new-import-time-exec | diff | A module's top level (including code reached from `__init__.py` at import) gains a call in the §6.3 sensitive set. It reports at info, as a separate finding, in three cases: in test files (`tests/`, a top-level `test/`, `test_*.py`, `conftest.py`) or reached only from one, unless a non-test module imports the file (directly or through other test modules) or an entry point names it; in sdist files outside the package (`docs/conf.py`, `examples/`) or reached only from one; and for a function import-time code only hands to a call not known to run it (`functools.partial(f)`). A call a package module reaches at import is reported once, at warn. | warn (info in test files and the other two cases) |
 | GRN-C004 | new-binary | diff | The candidate adds a native executable or shared library that is not a compiled extension module of a package path present in the baseline, or the release changes from pure-Python to containing binaries. | warn |
 | GRN-C005 | obfuscated-blob | diff | A changed file gains a string or bytes literal over 2,048 characters with Shannon entropy over 4.5 bits per character, or any such literal passed to `exec`, `eval`, `compile`, `base64.*decode`, `zlib.decompress` or `marshal.loads`. | warn |
 | GRN-C006 | sdist-wheel-mismatch | diff | The selected wheel contains a `.py` or `.pth` file with no counterpart in the sdist, when the baseline had none. | warn |
@@ -264,10 +265,11 @@ garnet version
     policy: garnet.toml        # optional
     comment: true              # post or update the PR comment
     sarif: false               # upload SARIF to code scanning
+    footer: true               # end the comment with one line of docs links (§9.4)
     fail-on: block
 ```
 
-Outputs: `verdict`, `report-path` (JSON), `sarif-path`.
+Outputs: `verdict`, `report-path` (JSON), `comment-path` (the rendered comment), `sarif-path`.
 
 The Action MUST run on `pull_request`, MUST NOT check out or execute PR code under `pull_request_target`, and MUST document the minimal permissions (`contents: read`, plus `pull-requests: write` for comments and `security-events: write` for SARIF). Where the PR's token can't comment (Dependabot's restricted token, forks), the Action MUST support the two-workflow pattern: the analysis job uploads the report artifact, and a separate `workflow_run` job posts it without checking out PR code. The repository ships both workflows as examples.
 

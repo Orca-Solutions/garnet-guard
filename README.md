@@ -14,7 +14,7 @@
   <a href="https://pypi.org/project/garnet-guard/"><img src="https://img.shields.io/pypi/v/garnet-guard?color=8E1B2C" alt="PyPI version" height="20"></a>
   <img src="https://img.shields.io/badge/status-pre--alpha-5C636B" alt="Status: pre-alpha" height="20">
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20releases-51%2F51%20warn-8E1B2C" alt="Replayed malicious releases: 51 of 51 warn" height="20"></a>
-  <a href="https://github.com/orca-solutions/garnet-guard#replays-of-real-attacks"><img src="https://img.shields.io/badge/clean%20updates-2.0%25%20flagged%20(366%2F18%2C181)-1B1F24" alt="Clean updates: 366 of 18,181 flagged for a look (2.0%), none a false claim" height="20"></a>
+  <a href="https://github.com/orca-solutions/garnet-guard#replays-of-real-malicious-releases"><img src="https://img.shields.io/badge/clean%20updates-2.0%25%20flagged%20(366%2F18%2C181)-1B1F24" alt="Clean updates: 366 of 18,181 flagged for a look (2.0%), none a false claim" height="20"></a>
 </p>
 
 <!-- The "checked by" badge goes live once Garnet Guard has checked its own dependency PRs on GitHub (SPEC §11):
@@ -83,13 +83,13 @@ jobs:
       - uses: orca-solutions/garnet-guard@<release-commit-sha> # v0.1.0
 ```
 
-Until the Action has a tagged release, `<release-commit-sha>` is a placeholder. Inputs, permissions and the fork-safe two-workflow pattern are in [docs/action.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/action.md). The Action is a preview.
+Until the Action's first full release (0.2.0), `<release-commit-sha>` is a placeholder. Inputs, permissions and the fork-safe two-workflow pattern are in [docs/action.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/action.md). The Action is a preview.
 
 **Locally.** `garnet check` compares two lockfiles, for example your branch against `main`, and checks every package that changed. Once you've reviewed a finding, an ignore in `garnet.toml` silences it until a date you choose ([docs/policy.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/policy.md)).
 
 **In agent hooks (planned).** A pre-install hook stops Claude Code or Codex from quietly adding a risky dependency.
 
-## Replays of real attacks
+## Replays of real malicious releases
 
 We fed the original malicious files from 36 compromised PyPI packages (47 malicious releases, December 2024 to September 2026) through `garnet diff`, using each project's previous release as the baseline. The files are still served by files.pythonhosted.org and are checked against PyPI's published hashes. Nothing was executed. Known-bad feeds were switched off, so these results show only what the release diff found by itself. Git tags are checked as they stood on the day of each upload.
 

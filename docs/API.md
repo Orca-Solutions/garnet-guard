@@ -4,7 +4,7 @@
 - Date: 2026-10-10
 - Companion to: [SPEC-v1.md](SPEC-v1.md) (what Garnet does) and [ARCHITECTURE.md](../ARCHITECTURE.md) (the overview). This document says how the code is organized and what the Python API looks like.
 
-> **This is the 1.0 design; 0.1 builds part of it.** The layers and import rules in §2 are enforced today. Of the API in §3, 0.1 exports `compare`, `report`, `explain`, `Options`, `Report` and the models; `evaluate` and `diff_lockfiles` exist in `garnet_guard.engine` but aren't exported yet; `load_policy`, `Policy`, `Ignore` and `PolicyError` are exported; the cache isn't built; SARIF is `garnet_guard.sarif.to_sarif`, not yet a `Report` method. npm is built for `compare` and `evaluate` (`ecosystems/npm.py`, `ecosystems/npm_provenance.py`, `facts/npmmeta.py`); the npm lockfile parsers aren't. [CODE_TOUR.md](CODE_TOUR.md) describes the code as it is now, module by module.
+> **This is the 1.0 design; 0.1 builds part of it.** The layers and import rules in §2 are enforced today. Of the API in §3, 0.1 exports `compare`, `report`, `explain`, `Options`, `Report` and the models; `evaluate` and `diff_lockfiles` exist in `garnet_guard.engine` but aren't exported yet; `load_policy`, `Policy`, `Ignore` and `PolicyError` are exported; the cache isn't built; SARIF is `garnet_guard.sarif.to_sarif`, not yet a `Report` method. npm is built for `compare` and `evaluate` (`ecosystems/npm.py`, `ecosystems/npm_provenance.py`, `facts/npmmeta.py`); the npm lockfile parsers aren't. Trust checks on skipped intermediate releases (§5, SPEC §5 rule 2) and the per-change deadline aren't built either. [CODE_TOUR.md](CODE_TOUR.md) describes the code as it is now, module by module.
 
 ## 1. Design goals
 
@@ -277,7 +277,7 @@ Concurrency uses a `ThreadPoolExecutor` sized by `Options.concurrency`, with a p
 
 ## 6. The two hardened modules
 
-**`net.py`.** One `httpx.Client` with HTTP/1.1 and HTTP/2, TLS verification always on, proxy and CA settings from the environment, timeouts (connect 10 s, read 30 s), retries with backoff for 429/5xx, a response size cap, and a hosts allowlist (`pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `api.github.com`, `api.osv.dev`, Sigstore TUF hosts). Requests to anything else raise. Tokens are attached only to `api.github.com`.
+**`net.py`.** One `httpx.Client` with HTTP/1.1 and HTTP/2, TLS verification always on, proxy and CA settings from the environment, timeouts (connect 10 s, read 30 s), retries with backoff for 429/5xx, a response size cap, and a hosts allowlist (`pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `github.com` for tags and source trees over the git protocol (ADR-0014), `api.github.com`, `api.osv.dev`). Requests to anything else raise. Tokens are attached only to `api.github.com`. `sigstore` fetches its TUF trust root itself, outside `net.py` (ADR-0014).
 
 **`safe_archive.py`.** Exposes `open_archive(data: bytes, limits: Limits) -> ArchiveReader` with `entries()` and `read(path, max_bytes)`. It never writes to disk. It rejects unsafe entries per SPEC §4.4, and counts uncompressed bytes as it reads so a lying header can't bypass limits. It is fuzzed with Atheris or Hypothesis on every CI run (short) and nightly (long).
 
