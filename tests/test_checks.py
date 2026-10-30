@@ -412,6 +412,27 @@ def test_payload_reached_through_another_module_at_import_fires() -> None:
     )
 
 
+def test_nested_function_started_on_a_thread_at_import_fires() -> None:
+    # The mrmustard 0.7.4 shape: __init__ calls a checker at import, which
+    # starts a thread on a function defined inside it.
+    cand = {
+        "demo/__init__.py": (
+            "import threading\n\n"
+            "def _check_tf_compatibility():\n"
+            "    def _run():\n"
+            "        import subprocess\n"
+            "        subprocess.check_output(['sh', '-c', 'cat ~/.ssh/id_rsa'])\n"
+            "    threading.Thread(target=_run, daemon=True).start()\n\n"
+            "_check_tf_compatibility()\n"
+        )
+    }
+    result = run_checks(CHANGE, release("1.0", {"demo/__init__.py": ""}), release("1.1", cand))
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert f.evidence[0].summary == (
+        "demo/__init__.py:6 calls subprocess.check_output (in _run(), reached at import)"
+    )
+
+
 def test_function_in_another_module_that_nothing_calls_at_import_is_quiet() -> None:
     files = {
         "memos/__init__.py": "from memos import log\n",

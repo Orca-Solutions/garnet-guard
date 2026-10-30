@@ -415,7 +415,14 @@ def scan_module(
     seen: set[str] = set()
     decoded: dict[str, str] = {}  # name → the base64 decode it was assigned from
 
-    def scan(nodes: Iterable[ast.AST], via: str | None) -> None:
+    def scan(
+        nodes: Iterable[ast.AST], via: str | None, scope: Mapping[str, list[ast.AST]] | None = None
+    ) -> None:
+        # Callables these statements can reach by name: the module's, plus any
+        # function defined inside the body being scanned (mrmustard 0.7.4 ran
+        # ``threading.Thread(target=_run).start()`` on a ``_run`` nested in the
+        # function it called at import).
+        local: dict[str, list[ast.AST]] = dict(scope if scope is not None else reachable)
         reached: list[str] = []
         for node in _walk_exec(nodes):
             if isinstance(node, ast.Call):
@@ -427,19 +434,26 @@ def scan_module(
                     calls.append(CallSite(name=name, line=node.lineno, via=via))
                     for decode in _decoded_inputs(args[1:], resolver, decoded):
                         calls.append(CallSite(name=f"{decode} → {name}", line=node.lineno, via=via))
-                reached += _local_refs(args, reachable)
+                reached += _local_refs(args, local)
                 for lam in (a for a in args if isinstance(a, ast.Lambda)):
-                    scan([lam.body], via or "<lambda>")
+                    scan([lam.body], via or "<lambda>", local)
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                reached += _local_refs(node.decorator_list, reachable)
+                reached += _local_refs(node.decorator_list, local)
+                if not isinstance(node, ast.ClassDef):
+                    local[node.name] = list(node.body)
             elif isinstance(node, ast.Assign):
                 resolver.note_assignment(node)
                 for decode in _decoded_inputs([node.value], resolver, decoded):
                     decoded.update((t.id, decode) for t in node.targets if isinstance(t, ast.Name))
+                if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                    if isinstance(node.value, ast.Lambda):
+                        local[node.targets[0].id] = [node.value.body]
         for key in reached:
-            if key not in seen:
-                seen.add(key)
-                scan(reachable[key], key)
+            nested = key not in reachable
+            mark = f"{via}.{key}" if nested else key  # two functions may nest the same name
+            if mark not in seen:
+                seen.add(mark)
+                scan(local[key], key, local if nested else None)
 
     if entry is None:
         scan(tree.body, None)
