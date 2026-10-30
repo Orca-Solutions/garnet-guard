@@ -77,7 +77,7 @@ Removed packages produce no findings. Added packages (no base version) get only 
 ### 4.2 Artifact selection
 
 - **Trust rules** MUST evaluate every artifact of both releases.
-- **Content rules** MUST evaluate the sdist (when present) and one wheel per release. The wheel is chosen in this order: a pure-Python wheel (`py3-none-any`); else the wheel matching the platform tag of the current machine; else the first wheel in sorted file-name order. The same selection rule MUST apply to baseline and candidate. If the selected wheel tags differ between releases, Garnet MUST note it in the evidence.
+- **Content rules** MUST evaluate the sdist (when present) and one wheel per release. The wheel is the one pip would install on the current machine: the wheel whose most specific tag ranks highest among the tags the running interpreter supports, so a platform wheel is chosen over a pure-Python (`py3-none-any`) one; when no wheel is compatible, the first wheel in sorted file-name order. (Until 2026-10-30 a pure-Python wheel was always chosen first, which let a platform wheel added beside it go unread.) The same selection rule MUST apply to baseline and candidate. If the selected wheel tags differ between releases, Garnet MUST note it in the evidence.
 - Every downloaded artifact MUST match the registry's published SHA-256 before it is inspected. A mismatch is finding GRN-T008 (block).
 
 ### 4.3 Facts
@@ -125,7 +125,7 @@ Default severities are what applies with no policy file.
 | GRN-T003 | workflow-changed | diff | Same repository, but the workflow file path or deployment environment differs. | warn |
 | GRN-T004 | no-matching-tag | diff | The baseline version had a matching git tag in the source repository and the candidate does not. Tag matching accepts `X` or `vX`, alone or after a prefix that names the package or is `release`, joined by `-`, `_`, `==` or `/`, and `@` for npm. A `/` or `==` prefix may use the end of the name, as monorepos tag by folder, when no tag uses the full name. | warn |
 | GRN-T005 | outside-trusted-publishing | diff | Baseline files were published via Trusted Publishing and at least one candidate file was not. | warn |
-| GRN-T006 | files-uploaded-late | absolute | A candidate file was uploaded more than 24 hours after the release's first file. | warn |
+| GRN-T006 | files-uploaded-late | absolute | A candidate file was uploaded more than 24 hours after the release's first file. `info` when no late wheel is the release's first wheel or ranks at or above an on-time wheel, in pip's order, on a machine built from the release's wheel tags. | warn |
 | GRN-T007 | invalid-attestation | absolute | An attestation is present but fails verification. | block |
 | GRN-T008 | hash-mismatch | absolute | A downloaded artifact doesn't match its published hash. | block |
 | GRN-C001 | new-pth-file | diff | The candidate contains a `.pth` file at a path the baseline did not have, or an existing `.pth` file gained executable lines (lines starting with `import`). | warn |

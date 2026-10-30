@@ -114,15 +114,17 @@ def owners(data: Any) -> tuple[str, ...]:
 
 
 def select_wheel(filenames: list[str]) -> str | None:
-    """SPEC §4.2: pure-Python wheel, else one for this platform, else first sorted."""
+    """SPEC §4.2: the wheel pip would install on this machine, else the first sorted.
+
+    pip ranks a wheel by its most specific tag this interpreter supports, so a
+    platform wheel beats a pure-Python one. Content rules read the same file
+    pip would install: a platform wheel added to a pure-Python project is the
+    one read, not the pure wheel beside it.
+    """
     wheels = sorted(f for f in filenames if f.endswith(".whl"))
     if not wheels:
         return None
-    for w in wheels:
-        if w.endswith("-py3-none-any.whl") or w.endswith("-py2.py3-none-any.whl"):
-            return w
-    supported = list(sys_tags())
-    rank = {t: i for i, t in enumerate(supported)}
+    rank = {t: i for i, t in enumerate(sys_tags())}
     best: tuple[int, str] | None = None
     for w in wheels:
         try:

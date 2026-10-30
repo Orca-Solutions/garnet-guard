@@ -79,6 +79,25 @@ _DOCS: tuple[RuleDoc, ...] = (
         "As for GRN-T001.",
     ),
     RuleDoc(
+        "GRN-T006",
+        "files-uploaded-late",
+        "absolute",
+        W,
+        "A file of the new version was uploaded more than 24 hours after the version's first "
+        "file. It is a warning when pip would install a late wheel where it installed a file "
+        "uploaded on time: the release's first wheel, or a wheel that ranks at or above an "
+        "on-time wheel on some machine. Late wheels that only add Python versions or platforms "
+        "are info.",
+        "PyPI accepts new files on an existing version, for example a wheel for a new platform. "
+        "The same feature lets someone with a token add a file to a release that was already "
+        "reviewed. pip installs the most specific wheel for the machine, so a late wheel can be "
+        "the file that installs in place of the one reviewers saw.",
+        "Find the build that made the late file in the project's repository: a CI run on the "
+        "release's tag, or a commit or issue that explains a rebuild. Compare it with the "
+        "on-time file the evidence says it can replace. If nothing in the repository explains "
+        "it, don't merge until the maintainers confirm they uploaded it.",
+    ),
+    RuleDoc(
         "GRN-T007",
         "invalid-attestation",
         "absolute",
@@ -237,4 +256,4 @@ DOCS: dict[str, RuleDoc] = {d.rule_id: d for d in _DOCS}
 
 # Rules in the SPEC §6.2 catalog that aren't built yet. A policy may already
 # name them; they produce no findings until they ship.
-PLANNED: frozenset[str] = frozenset({"GRN-T006", "GRN-C004", "GRN-C005", "GRN-C006"})
+PLANNED: frozenset[str] = frozenset({"GRN-C004", "GRN-C005", "GRN-C006"})

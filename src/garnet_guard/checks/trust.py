@@ -3,8 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import timedelta
 
-from ..models import ArtifactFacts, Change, Evidence, FileProvenance, RawFinding, ReleaseFacts
+from ..models import (
+    ArtifactFacts,
+    Change,
+    Evidence,
+    FileProvenance,
+    RawFinding,
+    ReleaseFacts,
+    Severity,
+)
+from . import wheel_tags
+from .wheel_tags import Displacement
 
 
 def _provs(rel: ReleaseFacts) -> list[tuple[ArtifactFacts, FileProvenance | None]]:
@@ -278,3 +289,109 @@ def hash_mismatch(
                 ),
                 release=rel.version if rel is base else None,
             )
+
+
+# GRN-T006: how long after a release's first file another file may arrive.
+LATE_UPLOAD = timedelta(hours=24)
+
+
+def _late_files(rel: ReleaseFacts) -> tuple[list[ArtifactFacts], ArtifactFacts | None]:
+    """Files uploaded more than ``LATE_UPLOAD`` after the release's first file,
+    and that first file."""
+    dated = sorted(
+        (a for a in rel.artifacts if a.uploaded_at is not None),
+        key=lambda a: (a.uploaded_at, a.filename),
+    )
+    if not dated:
+        return [], None
+    first = dated[0]
+    assert first.uploaded_at is not None
+    late = [
+        a
+        for a in dated
+        if a.uploaded_at is not None and a.uploaded_at - first.uploaded_at > LATE_UPLOAD
+    ]
+    return late, first
+
+
+def _late_reason(filename: str, first_wheel: bool, moved: dict[str, Displacement]) -> str | None:
+    """Why a late file changes what pip installs where a wheel was already
+    installed, or None for a backfill (``wheel_tags.displacements``)."""
+    if first_wheel and wheel_tags.parse(filename) is not None:
+        return "it is the release's first wheel, and pip installs a wheel before an sdist"
+    d = moved.get(filename)
+    if d is None:
+        return None
+    if d.build:
+        return f"it has a build number, so on {d.machine} pip installs it instead of {d.replaced}"
+    if d.tie:
+        return f"it has the same tags as {d.replaced}, so on {d.machine} pip may install either"
+    return f"on {d.machine}, pip installs it instead of {d.replaced}"
+
+
+def files_uploaded_late(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-T006: a file of the candidate was uploaded more than 24 hours after
+    its first file. Registries accept new files on an existing version, so a
+    late file may be one nobody reviewed.
+
+    Keeps the rule's severity when a late wheel is one pip installs where an
+    on-time wheel was installed before, or the release's first wheel; late
+    wheels that only add Python versions or platforms are info.
+    """
+    late, first = _late_files(cand)
+    if not late or first is None or first.uploaded_at is None:
+        return
+    start = first.uploaded_at
+    names = {a.filename for a in late}
+    on_time = sorted(a.filename for a in cand.artifacts if a.filename not in names)
+    first_wheel = not any(wheel_tags.parse(n) for n in on_time)
+    moved = wheel_tags.displacements(on_time, sorted(names))
+    evidence: list[Evidence] = []
+    loud = 0
+    for a in late:
+        if a.uploaded_at is None:
+            continue
+        reason = _late_reason(a.filename, first_wheel, moved)
+        loud += reason is not None
+        evidence.append(
+            Evidence(
+                "file",
+                f"{a.filename}: uploaded {a.uploaded_at:%Y-%m-%dT%H:%MZ}, "
+                f"{_span(a.uploaded_at - start)} after the first file ({first.filename}, "
+                f"{start:%Y-%m-%dT%H:%MZ})" + (f"; {reason}" if reason else ""),
+                path=a.filename,
+                sha256=a.sha256 or None,
+            )
+        )
+    evidence.sort(key=lambda e: "; " not in e.summary)  # the files that matter first
+    more = len(evidence) - MAX_LATE_EVIDENCE
+    note: tuple[Evidence, ...] = (
+        (Evidence("note", f"and {more} more late file(s)"),) if more > 0 else ()
+    )
+    if not loud:
+        note += (
+            Evidence(
+                "note",
+                "no late file takes the place of one uploaded on time: each fits only machines "
+                f"that had no wheel of {cand.version} to install before, the usual way a compiled "
+                "project adds Python versions and platforms, so this is reported at info",
+            ),
+        )
+    yield RawFinding(
+        "GRN-T006",
+        f"{len(late)} file(s) of {cand.version} were uploaded more than 24 hours after its first file"
+        + (f", and {loud} can replace a file uploaded on time" if loud else ""),
+        tuple(evidence[:MAX_LATE_EVIDENCE]) + note,
+        lowered_to=None if loud else Severity.INFO,
+    )
+
+
+MAX_LATE_EVIDENCE = 10
+
+
+def _span(d: timedelta) -> str:
+    """A duration in whole days, or hours under two days."""
+    hours = int(d.total_seconds() // 3600)
+    return f"{hours} hours" if hours < 48 else f"{hours // 24} days"
