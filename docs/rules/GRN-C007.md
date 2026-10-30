@@ -25,6 +25,16 @@ same path, if there is one, and asked one more question: does it contain a call 
 that the source file doesn't? Only then does the rule fire. A call the trusted version
 already carried outside its source, in the same file, isn't new.
 
+Three build habits make a sourced file look unsourced, and the rule allows for each. A
+wheel built on Windows can carry CRLF line endings, so a file that matches once they are read
+as LF is sourced (multiprocess 0.70.12.1 ships only Windows wheels). A build can publish a
+package under another name: pycryptodome's `lib/Crypto/` is pycryptodomex's `Cryptodome/`.
+A top-level package with no folder of its name in the repository is compared with the folder
+most of its files come from, so a call the source file has there isn't new. And a repository
+can tag one release twice at different commits (sympy has `1.12.1` and `sympy-1.12.1`).
+When the first tag that names the version leaves a sensitive call unexplained, Garnet compares
+the release with the other tags too, and uses the tree that matches the most files.
+
 Files that differ from the source are normal: a `_version.py` written by the build, Cython
 output, a `__config__.py` with compiler flags. None of those run processes, load code or use
 the network, so they stay quiet. In the 974-update clean corpus, 158 updates had at least one

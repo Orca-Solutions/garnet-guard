@@ -873,6 +873,19 @@ def test_code_not_in_source_fires_on_a_sensitive_call_the_source_lacks() -> None
     assert finding.evidence[1].url == "https://github.com/o/r/blob/" + "c" * 40 + "/src/demo/dl.py"
 
 
+def test_code_not_in_source_names_the_renamed_source_it_compared_with() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    cand = with_source_match(
+        release("1.1", {"demo/__init__.py": INIT, "demox/dl.py": DL_PAYLOAD}),
+        UnsourcedFile(
+            "demox/dl.py", True, (CallSite("subprocess.Popen", 4, "run"),), at="lib/demo/dl.py"
+        ),
+    )
+    finding = next(f for f in run_checks(CHANGE, base, cand).findings if f.rule_id == "GRN-C007")
+    assert "the source differs from lib/demo/dl.py at v1.1" in finding.evidence[1].summary
+    assert finding.evidence[1].url == "https://github.com/o/r/blob/" + "c" * 40 + "/lib/demo/dl.py"
+
+
 def test_code_not_in_source_quiet_for_generated_files_without_sensitive_calls() -> None:
     base = release("1.0", {"demo/__init__.py": INIT})
     cand = with_source_match(

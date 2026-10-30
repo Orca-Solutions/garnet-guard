@@ -26,6 +26,10 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 - The remediation text of GRN-T002, GRN-C001 and GRN-C003 points at the repository first (the commit, the tag), because whoever published a release also wrote its release notes. GRN-C003's says that a condition around a new call, such as running only in CI, is evidence, not reassurance.
 - GRN-C007 reads a published file back and indexes its calls only when the file isn't in the source tree, after the tag lookup, instead of indexing every file at inspection. A release from a large repository (transformers ships 5,600 Python files) costs one hash per file and one tree fetch, not a second parse of everything.
 
+### Fixed
+
+- GRN-C007 said code was not in the repository when it was. On the top-1,000 PyPI corpus it warned on 9 updates, and in 4 of them every flagged file is in the source. sympy/sympy tags 1.12.1 twice, as `1.12.1` and `sympy-1.12.1`, at different commits, and the wheel was built from the second. multiprocess 0.70.12.1 ships only Windows wheels, whose files have CRLF line endings. pycryptodomex 3.17 and 3.19.1 publish pycryptodome's `lib/Crypto/` as `Cryptodome/`. GRN-C007 now reads CRLF as LF, compares a package published under another name with the folder it came from, and tries every tag that names the version when the first leaves a sensitive call unexplained. The other 5 warnings are unchanged: daff, nodejs-wheel-binaries (two updates), shellingham 1.2.8 and tensorboard 2.20.0 ship files that are in no tree at the tag.
+
 ## 0.1.0a1 (2026-10-30)
 
 The first pre-release. It claims the `garnet-guard` name on PyPI and lets people try the command line before the first full release. Expect changes before 0.2.0.

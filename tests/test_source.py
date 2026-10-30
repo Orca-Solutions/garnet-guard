@@ -8,7 +8,13 @@ from collections.abc import Callable
 import pytest
 
 from garnet_guard.ecosystems.gittree import CommitFiles
-from garnet_guard.ecosystems.source import find_prefix, match_artifact, repo_files
+from garnet_guard.ecosystems.source import (
+    find_prefix,
+    find_renames,
+    match_artifact,
+    match_tags,
+    repo_files,
+)
 from garnet_guard.facts.inventory import file_reader, git_blob_id
 from garnet_guard.models import Limits, TagInfo
 from garnet_guard.net import NetError
@@ -170,6 +176,121 @@ def test_a_top_level_module_named_like_a_library_hides_no_call() -> None:
     art = release("1.1", own, package="requests").artifacts[0]
     match = match_artifact(trees, TAG, art, published(own)[0])  # type: ignore[arg-type]
     assert [(u.path, u.calls) for u in match.unmatched] == [("requests/adapters.py", ())]
+
+
+def test_a_file_with_crlf_line_endings_is_the_source_file() -> None:
+    # multiprocess 0.70.12.1 ships only Windows wheels, built from a checkout with CRLF endings.
+    files = {"demo/dl.py": PAYLOAD_DL.replace("\n", "\r\n")}
+    cand = release("1.1", files)
+    trees = FakeTrees(
+        {("o/r", "c" * 40): CommitFiles({"demo/dl.py": git_blob_id(PAYLOAD_DL.encode())}, {})}, {}
+    )
+    match = match_artifact(trees, TAG, cand.artifacts[0], published(files)[0])  # type: ignore[arg-type]
+    assert (match.matched, match.unmatched) == (1, ())
+
+
+def test_crlf_endings_on_changed_code_still_report_the_new_call() -> None:
+    files = {"demo/dl.py": (PAYLOAD_DL + "import os\nos.system('x')\n").replace("\n", "\r\n")}
+    cand = release("1.1", files)
+    trees = FakeTrees(
+        {("o/r", "c" * 40): CommitFiles({"demo/dl.py": git_blob_id(PAYLOAD_DL.encode())}, {})},
+        blobs(PAYLOAD_DL),
+    )
+    match = match_artifact(trees, TAG, cand.artifacts[0], published(files)[0])  # type: ignore[arg-type]
+    assert [(u.path, [c.name for c in u.calls]) for u in match.unmatched] == [
+        ("demo/dl.py", ["os.system"])
+    ]
+
+
+def test_find_renames_maps_a_package_published_under_another_name() -> None:
+    # pycryptodome's build publishes lib/Crypto/ as pycryptodomex's Cryptodome/.
+    tree = {
+        "lib/Crypto/__init__.py": "",
+        "lib/Crypto/Cipher/AES.py": "",
+        "lib/Crypto/Hash/MD5.py": "",
+    }
+    paths = ["Cryptodome/__init__.py", "Cryptodome/Cipher/AES.py", "Cryptodome/Hash/MD5.py"]
+    assert find_renames(paths, tree, "") == {"Cryptodome": "lib/Crypto/"}
+    # A package whose own directory is there isn't renamed, and one vote in three isn't enough.
+    assert find_renames(["Crypto/Cipher/AES.py"], tree, "lib/") == {}
+    odd = ["Cryptodome/Cipher/AES.py", "Cryptodome/Util/a.py", "Cryptodome/Util/b.py"]
+    assert find_renames(odd, tree, "") == {}
+
+
+def test_a_renamed_package_is_compared_with_the_directory_it_came_from() -> None:
+    source = "import Crypto.Hash\nimport importlib\n\ndef get(n):\n    return importlib.import_module(n)\n"
+    built = source.replace("Crypto", "Cryptodome")
+    files = {"Cryptodome/__init__.py": INIT, "Cryptodome/SelfTest/__init__.py": built}
+    cand = release("1.1", files)
+    trees = FakeTrees(
+        {
+            ("o/r", "c" * 40): CommitFiles(
+                {
+                    "lib/Crypto/__init__.py": git_blob_id(INIT.encode()),
+                    "lib/Crypto/SelfTest/__init__.py": git_blob_id(source.encode()),
+                },
+                {},
+            )
+        },
+        blobs(source),
+    )
+    match = match_artifact(trees, TAG, cand.artifacts[0], published(files)[0])  # type: ignore[arg-type]
+    assert [(u.path, u.in_source, u.at, u.calls) for u in match.unmatched] == [
+        ("Cryptodome/SelfTest/__init__.py", True, "lib/Crypto/SelfTest/__init__.py", ())
+    ]
+    # A call the renamed source doesn't have is still reported.
+    files = {**files, "Cryptodome/SelfTest/__init__.py": built + "import os\nos.system('x')\n"}
+    cand = release("1.1", files)
+    match = match_artifact(trees, TAG, cand.artifacts[0], published(files)[0])  # type: ignore[arg-type]
+    assert [[c.name for c in u.calls] for u in match.unmatched] == [["os.system"]]
+
+
+def test_match_tags_uses_the_tag_whose_tree_the_release_was_built_from() -> None:
+    # sympy/sympy tags 1.12.1 at one commit and sympy-1.12.1 at the release's.
+    files = {"demo/__init__.py": INIT, "demo/dl.py": PAYLOAD_DL}
+    cand = release("1.1", files)
+    other = TagInfo(name="demo-1.1", sha="d" * 40, repo="o/r")
+    trees = FakeTrees(
+        {
+            ("o/r", "c" * 40): CommitFiles(
+                {"demo/__init__.py": git_blob_id(INIT.encode()), "demo/dl.py": git_blob_id(b"x")},
+                {},
+            ),
+            ("o/r", "d" * 40): CommitFiles(
+                {
+                    "demo/__init__.py": git_blob_id(INIT.encode()),
+                    "demo/dl.py": git_blob_id(PAYLOAD_DL.encode()),
+                },
+                {},
+            ),
+        },
+        {git_blob_id(b"x"): b"x"},
+    )
+    source_of = published(files)[0]
+    match = match_tags(trees, [TAG, other], cand.artifacts[0], source_of)  # type: ignore[arg-type]
+    assert (match.tag, match.commit, match.matched, match.unmatched) == (
+        "demo-1.1",
+        "d" * 40,
+        2,
+        (),
+    )
+    # A second tag whose tree can't be read leaves the first tag's answer.
+    missing = TagInfo(name="demo-1.1", sha="e" * 40, repo="o/r")
+    match = match_tags(trees, [TAG, missing], cand.artifacts[0], source_of)  # type: ignore[arg-type]
+    assert match.tag == "v1.1" and [u.path for u in match.unmatched] == ["demo/dl.py"]
+    with pytest.raises(NetError):
+        match_tags(trees, [missing, TAG], cand.artifacts[0], source_of)  # type: ignore[arg-type]
+
+
+def test_match_tags_reads_no_other_tree_when_the_first_explains_every_call() -> None:
+    files = {"demo/__init__.py": INIT, "demo/_version.py": VERSION}
+    cand = release("1.1", files)
+    trees = FakeTrees(
+        {("o/r", "c" * 40): CommitFiles({"demo/__init__.py": git_blob_id(INIT.encode())}, {})}, {}
+    )
+    other = TagInfo(name="demo-1.1", sha="d" * 40, repo="o/r")  # its tree would raise NetError
+    match = match_tags(trees, [TAG, other], cand.artifacts[0], published(files)[0])  # type: ignore[arg-type]
+    assert match.tag == "v1.1" and [u.path for u in match.unmatched] == ["demo/_version.py"]
 
 
 def test_files_under_an_unreadable_submodule_are_unchecked_not_passed() -> None:

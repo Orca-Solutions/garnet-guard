@@ -170,10 +170,26 @@ def match_tag(
     sorted order; otherwise X is compared as a PEP 440 version, so tag
     ``2026.01.04`` matches release ``2026.1.4``.
     """
+    found = matching_tags(tags, package, version, repo, npm=npm)
+    return found[0] if found else None
+
+
+def matching_tags(
+    tags: dict[str, str],
+    package: str,
+    version: str,
+    repo: str | None = None,
+    *,
+    npm: bool = False,
+) -> list[TagInfo]:
+    """Every tag ``match_tag`` accepts for the version, its choice first.
+
+    A repository can tag one release twice at different commits: sympy/sympy
+    has ``1.12.1`` and ``sympy-1.12.1``. GRN-C007 compares the release with
+    each of them when the first doesn't explain its files.
+    """
     full, short = _package_names(package)
-    for name in (version, f"v{version}"):
-        if name in tags:
-            return TagInfo(name=name, sha=tags[name], repo=repo)
+    found = [name for name in (version, f"v{version}") if name in tags]
     # A repository that tags the package by its full name tags other packages
     # by the shorter ones: TooTallNate/proxy-agents has socks-proxy-agent@8.0.1
     # and proxy-agent@8.0.1.
@@ -186,13 +202,18 @@ def match_tag(
     wanted = _as_version(version)
     loose: str | None = None
     for name in sorted(tags):
+        if name in found:
+            continue
         for prefix, sep, rest in _readings(name, npm=npm):
             if not _names_package(prefix, sep, full, short):
                 continue
             rest = rest[1:] if rest[:1] in ("v", "V") else rest
             if rest == version:
-                return TagInfo(name=name, sha=tags[name], repo=repo)
+                found.append(name)
+                break
             if loose is None and wanted is not None and rest[:1].isdigit():
                 if _as_version(rest) == wanted:
                     loose = name
-    return TagInfo(name=loose, sha=tags[loose], repo=repo) if loose is not None else None
+    if not found and loose is not None:
+        found.append(loose)
+    return [TagInfo(name=name, sha=tags[name], repo=repo) for name in found]

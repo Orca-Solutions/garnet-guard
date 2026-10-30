@@ -315,6 +315,7 @@ class UnsourcedFile:
     path: str
     in_source: bool  # True: the path exists at the tag with other content; False: absent
     calls: tuple[CallSite, ...]
+    at: str = ""  # the repository path it was compared with; "" means prefix + path
 
 
 @dataclass(frozen=True)

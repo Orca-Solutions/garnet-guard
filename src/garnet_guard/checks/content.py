@@ -730,7 +730,7 @@ def code_not_in_source(
         if not new:
             continue
         files += 1
-        at = sm.prefix + u.path
+        at = u.at or sm.prefix + u.path
         for s in new:
             via = f" (in {s.via}())" if s.via else ""
             where = f"differs from {at} at {sm.tag}" if u.in_source else f"has no {at} at {sm.tag}"
