@@ -88,17 +88,19 @@ xinference 2.6.0 to 2.6.2, mistralai 2.4.6, guardrails-ai 0.10.1 and durabletask
 in the replay. In telnyx 4.87.1 a typo stopped the payload before it ran; the rule reads code
 and reports what a module calls at import, not whether the call succeeds.
 
-What it missed in the replay, and why:
+What it missed in the replay, and what changed:
 
-- **ultralytics 8.3.41 and 8.3.42**: the miner runs when a model is downloaded, not at import.
+- **ultralytics 8.3.41 and 8.3.42**: the miner runs when a model is downloaded, not at import,
+  so this rule stays quiet by design. [GRN-C007](GRN-C007.md) reports 8.3.42 instead.
 - **num2words 0.5.15 and 0.5.16**: `__init__.py` loads a DLL through
-  `getattr(ctypes, "CDLL")`, and the rule doesn't follow calls made through `getattr`.
-- **memoryos 2.0.34**: the payload starts from a logging setup function in another module.
+  `getattr(ctypes, "CDLL")`. The rule did not follow calls made through `getattr`; it now
+  resolves a `getattr` with a literal name and reports `ctypes.CDLL`.
+- **memoryos 2.0.34**: the payload starts from a logging setup function in another module. The
+  rule stopped at the first module; it now follows the chain through the package's own modules.
 - **mrmustard 0.7.4** ([MAL-2026-11049](https://osv.dev/vulnerability/MAL-2026-11049)):
-  `__init__.py` calls a new function at import, and the rule follows it. That function starts
-  a thread whose target is a function defined inside it, where `subprocess` and
-  `urllib.request` are called. The rule follows a function handed to a call only when it is
-  defined at module level, so it stopped one step short. A fix is planned.
+  `__init__.py` calls a new function at import, and that function starts a thread whose target
+  is a function defined inside it, where `subprocess` and `urllib.request` are called. The rule
+  followed only module-level functions; it now follows a nested function handed to a call.
 
 ## How to resolve it
 
