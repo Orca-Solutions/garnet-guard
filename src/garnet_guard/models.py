@@ -264,6 +264,21 @@ class PthFile:
 
 
 @dataclass(frozen=True)
+class WheelDifference:
+    """A Python file in another wheel of the release that differs from the one
+    in the wheel Garnet read, with the sensitive calls the read copy lacks
+    (GRN-C012). Recorded only when there is such a call."""
+
+    wheel: str  # the other wheel's filename
+    family: str  # the platform it is for: "Windows", "macOS", "Linux", "any", …
+    path: str  # where it installs, relative to site-packages
+    in_inspected: bool  # the wheel Garnet read has a file at this path
+    calls: tuple[CallSite, ...]
+    # False when the read wheel's copy couldn't be parsed, so every call counts
+    read_copy_parsed: bool = True
+
+
+@dataclass(frozen=True)
 class UnsourcedFile:
     """A Python file in a release that is not byte-for-byte in the repository at
     the release's tag, and the sensitive calls it has that the source doesn't."""
@@ -422,6 +437,15 @@ class ReleaseFacts:
     # roles and organization (as they are today), npm's maintainers of this
     # version. Empty when the registry didn't say.
     owners: tuple[str, ...] = ()
+    # GRN-C012: Python files in the release's other wheels (one per platform
+    # family, and each late wheel) that differ from the wheel Garnet read and
+    # have sensitive calls its copy lacks. ``wheels_compared`` lists the other
+    # wheels read, as (filename, family); ``wheels_not_compared`` those left
+    # out (more late wheels than the cap).
+    wheel_differences: tuple[WheelDifference, ...] = ()
+    wheels_compared: tuple[tuple[str, str], ...] = ()
+    wheels_not_compared: tuple[str, ...] = ()
+    wheel_families: tuple[str, ...] = ()  # the platform families of all its wheels
 
     @property
     def content(self) -> tuple[ArtifactFacts, ...]:

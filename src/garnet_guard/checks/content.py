@@ -1024,6 +1024,76 @@ def new_js_use(
     )
 
 
+def wheels_differ(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-C012: another wheel of the candidate has a Python file that differs
+    from the wheel the content rules read and makes a sensitive call the read
+    copy doesn't.
+
+    A platform's wheel may differ for good reasons (delvewheel adds DLL loading
+    to Windows wheels), so a call the trusted version's wheel for the same
+    platform family already made at the same path is not new.
+    """
+    if base is None or not cand.wheel_differences:
+        return
+    read = _pick(cand, "wheel")
+    if read is None:
+        return
+    before = {(d.family, d.path): {c.name for c in d.calls} for d in base.wheel_differences}
+    base_families = set(base.wheel_families)
+    evidence: list[Evidence] = []
+    wheels: set[str] = set()
+    compared = False  # a line where the read copy was there and parsed
+    for d in cand.wheel_differences:
+        known = before.get((d.family, d.path), set())
+        for c in d.calls:
+            if c.name in known:
+                continue
+            via = f" (in {c.via}())" if c.via else ""
+            if not d.in_inspected:
+                where = f"{read.filename} has no such file"
+            elif d.read_copy_parsed:
+                where = f"the same file in {read.filename} doesn't"
+            else:
+                where = f"the same file in {read.filename} couldn't be parsed to compare"
+            text = f"{d.wheel}: {d.path}:{c.line} calls {c.name}{via}; {where}"
+            if d.family not in base_families:
+                text += f" ({base.version} had no {d.family} wheel to compare with)"
+            evidence.append(Evidence("file", text, path=d.path, line=c.line))
+            wheels.add(d.wheel)
+            compared = compared or not d.in_inspected or d.read_copy_parsed
+    if not evidence:
+        return
+    if compared:
+        title = f"{len(wheels)} other wheel(s) of {cand.version} have code the wheel Garnet read doesn't"
+    else:
+        # Old releases read through a Python 2 wheel: the read copies don't
+        # parse (GRN-E002 reports a new or changed one), so nothing shows the
+        # other wheels differ. Listed, not warned.
+        title = (
+            f"{len(wheels)} other wheel(s) of {cand.version} have code Garnet couldn't compare "
+            "with the wheel it read"
+        )
+    yield RawFinding(
+        "GRN-C012",
+        title,
+        tuple(evidence[:MAX_EVIDENCE]),
+        lowered_to=None if compared else Severity.INFO,
+    )
+
+
+def comparison_notes(cand: ReleaseFacts) -> tuple[str, ...]:
+    """What GRN-C012 left out: late wheels past the cap aren't compared."""
+    if not cand.wheels_not_compared:
+        return ()
+    n = len(cand.wheels_not_compared)
+    return (
+        f"{n} more late wheel(s) of {cand.version} weren't compared with the wheel Garnet read "
+        f"(GRN-C012 compares up to 10), starting with {cand.wheels_not_compared[0]}",
+    )
+
+
 # GRN-C004: a compiled extension module is named for the module it provides,
 # tagged for the interpreter it was built for: ``name.cpython-312-x86_64-linux-gnu.so``,
 # ``name.abi3.so``, ``name.cp312-win_amd64.pyd`` (a ``.pyd`` is one even untagged).

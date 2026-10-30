@@ -249,6 +249,23 @@ _DOCS: tuple[RuleDoc, ...] = (
         "code is obfuscated, don't merge.",
     ),
     RuleDoc(
+        "GRN-C012",
+        "wheels-differ",
+        "diff",
+        W,
+        "Another wheel of the new version, for a different platform or uploaded late, has a "
+        "Python file that differs from the wheel Garnet read and makes a sensitive call the "
+        "read wheel's copy doesn't. Garnet compares one wheel per platform family and up to 10 "
+        "late wheels. A call the trusted version's wheel for the same platform already made "
+        "isn't new.",
+        "Content rules read one wheel, the one pip would install where Garnet runs. A payload "
+        "can sit in the Windows or macOS wheel only, and reach every user on that platform "
+        "while the wheel Garnet read stays clean.",
+        "Compare the file the evidence names with the same file in the project's repository at "
+        "the release's tag. Pure Python code is normally the same in every wheel of a "
+        "release; if the repository doesn't explain the difference, don't merge.",
+    ),
+    RuleDoc(
         "GRN-K001",
         "known-malicious",
         "absolute",

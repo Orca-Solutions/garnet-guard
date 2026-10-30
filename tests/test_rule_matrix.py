@@ -30,6 +30,7 @@ from garnet_guard.models import (
     SourceMatch,
     UnsourcedFile,
     Verdict,
+    WheelDifference,
 )
 from tests.builders import prov, release
 
@@ -98,6 +99,16 @@ def _npm_js(version: str, *uses: tuple[str, str, bool]) -> ReleaseFacts:
     found = tuple(JsUse("index.js", 1, kind, name, at) for kind, name, at in uses)
     art = replace(rel.artifacts[0], js_uses=found, js_scanned=True)
     return replace(rel, artifacts=(art,))
+
+
+def _other_wheels(rel: ReleaseFacts, *calls: str) -> ReleaseFacts:
+    """``rel`` with its Windows wheel compared, and ``calls`` in a file of it
+    that the wheel Garnet read lacks (GRN-C012 facts)."""
+    win = f"demo-{rel.version}-cp313-cp313-win_amd64.whl"
+    diffs = tuple(
+        WheelDifference(win, "Windows", "demo/__init__.py", True, (CallSite(c, 3),)) for c in calls
+    )
+    return replace(rel, wheels_compared=((win, "Windows"),), wheel_differences=diffs)
 
 
 def _downloaded(rel: ReleaseFacts, sha256: str) -> ReleaseFacts:
@@ -745,6 +756,29 @@ def _rows() -> list[Row]:
         "the same binary as before",
         release("1.0", {**PKG, "demo/bin/helper": ELF}),
         release("1.1", {**PKG, "demo/bin/helper": ELF}),
+        eco=PYPI,
+    )
+
+    # GRN-C012 wheels-differ: another wheel of the release has code the read one lacks.
+    fires(
+        "GRN-C012",
+        "the Windows wheel calls subprocess",
+        _other_wheels(release("1.0", PKG)),
+        _other_wheels(release("1.1", PKG), "subprocess.run"),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C012",
+        "the trusted version's Windows wheel made the same call",
+        _other_wheels(release("1.0", PKG), "ctypes.WinDLL"),
+        _other_wheels(release("1.1", PKG), "ctypes.WinDLL"),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C012",
+        "the other wheels match",
+        _other_wheels(release("1.0", PKG)),
+        _other_wheels(release("1.1", PKG)),
         eco=PYPI,
     )
 

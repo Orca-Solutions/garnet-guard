@@ -12,7 +12,7 @@ from pathlib import Path
 from . import __version__
 from . import policy as pol
 from .checks import ALL_CHECKS, DOCS
-from .checks.content import new_requirement_names
+from .checks.content import comparison_notes, new_requirement_names
 from .checks.docs import rule_url
 from .checks.trust import coverage_notes
 from .ecosystems import github, gittree, npm, pypi
@@ -237,7 +237,7 @@ def run_checks(
         change,
         Verdict.from_severity(_worst(findings)),
         tuple(findings),
-        coverage_notes(base),
+        coverage_notes(base) + comparison_notes(cand),
     )
 
 

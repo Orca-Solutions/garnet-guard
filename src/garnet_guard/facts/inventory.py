@@ -248,6 +248,31 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
     return result
 
 
+def wheel_files(
+    filename: str, data: bytes, limits: Limits
+) -> tuple[list[FileEntry], frozenset[str], list[FactError]]:
+    """Every file in a wheel with its size, hash and kind, and the wheel's own
+    top-level packages, without parsing anything. GRN-C012 lists another wheel
+    of the release this way and parses only the files that differ."""
+    files: list[FileEntry] = []
+    errors: list[FactError] = []
+    own: frozenset[str] = frozenset()
+    try:
+        reader = open_archive(data, filename, limits)
+        entries = reader.entries()
+        own = _own_packages([e.path for e in entries])
+        for entry in entries:
+            body = reader.read(entry.path)
+            kind = _kind(entry.path, body[:4])
+            files.append(FileEntry(entry.path, len(body), hashlib.sha256(body).hexdigest(), kind))
+    except LimitExceeded as err:
+        errors.append(FactError("GRN-E003", f"{filename}: {err}", ("GRN-C012",)))
+    except ArchiveError as err:
+        errors.append(FactError("GRN-E002", f"{filename}: {err}", ("GRN-C012",)))
+    files.sort(key=lambda f: f.path)
+    return files, own, errors
+
+
 def file_reader(
     filename: str, data: bytes, limits: Limits, *, sdist: bool
 ) -> Callable[[str], bytes]:

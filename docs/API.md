@@ -213,6 +213,7 @@ class ReleaseFacts:
     source_repo: str | None
     tag: TagInfo | None
     advisories: tuple[str, ...]               # OSV MAL- ids
+    wheel_differences: tuple[WheelDifference, ...]  # other wheels' extra calls (GRN-C012)
     errors: tuple[FactError, ...]             # become GRN-E findings
 ```
 

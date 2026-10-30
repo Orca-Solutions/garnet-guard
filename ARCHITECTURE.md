@@ -117,6 +117,7 @@ IDs are stable forever. A retired rule keeps its ID reserved. Exact firing condi
 | GRN-C008 | new-dependency | A dependency the old release didn't declare, a warning when it is missing from the registry, less than 90 days old there, or installed from outside it, whoever owns it (event-stream 3.3.6). |
 | GRN-C010 | new-startup-file | A wheel adds `sitecustomize.py`, a script that installs as a command, or a data file installed outside the package. |
 | GRN-C011 | new-js-capability | The JavaScript an npm package loads uses a process, network or eval module or global, or obfuscated names, that the old release's didn't (`info`). |
+| GRN-C012 | wheels-differ | Another wheel of the release, one per platform family or uploaded late, has a Python file that differs from the wheel the content rules read and makes sensitive calls that copy doesn't (a payload in the Windows wheel only). |
 | GRN-T007 | invalid-attestation | An attestation exists but fails verification (blocks by default). |
 | GRN-T008 | hash-mismatch | A download doesn't match the registry's published hash (blocks by default). |
 | GRN-K001 | known-malicious | OSV `MAL-` advisory for this package version. |
