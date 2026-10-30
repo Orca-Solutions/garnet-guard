@@ -149,7 +149,7 @@ Planned: artifacts and facts cached by content hash under the user cache dir (an
 
 - Never use `pull_request_target` with a checkout of PR code.
 - Least privilege: `contents: read`, plus `pull-requests: write` for the comment and `security-events: write` only with SARIF upload.
-- Dependabot-triggered runs get a restricted token. If commenting directly isn't possible, use the two-workflow pattern: the analysis job uploads the report as an artifact, and a `workflow_run` job with write permission posts it without checking out PR code. Both patterns ship in `action/examples/` ([docs/action.md](docs/action.md)); a Dependabot-opened run and a fork run are still to be seen on GitHub.
+- Dependabot-triggered runs get a restricted token. If commenting directly isn't possible, use the two-workflow pattern: the analysis job uploads the report as an artifact, and a `workflow_run` job with write permission posts it without checking out PR code. Both patterns ship in `action/examples/` ([docs/action.md](docs/action.md)). Both have been run on a pull request from a fork, and the single workflow has commented on a Dependabot-opened pull request (2026-10-30).
 - The Action is pinned by commit SHA in all docs, and its own dependencies are hash-locked.
 
 **Install wrapper and agent hooks (month 3).** `garnet pip install …` / `garnet uv sync` resolve first, run `evaluate` on the resulting change, then hand off to the real tool. Claude Code and Codex hooks call the same entry point before a dependency is added.
