@@ -112,6 +112,7 @@ def artifact(
         requirements=ins.requirements,
         requirements_read=ins.requirements_read,
         entry_point_specs=ins.entry_point_specs,
+        entry_points_read=ins.entry_points_read,
         wheel_tag="py3-none-any" if kind == "wheel" else None,
     )
     return art, tuple(ins.errors)

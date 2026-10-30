@@ -33,8 +33,9 @@ from .provenance import verify_provenance
 
 TRUST_RULES = ("GRN-T001", "GRN-T002", "GRN-T003", "GRN-T005", "GRN-T007")
 CONTENT_RULES = ("GRN-C001", "GRN-C002", "GRN-C003", "GRN-C004", "GRN-C007")
-# A wheel the content rules can't read leaves GRN-C012 nothing to compare with.
-WHEEL_RULES = (*CONTENT_RULES, "GRN-C012")
+# GRN-C009 reads only wheels, and a wheel the content rules can't read leaves
+# GRN-C012 nothing to compare with.
+WHEEL_RULES = (*CONTENT_RULES, "GRN-C009", "GRN-C012")
 
 
 @dataclass(frozen=True)
@@ -624,6 +625,7 @@ def _inspect(
             setup_py_calls=ins.setup_py_calls,
             entry_points=tuple(sorted(ins.entry_points)),
             entry_point_specs=ins.entry_point_specs,
+            entry_points_read=ins.entry_points_read,
             unparsed=tuple(ins.unparsed),
             wheel_tag=wheel_tag,
             requirements=ins.requirements,

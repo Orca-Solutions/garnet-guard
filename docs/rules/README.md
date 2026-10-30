@@ -44,7 +44,7 @@ What the release contains that the trusted version didn't.
 | [GRN-C006](GRN-C006.md) | sdist-wheel-mismatch | diff | `warn` | planned |
 | [GRN-C007](GRN-C007.md) | code-not-in-source | diff | `warn` | 0.1 |
 | [GRN-C008](GRN-C008.md) | new-dependency | diff | `warn` (`info` for an established dependency) | 0.2 |
-| [GRN-C009](GRN-C009.md) | new-entry-point | diff | `warn` (`info` outside auto-loaded groups) | 0.2 |
+| [GRN-C009](GRN-C009.md) | new-entry-point | diff | `warn` (`info` outside auto-loaded groups and common command names) | 0.2 |
 | [GRN-C010](GRN-C010.md) | new-startup-file | diff | `warn` (`info` for other scripts and data files) | 0.2 |
 | [GRN-C011](GRN-C011.md) | new-js-capability | diff | `info` | 0.2 |
 | [GRN-C012](GRN-C012.md) | wheels-differ | diff | `warn` (`info` beside a GRN-E002 warning for a read copy that doesn't parse) | 0.2 |

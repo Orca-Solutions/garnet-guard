@@ -53,9 +53,9 @@ _MACHO_MAGIC = (
     b"\xca\xfe\xba\xbf",
 )
 # The rules that read the files of an archive Garnet couldn't read to the end.
-# GRN-C012 also reads every Python file of a wheel.
+# GRN-C009 reads a wheel's entry points, and GRN-C012 every Python file of a wheel.
 _ARCHIVE_RULES = ("GRN-C001", "GRN-C003", "GRN-C004")
-_WHEEL_RULES = (*_ARCHIVE_RULES, "GRN-C012")
+_WHEEL_RULES = (*_ARCHIVE_RULES, "GRN-C009", "GRN-C012")
 # Names GRN-C012 never counts as the release's own: the standard library's
 # modules, the builtins, and the first name of each entry of the §6.3 list
 # (exec, os, subprocess, requests, ...), so a top-level ``exec.py`` or
@@ -82,6 +82,7 @@ class Inspection:
     requirements: tuple[Requirement, ...] = ()
     requirements_read: bool = False
     entry_point_specs: tuple[EntryPoint, ...] = ()
+    entry_points_read: bool = False  # a wheel read to the end, every entry_points.txt seen
     errors: list[FactError] = field(default_factory=list)
     complete: bool = True  # False: the archive couldn't be read to the end
 
@@ -266,9 +267,9 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
             elif sdist and rel == "pyproject.toml":
                 result.build_backend = _build_backend(body)
                 result.entry_points |= _pyproject_entry_points(body)
-            elif not sdist and rel.endswith(".dist-info/entry_points.txt") and rel.count("/") == 1:
+            elif not sdist and loaded_entry_points_file(site):
                 result.entry_points |= entry_point_modules(body)
-                result.entry_point_specs = parse_entry_points(body)
+                result.entry_point_specs += parse_entry_points(body, rel)
             elif (sdist and rel == "PKG-INFO") or (
                 not sdist and rel.endswith(".dist-info/METADATA") and rel.count("/") == 1
             ):
@@ -277,6 +278,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                     result.requirements = reqs
                     result.requirements_read = True
         _follow_calls_out(result, sources, calls_out, handed_out, own)
+        result.entry_points_read = not sdist
     except LimitExceeded as err:
         result.errors.append(FactError("GRN-E003", f"{filename}: {err}", rules))
         result.complete = False
@@ -287,6 +289,10 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
     result.modules.sort(key=lambda m: m.path)
     result.pth_files.sort(key=lambda p: p.path)
     result.unparsed.sort()
+    # Stable: lines of one name keep the order of their files and their lines.
+    result.entry_point_specs = tuple(
+        sorted(result.entry_point_specs, key=lambda e: (e.group, e.name))
+    )
     return result
 
 
@@ -433,42 +439,66 @@ def _build_backend(pyproject: bytes) -> str | None:
     return backend
 
 
-def parse_entry_points(text: bytes) -> tuple[EntryPoint, ...]:
-    """Every ``name = target`` line of an entry_points.txt, under its ``[group]``.
+def loaded_entry_points_file(site: str) -> bool:
+    """Whether a wheel file, by where it installs in site-packages, is an
+    ``entry_points.txt`` that ``importlib.metadata`` reads.
 
-    Read line by line, like ``importlib.metadata``: a malformed line is
-    skipped, and a name repeated in a group keeps its first target.
+    importlib.metadata takes every folder at the top of site-packages whose
+    name ends in ``.dist-info`` or ``.egg-info``, ignoring case, as an
+    installed package, and opens ``entry_points.txt`` in it by name, which
+    on macOS and Windows matches the name in any case. So a second metadata
+    folder in a wheel, at its root or under ``.data/purelib/``, counts too.
+    One under ``.data/data/`` lands in site-packages only under some install
+    schemes; it is not read (GRN-C010 lists it).
     """
-    out: dict[tuple[str, str], EntryPoint] = {}
-    group = ""
+    folder, _, name = site.lower().partition("/")
+    return name == "entry_points.txt" and folder.endswith((".dist-info", ".egg-info"))
+
+
+def parse_entry_points(text: bytes, path: str = "") -> tuple[EntryPoint, ...]:
+    """Every entry point an entry_points.txt declares, read the way
+    ``importlib.metadata`` reads it on Python 3.11 to 3.14 (pytest, setuptools
+    and pip all read entry points through it).
+
+    Lines are stripped. A blank line or one that starts with ``#`` is
+    skipped; nothing else is a comment, so ``;demo = x`` is an entry point
+    named ``;demo``. A line that starts with ``[`` and ends with ``]`` names
+    the group with its brackets stripped, so ``[[pytest11]]`` is
+    ``pytest11``; spaces are stripped too, as ``pkg_resources`` does, so
+    ``[ pytest11 ]`` also counts as ``pytest11``. Lines before the first group
+    are skipped. Any other line is ``name = target``, split at the first
+    ``=``; the name may be empty. A line without ``=`` is skipped (it makes
+    importlib.metadata raise, so nothing in the file loads).
+
+    Every line is kept, a name repeated in a group too: pip installs the last
+    target of a script, a lookup by name returns the first, and a tool that
+    loads a whole group (setuptools, keyring) loads each one. The result is
+    sorted by group and name, with file order kept within a name.
+    """
+    out: list[EntryPoint] = []
+    group: str | None = None
     for raw in text.decode("utf-8", "replace").splitlines():
         line = raw.strip()
-        if not line or line.startswith(("#", ";")):
+        if not line or line.startswith("#"):
             continue
         if line.startswith("[") and line.endswith("]"):
-            group = line[1:-1].strip()
+            group = line.strip("[]").strip()
             continue
-        if not group or "=" not in line:
+        if group is None or "=" not in line:
             continue
         name, target = (s.strip() for s in line.split("=", 1))
-        if name and (group, name) not in out:
-            out[(group, name)] = EntryPoint(group, name, target)
-    return tuple(sorted(out.values(), key=lambda e: (e.group, e.name)))
+        out.append(EntryPoint(group, name, target, path))
+    return tuple(sorted(out, key=lambda e: (e.group, e.name)))
 
 
 def entry_point_modules(text: bytes) -> set[str]:
-    """Modules named by an entry_points.txt (``name = module:attr``).
+    """Modules named by an entry_points.txt (``name = module:attr``), read as
+    ``parse_entry_points`` reads it.
 
     Entry points such as ``pytest11`` load a module whenever another tool
     runs, so those modules count as live code.
     """
-    out = set()
-    for raw in text.decode("utf-8", "replace").splitlines():
-        line = raw.strip()
-        if not line or line.startswith(("#", ";", "[")) or "=" not in line:
-            continue
-        target = line.split("=", 1)[1].strip()
-        out.add(target.split(":", 1)[0].split("[", 1)[0].strip())
+    out = {e.target.split(":", 1)[0].split("[", 1)[0].strip() for e in parse_entry_points(text)}
     return {m for m in out if m}
 
 

@@ -219,17 +219,22 @@ _DOCS: tuple[RuleDoc, ...] = (
         "diff",
         W,
         "The new version's wheel declares an entry point the trusted version's didn't, or points "
-        "one at different code. It is a warning for a group another tool loads by itself "
-        "(pytest11, setuptools.*, flake8, keyring and others) and for a new script named like a "
-        "common command other than the project's own; any other new or changed entry point is "
-        "info.",
-        "An entry point in an auto-loaded group runs inside another program: every pytest run, "
-        "every setuptools build on the machine. A package can run code there without being "
-        "imported, so no import-time rule sees it. A script named like `pip` or `git` can run "
-        "instead of the real command.",
+        "one at different code. Garnet reads the entry_points.txt of each .dist-info or "
+        ".egg-info folder at the wheel's root or under <name>.data/purelib/ or platlib/, line by "
+        "line as importlib.metadata does; lines removed, repeated or reordered with nothing new "
+        "running are not reported, and in a group whose tool loads every line (setuptools.*, "
+        "flake8, keyring and others) only a new target counts. It is a warning for a group another tool loads by itself (pytest11, "
+        "setuptools.*, flake8, keyring and others) and for a new script in the wheel's own "
+        "entry_points.txt with a common command's name (pip, git, curl and the others on the "
+        "rule page) other than the project's own; any other new or changed entry point is info. "
+        "A wheel Garnet couldn't read to the end is not compared, and the GRN-E finding says so.",
+        "An entry point in an auto-loaded group runs inside another program in the environment "
+        "the package is installed in: every pytest run, and setuptools builds that don't isolate "
+        "themselves. A package can run code there without being imported, so no import-time rule "
+        "sees it. A script named `pip` or `git` can run instead of the real command.",
         "Read the target the evidence names. A library that has never been a pytest plugin "
-        "rarely becomes one in a patch release. Find the commit that added the entry point in "
-        "the project's repository; if nothing there explains it, don't merge.",
+        "rarely becomes one in a patch release. Find the commit that added or changed the entry "
+        "point in the project's repository; if nothing there explains it, don't merge.",
     ),
     RuleDoc(
         "GRN-C010",

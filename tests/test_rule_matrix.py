@@ -666,6 +666,140 @@ def _rows() -> list[Row]:
         Verdict.PASS,
         eco=PYPI,
     )
+    # importlib.metadata, which pytest and setuptools read entry points with,
+    # takes only "#" lines as comments and strips the brackets of a header.
+    fires(
+        "GRN-C009",
+        "a pytest11 plugin named ;demo",
+        _entry_points("1.0", "[console_scripts]\ndemo = demo.cli:main\n"),
+        _entry_points(
+            "1.1", "[console_scripts]\ndemo = demo.cli:main\n[pytest11]\n;demo = demo._plugin\n"
+        ),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C009",
+        "a pytest11 plugin under [[pytest11]]",
+        _entry_points("1.0", "[console_scripts]\ndemo = demo.cli:main\n"),
+        _entry_points(
+            "1.1", "[console_scripts]\ndemo = demo.cli:main\n[[pytest11]]\ndemo = demo._plugin\n"
+        ),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    # setuptools loads every line of the group, a repeated name too.
+    fires(
+        "GRN-C009",
+        "a second line for a setuptools hook's name",
+        _entry_points("1.0", "[setuptools.finalize_distribution_options]\nhook = demo.opts:run\n"),
+        _entry_points(
+            "1.1",
+            "[setuptools.finalize_distribution_options]\nhook = demo.opts:run\nhook = demo._x:run\n",
+        ),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    # importlib.metadata reads every *.dist-info and *.egg-info folder in site-packages.
+    fires(
+        "GRN-C009",
+        "a pytest11 plugin in a second metadata folder",
+        _entry_points("1.0", "[console_scripts]\ndemo = demo.cli:main\n"),
+        release(
+            "1.1",
+            {
+                **PKG,
+                "demo-1.1.dist-info/entry_points.txt": "[console_scripts]\ndemo = demo.cli:main\n",
+                "demo_helper.egg-info/entry_points.txt": "[pytest11]\ndemo = demo._plugin\n",
+            },
+        ),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    # pip makes commands only from the wheel's own file: moving a line there
+    # makes a command the trusted version didn't.
+    fires(
+        "GRN-C009",
+        "a common command's script moved into the wheel's own file",
+        release(
+            "1.0",
+            {
+                **PKG,
+                "demo-1.0.dist-info/entry_points.txt": "[console_scripts]\ndemo = demo.cli:main\n",
+                "demo_helper.egg-info/entry_points.txt": "[console_scripts]\npip = demo.cli:pip\n",
+            },
+        ),
+        _entry_points("1.1", "[console_scripts]\ndemo = demo.cli:main\npip = demo.cli:pip\n"),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    # Dropping a copy of a line loads nothing new.
+    quiet(
+        "GRN-C009",
+        "a stray metadata copy dropped",
+        release(
+            "1.0",
+            {
+                **PKG,
+                "demo-1.0.dist-info/entry_points.txt": "[pytest11]\ndemo = demo._plugin\n",
+                "demo.egg-info/entry_points.txt": "[pytest11]\ndemo = demo._plugin\n",
+            },
+        ),
+        _entry_points("1.1", "[pytest11]\ndemo = demo._plugin\n"),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C009",
+        "a repeated line removed",
+        _entry_points("1.0", "[pytest11]\ndemo = demo._plugin\ndemo = demo._plugin\n"),
+        _entry_points("1.1", "[pytest11]\ndemo = demo._plugin\n"),
+        eco=PYPI,
+    )
+    # setuptools and keyring load every line of these groups: no line runs
+    # that didn't before.
+    quiet(
+        "GRN-C009",
+        "a setuptools hook's first of two lines dropped",
+        _entry_points(
+            "1.0",
+            "[setuptools.finalize_distribution_options]\nhook = demo.a:run\nhook = demo.b:run\n",
+        ),
+        _entry_points("1.1", "[setuptools.finalize_distribution_options]\nhook = demo.b:run\n"),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C009",
+        "keyring backends reordered",
+        _entry_points("1.0", "[keyring.backends]\nk = demo.a\nk = demo.b\n"),
+        _entry_points("1.1", "[keyring.backends]\nk = demo.b\nk = demo.a\n"),
+        eco=PYPI,
+    )
+    # acme/ sorts before acme_plugin-1.0.dist-info/, so the limit stops the
+    # reading first: the plugin both versions declare must not look new.
+    quiet(
+        "GRN-C009",
+        "a trusted wheel read only in part",
+        release(
+            "1.0",
+            {
+                "acme/plugin/__init__.py": "",
+                "acme/plugin/pad.bin": b"\0" * 5000,
+                "acme_plugin-1.0.dist-info/entry_points.txt": "[pytest11]\nacme = acme.plugin\n",
+            },
+            package="acme_plugin",
+            limits=Limits(max_total_uncompressed=4000),
+        ),
+        release(
+            "1.1",
+            {
+                "acme/plugin/__init__.py": "",
+                "acme_plugin-1.1.dist-info/entry_points.txt": "[pytest11]\nacme = acme.plugin\n",
+            },
+            package="acme_plugin",
+        ),
+        instead="GRN-E003",
+        eco=PYPI,
+    )
     quiet(
         "GRN-C009",
         "same entry points",
