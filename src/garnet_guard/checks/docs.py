@@ -197,6 +197,24 @@ _DOCS: tuple[RuleDoc, ...] = (
         "release, needs a look before the update merges.",
     ),
     RuleDoc(
+        "GRN-C011",
+        "new-js-capability",
+        "diff",
+        Severity.INFO,
+        "The JavaScript an npm package loads uses a module or global the trusted version's "
+        "didn't: child_process, net, http, https, dns, vm and similar modules, eval or "
+        "Function, fetch, XMLHttpRequest or WebSocket, or variable names in the shape "
+        "javascript-obfuscator writes. Garnet follows the package's entry points through its "
+        "relative requires and imports, and says whether each use runs when the file loads.",
+        "Code added to a module runs when the package is required, and npm install scripts "
+        "(GRN-C002) don't cover it. chalk 5.6.1 and debug 4.4.2 (September 2025) changed only "
+        "index.js, adding an obfuscated line that rewrote browser network calls.",
+        "Open the line the evidence names, then find the commit that added it in the "
+        "project's repository. A package that never reached the network or started processes "
+        "rarely starts in a patch release. If the repository doesn't have the code, or the "
+        "code is obfuscated, don't merge.",
+    ),
+    RuleDoc(
         "GRN-K001",
         "known-malicious",
         "absolute",

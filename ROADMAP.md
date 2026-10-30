@@ -73,7 +73,7 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 - [ ] New startup files beyond `.pth`: `sitecustomize.py`, `usercustomize.py`, `.data/` files [#49](https://github.com/orca-solutions/garnet-guard/issues/49)
 - [x] Evidence notes: "only content rules apply", credential reads at import, release-notes wording [#50](https://github.com/orca-solutions/garnet-guard/issues/50)
 - [x] Policy guardrails: cap an ignore's expiry, note a policy edit in the same PR (high-risk path) [#51](https://github.com/orca-solutions/garnet-guard/issues/51)
-- [ ] JavaScript content rule for npm (moves to 0.3 if a dependency-free scan doesn't hold up) [#52](https://github.com/orca-solutions/garnet-guard/issues/52)
+- [x] JavaScript content rule for npm (GRN-C011, at `info`; a dependency-free scan) [#52](https://github.com/orca-solutions/garnet-guard/issues/52)
 - [ ] Package-level capability signal: measured on the corpus first, `info` at most until the numbers say otherwise [#53](https://github.com/orca-solutions/garnet-guard/issues/53)
 
 **After launch (0.3 to 1.0):**

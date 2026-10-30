@@ -134,6 +134,7 @@ class Limits:
     max_entries: int = 100_000
     max_ratio: int = 100
     max_py_file_bytes: int = 5 * 1024 * 1024
+    max_js_file_bytes: int = 16 * 1024 * 1024  # bundles run larger than modules
     budget_seconds: int = 120
 
 
@@ -201,6 +202,22 @@ class FileProvenance:
 
 
 FileKind = Literal["py", "pth", "native", "script", "data", "other"]
+
+
+@dataclass(frozen=True)
+class JsUse:
+    """A process, network or eval use in an npm package's JavaScript (GRN-C011).
+
+    ``kind`` is "process", "network", "eval" or "obfuscated"; ``name`` is the
+    module or global (``child_process``, ``fetch``). ``at_load`` is False when
+    the use sits in a function body that isn't called where it is defined.
+    """
+
+    path: str
+    line: int
+    kind: str
+    name: str
+    at_load: bool
 
 
 @dataclass(frozen=True)
@@ -344,6 +361,11 @@ class ArtifactFacts:
     # artifact with no dependencies from one whose metadata wasn't found.
     requirements: tuple[Requirement, ...] = ()
     requirements_read: bool = False
+    # npm: process, network and eval uses in the files the package's entry
+    # points load (GRN-C011). ``js_scanned`` tells a tarball with none from
+    # one that wasn't read (a replay records no files).
+    js_uses: tuple[JsUse, ...] = ()
+    js_scanned: bool = False
 
 
 @dataclass(frozen=True)

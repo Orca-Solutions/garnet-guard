@@ -64,7 +64,9 @@ Every run goes through the same five stages, whichever command started it.
    hash and kind. `facts/pyindex.py` parses each Python file with `ast` (Python's own
    parser, which reads code as a tree without running it) and records the sensitive calls
    that run at import time and the id git would give the file's bytes. `facts/npmmeta.py`
-   reads an npm tarball's file list and the install-time scripts in its `package.json`.
+   reads an npm tarball's file list and the install-time scripts in its `package.json`, and
+   `facts/jsscan.py` tokenizes the JavaScript the package loads (skipping comments, strings
+   and regular expressions) to find process, network and eval uses for GRN-C011.
 4. **Judge.** `checks/` holds one function per rule. Each takes the baseline facts and the
    candidate facts and returns findings. Checks do no network or file access at all, so a
    test can hand them made-up facts and know exactly what should come back.
@@ -89,7 +91,7 @@ results describe what users will see.
 | [`ecosystems/`](../src/garnet_guard/ecosystems/) | Everything fetched about a release: PyPI and npm registry metadata and files, attestations, git tags, the repository's files at the tag (read from a git packfile, no `git` needed), OSV advisories. |
 | [`net.py`](../src/garnet_guard/net.py) | The only code that uses the network. HTTPS only, a short list of allowed hosts, size caps, timeouts and retries. |
 | [`safe_archive.py`](../src/garnet_guard/safe_archive.py) | The only code that opens zip and tar archives. Reads them in memory, never extracts to disk, and rejects dangerous entries. |
-| [`facts/`](../src/garnet_guard/facts/) | Describes what an archive contains, what its Python code does at import time, and which npm scripts run at install, without running anything. |
+| [`facts/`](../src/garnet_guard/facts/) | Describes what an archive contains, what its Python code does at import time, which npm scripts run at install, and what an npm package's JavaScript reaches for, without running anything. |
 | [`models.py`](../src/garnet_guard/models.py) | The records passed between stages: `Change`, `ReleaseFacts`, `Finding` and the rest. All frozen, so no stage can change what an earlier one recorded. |
 | [`checks/`](../src/garnet_guard/checks/) | One small function per rule (`trust.py`, `content.py`, and K001 in `__init__.py`), plus `docs.py` with the text `garnet explain` prints. |
 | [`policy.py`](../src/garnet_guard/policy.py) | Reads `garnet.toml` (SPEC §7): rule severities, expiring ignores and lower limits. Strict on purpose: an unknown key or a missing reason is an error, not a default. |

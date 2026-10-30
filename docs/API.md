@@ -25,7 +25,7 @@
                      │        │          │
  data            models.py  (shared, imports nothing internal)
                      ▲
- extraction      facts/  (inventory.py, pyindex.py, npmmeta.py)
+ extraction      facts/  (inventory.py, pyindex.py, npmmeta.py, jsscan.py)
                      ▲
  edges           ecosystems/  lockfiles/   net.py   safe_archive.py   cache.py
 ```
@@ -320,7 +320,7 @@ src/garnet_guard/
   net.py  safe_archive.py  cache.py
   lockfiles/   uv.py poetry.py pylock.py requirements.py npm_lock.py pnpm.py yarn.py
   ecosystems/  pypi.py npm.py github.py gittree.py source.py osv.py
-  facts/       inventory.py pyindex.py npmmeta.py
+  facts/       inventory.py pyindex.py npmmeta.py jsscan.py
   checks/      trust.py wheel_tags.py content.py known_bad.py errors.py __init__.py
   report/      text.py json.py sarif.py markdown.py schema/report-v1.json
   rules/       *.md               # explain text, one file per rule
