@@ -47,7 +47,7 @@ Rules are public, so attackers can read them. Responses:
 
 | Threat | Mitigation |
 |---|---|
-| A hostile package exploits Garnet's parser (zip bomb, path traversal, symlink, huge file, pathological AST) | All archive access goes through `safe_archive.py` with size, ratio, count and depth limits. No links or device files. `ast` parsing has size and time limits. Fuzz tests on the archive and lockfile parsers. |
+| A hostile package exploits Garnet's parser (zip bomb, path traversal, symlink, huge file, pathological AST) | All archive access goes through `safe_archive.py` with size, ratio, count and depth limits. No links or device files. `ast` parsing has size and time limits. The git packfile reader (`ecosystems/gittree.py`) caps the response, each object and their total, verifies the pack checksum and bounds every delta. Fuzz tests on the archive and lockfile parsers. |
 | Garnet executes package code by accident (importing a module, running a build backend to get metadata) | Hard invariant: no execution. Metadata comes from the registry and static files (`METADATA`, `pyproject.toml`, `package.json`). A test asserts no subprocess or import of inspected content. |
 | A malicious PR abuses the Action (pwn request) | No `pull_request_target` with PR checkout. Least-privilege tokens. Comments are posted from a job that never executes PR content. Report text from packages is escaped in markdown. |
 | Markdown or terminal injection via package names, file names or metadata | Every string from a package is escaped before rendering in comments, SARIF and terminals. |

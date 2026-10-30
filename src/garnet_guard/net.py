@@ -101,6 +101,17 @@ class Http:
     def post_json(self, url: str, body: Any, *, max_bytes: int = 16 * 1024 * 1024) -> Response:
         return self._request("POST", url, json_body=body, max_bytes=max_bytes)
 
+    def post(
+        self,
+        url: str,
+        body: bytes,
+        *,
+        headers: dict[str, str] | None = None,
+        max_bytes: int = DEFAULT_MAX_BYTES,
+    ) -> Response:
+        """POST raw bytes (the git protocol); same allowlist, limits and retries."""
+        return self._request("POST", url, headers=headers, content=body, max_bytes=max_bytes)
+
     def _request(
         self,
         method: str,
@@ -108,6 +119,7 @@ class Http:
         *,
         headers: dict[str, str] | None = None,
         json_body: Any = None,
+        content: bytes | None = None,
         max_bytes: int,
         redirects: int = 5,
     ) -> Response:
@@ -127,7 +139,9 @@ class Http:
         deadline = time.monotonic() + REQUEST_DEADLINE_SECONDS
         for attempt in range(self._retries + 1):
             try:
-                with self._client.stream(method, url, headers=hdrs, json=json_body) as resp:
+                with self._client.stream(
+                    method, url, headers=hdrs, json=json_body, content=content
+                ) as resp:
                     if resp.status_code in (301, 302, 307, 308):
                         location = resp.headers.get("location", "")
                         if redirects <= 0 or not location:
@@ -138,6 +152,7 @@ class Http:
                             target,
                             headers=headers,
                             json_body=json_body,
+                            content=content,
                             max_bytes=max_bytes,
                             redirects=redirects - 1,
                         )
