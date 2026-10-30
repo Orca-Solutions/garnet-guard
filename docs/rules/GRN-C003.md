@@ -40,12 +40,24 @@ or was renamed with a leading underscore is compared with the file it came from.
 trusted version has the file but it couldn't be parsed (a wheel built for Python 2), the
 calls are reported with a note that they may not be new, because Garnet couldn't compare.
 
-In test files (`tests/`, `test_*.py`, `conftest.py`) it reports at `info`, unless a non-test
-module imports the file (directly or through other test modules) or an entry point names it.
-Test files usually run only with the package's own test suite, which often starts processes
-or opens sockets at module level. An imported test file runs whenever the package is
-imported, and one named by an entry point, such as a `pytest11` plugin, loads in every
-pytest run, so those stay at `warn`.
+Three kinds of call are reported at `info`, each in its own finding, because the source
+does not show them running when the package is imported:
+
+- Calls in test files (`tests/`, `test_*.py`, `conftest.py`), or reached only from one,
+  unless a non-test module imports the file (directly or through other test modules) or an
+  entry point names it. Test files usually run only with the package's own test suite,
+  which often starts processes or opens sockets at module level. An imported test file
+  runs whenever the package is imported, and one named by an entry point, such as a
+  `pytest11` plugin, loads in every pytest run, so those stay at `warn`.
+- Calls in sdist files outside the package: `docs/conf.py`, `examples/`, `benchmarks/`.
+  They ship in the sdist but not in the installed package, and run only when run on their
+  own.
+- Calls in a function that import-time code only handed to another call, when nothing says
+  that call runs it: `functools.partial(f)`, `map(f, xs)`, a wrapper or compose helper.
+  The evidence reads `handed to functools.partial() at import`. A function handed to a
+  call that does run it, such as `threading.Thread(target=f)`, `atexit.register(f)` or
+  `executor.submit(f)`, is reported at `warn` as reached at import, which is how lightning
+  2.6.2 and mrmustard 0.7.4 ran their payloads.
 
 ## Why it matters
 

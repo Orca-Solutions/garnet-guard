@@ -456,6 +456,80 @@ def test_module_renamed_with_a_leading_underscore_is_the_same_module() -> None:
     assert "GRN-C003" in rules(release("1.0", base), release("1.1", worse))
 
 
+def test_function_handed_to_a_call_that_may_not_run_it_is_info() -> None:
+    # huggingface-hub 1.32.0 handed a function to a factory; modal 1.6.0 to a
+    # sync wrapper. Nothing in the source says the receiver runs it.
+    cand = {
+        "demo/__init__.py": (
+            "import subprocess\nfrom functools import partial\n\n"
+            "def _run():\n    subprocess.run(['x'])\n\nrunner = partial(_run)\n"
+        )
+    }
+    result = run_checks(CHANGE, release("1.0", {"demo/__init__.py": ""}), release("1.1", cand))
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert f.severity == Severity.INFO
+    assert (
+        f.title
+        == "1.1 hands functions that call sensitive APIs to other calls at import in 1 module(s)"
+    )
+    assert f.evidence[0].summary == (
+        "demo/__init__.py:5 calls subprocess.run (in _run(), handed to functools.partial() at import)"
+    )
+    # Handed to something that runs it (lightning, mrmustard): a warning, as before.
+    thread = {
+        "demo/__init__.py": cand["demo/__init__.py"] + "import threading\n"
+        "threading.Thread(target=_run, daemon=True).start()\n"
+    }
+    result = run_checks(CHANGE, release("1.0", {"demo/__init__.py": ""}), release("1.1", thread))
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert f.severity == Severity.WARN
+    assert f.evidence[0].summary == (
+        "demo/__init__.py:5 calls subprocess.run (in _run(), reached at import)"
+    )
+
+
+def test_chain_that_starts_in_a_test_file_is_info() -> None:
+    # passlib 1.6, skops 0.8.0: the call sits in a package module, but only a
+    # test file nothing imports reaches it at import.
+    util = "import subprocess\n\ndef go():\n    subprocess.run(['x'])\n"
+    base = {
+        "demo/__init__.py": "",
+        "demo/util.py": util,
+        "demo/tests/test_x.py": "from demo.util import go\n",
+    }
+    cand = {**base, "demo/tests/test_x.py": "from demo.util import go\ngo()\n"}
+    result = run_checks(CHANGE, release("1.0", base), release("1.1", cand))
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert f.severity == Severity.INFO
+    assert f.evidence[0].summary == (
+        "demo/util.py:4 calls subprocess.run (in go(), reached at import from demo/tests/test_x.py)"
+    )
+
+
+def test_sdist_files_outside_the_package_are_info() -> None:
+    # ply 3.6 (example/), mpmath 1.2.1 (demo/), flask-login 0.5.0 (docs/conf.py).
+    base = {"demo/__init__.py": "", "docs/conf.py": "project = 'demo'\n"}
+    cand = {**base, "docs/conf.py": "import os\nos.system('make html')\n"}
+    result = run_checks(
+        CHANGE,
+        release("1.0", sdist_files=base, sdist_only=True),
+        release("1.1", sdist_files=cand, sdist_only=True),
+    )
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert f.severity == Severity.INFO
+    assert (
+        f.title == "1.1 adds import-time calls to sensitive APIs in 1 file(s) outside the package"
+    )
+    inside = {**base, "demo/__init__.py": "import os\nos.system('x')\n"}
+    result = run_checks(
+        CHANGE,
+        release("1.0", sdist_files=base, sdist_only=True),
+        release("1.1", sdist_files=inside, sdist_only=True),
+    )
+    [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+    assert f.severity == Severity.WARN
+
+
 def test_function_in_another_module_that_nothing_calls_at_import_is_quiet() -> None:
     files = {
         "memos/__init__.py": "from memos import log\n",

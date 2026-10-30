@@ -95,6 +95,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
     result = Inspection()
     sources: dict[str, bytes] = {}  # module → source, for calls across modules
     calls_out: dict[str, tuple[str, ...]] = {}  # module → own callables it calls at import
+    handed_out: dict[str, tuple[tuple[str, str], ...]] = {}  # module → own callables it hands on
     try:
         reader = open_archive(data, filename, limits)
         entries = reader.entries()
@@ -139,12 +140,13 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                 result.modules.append(ModuleIndex(mod, rel, scan.calls, scan.imports))
                 sources[mod] = body
                 calls_out[mod] = scan.calls_out
+                handed_out[mod] = scan.handed_out
             elif sdist and rel == "pyproject.toml":
                 result.build_backend = _build_backend(body)
                 result.entry_points |= _pyproject_entry_points(body)
             elif not sdist and rel.endswith(".dist-info/entry_points.txt") and rel.count("/") == 1:
                 result.entry_points |= entry_point_modules(body)
-        _follow_calls_out(result, sources, calls_out, own)
+        _follow_calls_out(result, sources, calls_out, handed_out, own)
     except LimitExceeded as err:
         result.errors.append(FactError("GRN-E003", f"{filename}: {err}", ("GRN-C001", "GRN-C003")))
     except ArchiveError as err:
@@ -170,6 +172,7 @@ def _follow_calls_out(
     result: Inspection,
     sources: Mapping[str, bytes],
     calls_out: Mapping[str, tuple[str, ...]],
+    handed_out: Mapping[str, tuple[tuple[str, str], ...]],
     own: frozenset[str],
 ) -> None:
     """Follow import-time calls into the package's other modules.
@@ -178,14 +181,22 @@ def _follow_calls_out(
     function called ``configure_logging()``, which imported ``_stage0`` and
     ran its ``trigger()``, which started a bundled binary. Each callable is
     scanned once; its sensitive calls are added to the module that holds
-    them, marked with the module whose import started the chain.
+    them, marked with the module whose import started the chain. A callable
+    that import-time code only handed to another call (``partial(f)``) is
+    followed the same way, carrying that call; called ones go first, so a
+    callable that is both called and handed counts as called.
     """
     by_module = {m.module: i for i, m in enumerate(result.modules)}
-    pending = sorted((callee, mod) for mod, names in calls_out.items() for callee in names)
+    pending: list[tuple[str, str, str | None]] = sorted(
+        (callee, mod, None) for mod, names in calls_out.items() for callee in names
+    )
+    pending += sorted(
+        (callee, mod, to) for mod, pairs in handed_out.items() for callee, to in pairs
+    )
     seen: set[tuple[str, str]] = set()
     extra: dict[str, list[CallSite]] = {}
     while pending:
-        name, origin = pending.pop(0)
+        name, origin, to = pending.pop(0)
         target = _callee(name, sources)
         if target is None or target in seen:
             continue
@@ -193,20 +204,23 @@ def _follow_calls_out(
         mod, entry = target
         index = result.modules[by_module[mod]]
         try:
-            scan = scan_module(sources[mod], path=index.path, own=own, module=mod, entry=entry)
+            scan = scan_module(
+                sources[mod], path=index.path, own=own, module=mod, entry=entry, handed=to
+            )
         except (SyntaxError, ValueError, RecursionError):
             continue
         origin_path = result.modules[by_module[origin]].path
         extra.setdefault(mod, []).extend(
             replace(c, from_module=origin_path if origin != mod else None) for c in scan.calls
         )
-        pending.extend((callee, origin) for callee in scan.calls_out)
+        pending.extend((callee, origin, None) for callee in scan.calls_out)
+        pending.extend((callee, origin, ctx) for callee, ctx in scan.handed_out)
     for mod, calls in extra.items():
         i = by_module[mod]
         index = result.modules[i]
         merged = sorted(
             set(index.top_level_calls) | set(calls),
-            key=lambda c: (c.line, c.name, c.via or "", c.from_module or ""),
+            key=lambda c: (c.line, c.name, c.via or "", c.from_module or "", c.handed_to or ""),
         )
         result.modules[i] = replace(index, top_level_calls=tuple(merged))
 

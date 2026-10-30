@@ -17,6 +17,7 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 - GRN-C003 follows import-time calls into the package's own other modules, as deep as they go and through function-local imports, and names the module whose import started the chain. It also follows `sp = subprocess` style aliases and `getattr(sys.modules[__name__], "ctypes")`, the num2words 0.5.15 trick for reaching a module without naming it.
 - GRN-C003 follows a function defined inside another function when it is called or handed to a call there, the mrmustard 0.7.4 shape: a checker run at import that started a thread on a `_run` nested inside it.
 - GRN-C003 no longer makes four claims the top-1,000 PyPI corpus showed to be false: a dotted name whose first part is not an imported module (a local list called `requests`), a builtin shadowed by the module's own function or class (`def compile`), a module renamed with a leading underscore reported as new, and a module the trusted version had but couldn't parse reported as new (it now says the calls may not be new).
+- GRN-C003 reports three more kinds of call at `info`, each in its own finding, instead of `warn`: a function that import-time code only handed to a call not known to run it (`functools.partial(f)`, a wrapper factory; the evidence now reads "handed to X() at import"), a call reached only from a test file that nothing imports, and a call in an sdist file outside the package (`docs/conf.py`, `examples/`). Handing to `threading.Thread`, `atexit.register` or `executor.submit` still counts as running.
 
 ## 0.1.0a1
 

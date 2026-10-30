@@ -7,6 +7,7 @@ from collections.abc import Iterator
 
 from ..models import (
     ArtifactFacts,
+    CallSite,
     Change,
     Evidence,
     ModuleIndex,
@@ -292,14 +293,66 @@ def _live_test_modules(art: ArtifactFacts) -> set[str]:
     return reached & set(tests)
 
 
+_RUNNERS = frozenset(
+    {
+        "threading.Thread",
+        "threading.Timer",
+        "multiprocessing.Process",
+        "atexit.register",
+        "signal.signal",
+        "asyncio.run",
+        "asyncio.create_task",
+        "asyncio.ensure_future",
+        "weakref.finalize",
+        "_thread.start_new_thread",
+        "os.register_at_fork",
+    }
+)
+_RUNNER_METHODS = frozenset(
+    {"submit", "apply_async", "map_async", "call_soon", "call_soon_threadsafe", "call_later"}
+)
+
+
+def _deferred(site: CallSite) -> bool:
+    """A call reached only through a function handed to a call that may not run it."""
+    return site.handed_to is not None and not _runs(site.handed_to)
+
+
+def _runs(callee: str) -> bool:
+    """Whether the call a function was handed to is known to run it.
+
+    ``threading.Thread(target=f)`` and ``executor.submit(f)`` run f;
+    ``functools.partial(f)``, ``map(f, xs)`` or a wrapper factory may never.
+    """
+    return callee in _RUNNERS or callee.rsplit(".", 1)[-1] in _RUNNER_METHODS
+
+
+def _outside_package(art: ArtifactFacts, package: str) -> set[str]:
+    """Paths of sdist modules that are not installed with the package.
+
+    An sdist carries docs/conf.py, examples and benchmarks beside the package
+    (ply 3.6's example/, mpmath 1.2.1's demo/); they run only when someone runs
+    them. A wheel holds only what is installed, so nothing in it is outside.
+    """
+    if art.packagetype != "sdist":
+        return set()
+    tops = {f.path.split("/")[0] for f in art.files if f.path.endswith("/__init__.py")}
+    name = package.lower().replace("-", "_").replace(".", "_")
+    tops |= {"src", name, name.split("_")[0]}
+    return {m.path for m in art.modules if "/" in m.path and m.path.split("/")[0] not in tops}
+
+
 def new_import_time_exec(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
     """GRN-C003: new import-time calls to the sensitive APIs in pyindex.
 
     A module byte-identical to a baseline file is skipped, and one moved from
-    a baseline path is compared with that file. Calls in test files that
-    nothing else imports are reported at info (docs/rules/GRN-C003.md).
+    a baseline path is compared with that file. Three kinds of call are
+    reported at info, each in its own finding (docs/rules/GRN-C003.md): calls
+    in or reached from test files that nothing else imports, calls in sdist
+    files outside the package, and calls in a function that import-time code
+    only handed to another call which is not known to run it.
     """
     if base is None:
         return
@@ -311,7 +364,10 @@ def new_import_time_exec(
     old_unparsed = set(b.unparsed)
     new_hash = {f.path: f.sha256 for f in c.files}
     live_tests = _live_test_modules(c)
-    found: dict[bool, tuple[list[Evidence], set[str]]] = {False: ([], set()), True: ([], set())}
+    module_of = {m.path: m.module for m in c.modules}
+    outside = _outside_package(c, cand.package)
+    kinds = ("module", "test", "outside", "handed")
+    found: dict[str, tuple[list[Evidence], set[str]]] = {k: ([], set()) for k in kinds}
     unread: list[str] = []  # trusted copies ast couldn't parse (a Python 2 wheel)
     for m in c.modules:
         if m.module in old:
@@ -323,12 +379,32 @@ def new_import_time_exec(
         else:
             before = _moved_from(m.path, b.modules)
         test_only = is_test_path(m.path) and m.module not in live_tests
-        evidence, modules = found[test_only]
+        # A function handed to two calls is scanned once per call; a site that
+        # some call is known to run is not also "handed".
+        ran = {(s.line, s.name) for s in m.top_level_calls if not _deferred(s)}
         for s in m.top_level_calls:
             if s.name in before:
                 continue
+            deferred = _deferred(s)
+            if deferred and (s.line, s.name) in ran:
+                continue
+            from_test = (
+                s.from_module is not None
+                and is_test_path(s.from_module)
+                and module_of.get(s.from_module) not in live_tests
+            )
+            if deferred:
+                kind = "handed"
+            elif test_only or from_test:
+                kind = "test"
+            elif m.path in outside:
+                kind = "outside"
+            else:
+                kind = "module"
+            evidence, modules = found[kind]
             origin = f" from {s.from_module}" if s.from_module else ""
-            via = f" (in {s.via}(), reached at import{origin})" if s.via else ""
+            how = f"handed to {s.handed_to}() at import" if deferred else "reached at import"
+            via = f" (in {s.via}(), {how}{origin})" if s.via else ""
             where = "new module " if m.module not in old and m.path not in old_unparsed else ""
             if m.path in old_unparsed and m.path not in unread:
                 unread.append(m.path)
@@ -341,16 +417,17 @@ def new_import_time_exec(
                 )
             )
             modules.add(m.module)
-    for test_only, (evidence, modules) in found.items():
+    for kind, (evidence, modules) in found.items():
         if not evidence:
             continue
-        note: tuple[Evidence, ...]
+        n = len(modules)
         more = len(evidence) - MAX_EVIDENCE
         tail = (Evidence("note", f"and {more} more call site(s)"),) if more > 0 else ()
-        if test_only:
+        note: tuple[Evidence, ...] = ()
+        if kind == "test":
             title = (
                 f"{cand.version} adds import-time calls to sensitive APIs in "
-                f"{len(modules)} test module(s) that no other module imports"
+                f"{n} test module(s) that no other module imports"
             )
             note = (
                 Evidence(
@@ -359,9 +436,32 @@ def new_import_time_exec(
                     "so this is reported at info",
                 ),
             )
+        elif kind == "outside":
+            title = (
+                f"{cand.version} adds import-time calls to sensitive APIs in "
+                f"{n} file(s) outside the package"
+            )
+            note = (
+                Evidence(
+                    "note",
+                    "these files ship in the sdist but not in the installed package, "
+                    "so they run only when run on their own; reported at info",
+                ),
+            )
+        elif kind == "handed":
+            title = (
+                f"{cand.version} hands functions that call sensitive APIs to other "
+                f"calls at import in {n} module(s)"
+            )
+            note = (
+                Evidence(
+                    "note",
+                    "whether the receiving call runs them cannot be read from the source, "
+                    "so this is reported at info",
+                ),
+            )
         else:
-            title = f"{cand.version} adds import-time calls to sensitive APIs in {len(modules)} module(s)"
-            note = ()
+            title = f"{cand.version} adds import-time calls to sensitive APIs in {n} module(s)"
         if unread:
             note += (
                 Evidence(
@@ -374,7 +474,7 @@ def new_import_time_exec(
             "GRN-C003",
             title,
             tuple(evidence[:MAX_EVIDENCE]) + tail + note + _compare_note(b, c),
-            lowered_to=Severity.INFO if test_only else None,
+            lowered_to=None if kind == "module" else Severity.INFO,
         )
 
 

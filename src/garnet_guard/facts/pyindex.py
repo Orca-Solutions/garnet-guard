@@ -380,6 +380,7 @@ class ModuleScan:
     calls: tuple[CallSite, ...]  # sensitive calls reached
     imports: tuple[str, ...]  # modules the file imports
     calls_out: tuple[str, ...]  # the package's own callables it calls, dotted
+    handed_out: tuple[tuple[str, str], ...] = ()  # own callables handed to a call, with the call
 
 
 def scan_module(
@@ -389,6 +390,7 @@ def scan_module(
     own: frozenset[str] = frozenset(),
     module: str | None = None,
     entry: str | None = None,
+    handed: str | None = None,
 ) -> ModuleScan:
     """Index what runs at import, or what runs when ``entry`` is called.
 
@@ -398,7 +400,8 @@ def scan_module(
     returned as ``calls_out`` instead. ``module`` is the dotted module name,
     used to resolve relative imports. ``entry`` is a function, ``Class``
     (instantiation) or ``Class.method`` defined in the module; an unknown
-    entry runs nothing.
+    entry runs nothing. ``handed`` names the call that ``entry`` was handed to
+    when that call is not known to run it; it is carried on every call site.
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # package source triggers SyntaxWarnings
@@ -421,33 +424,60 @@ def scan_module(
     reachable = _reachable(tree)
     calls: list[CallSite] = []
     calls_out: set[str] = set()
+    handed_out: set[tuple[str, str]] = set()
     seen: set[str] = set()
     decoded: dict[str, str] = {}  # name → the base64 decode it was assigned from
 
     def scan(
-        nodes: Iterable[ast.AST], via: str | None, scope: Mapping[str, list[ast.AST]] | None = None
+        nodes: Iterable[ast.AST],
+        via: str | None,
+        scope: Mapping[str, list[ast.AST]] | None = None,
+        handed: str | None = None,
     ) -> None:
         # Callables these statements can reach by name: the module's, plus any
         # function defined inside the body being scanned (mrmustard 0.7.4 ran
         # ``threading.Thread(target=_run).start()`` on a ``_run`` nested in the
-        # function it called at import).
+        # function it called at import). ``handed`` is the call the function
+        # being scanned was handed to (``partial(f)``, ``Thread(target=f)``);
+        # whether that call runs it is for the check to judge, so every call
+        # site found from here carries it.
         local: dict[str, list[ast.AST]] = dict(scope if scope is not None else reachable)
-        reached: list[str] = []
+        reached: list[tuple[str, str | None]] = []
         for node in _walk_exec(nodes):
             if isinstance(node, ast.Call):
-                args = [node.func, *node.args, *(k.value for k in node.keywords)]
+                args = [*node.args, *(k.value for k in node.keywords)]
                 name = resolver.resolve(node.func)
                 if name is not None and name.split(".")[0] in own:
-                    calls_out.add(name)
+                    if handed is None:
+                        calls_out.add(name)
+                    else:
+                        handed_out.add((name, handed))
                 elif name is not None and is_sensitive(name, node):
-                    calls.append(CallSite(name=name, line=node.lineno, via=via))
-                    for decode in _decoded_inputs(args[1:], resolver, decoded):
-                        calls.append(CallSite(name=f"{decode} → {name}", line=node.lineno, via=via))
-                reached += _local_refs(args, local)
+                    calls.append(CallSite(name, node.lineno, via, handed_to=handed))
+                    for decode in _decoded_inputs(args, resolver, decoded):
+                        calls.append(
+                            CallSite(f"{decode} → {name}", node.lineno, via, handed_to=handed)
+                        )
+                # The call runs its target; ``partial(f)()`` runs f too. What it is
+                # handed (``Thread(target=f)``, ``partial(f)``) is followed as handed.
+                called = _local_refs([node.func], local)
+                if isinstance(node.func, ast.Call):
+                    inner = node.func
+                    called += _local_refs([*inner.args, *(k.value for k in inner.keywords)], local)
+                reached += [(key, handed) for key in called]
+                to = handed or _display(node.func, resolver, own)
+                reached += [(key, to) for key in _local_refs(args, local)]
+                for arg in args:
+                    if isinstance(arg, (ast.Name, ast.Attribute)):
+                        target = resolver.resolve(arg)
+                        if target is not None and target.split(".")[0] in own:
+                            handed_out.add((target, to))
+                if isinstance(node.func, ast.Lambda):
+                    scan([node.func.body], via or "<lambda>", local, handed)
                 for lam in (a for a in args if isinstance(a, ast.Lambda)):
-                    scan([lam.body], via or "<lambda>", local)
+                    scan([lam.body], via or "<lambda>", local, to)
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                reached += _local_refs(node.decorator_list, local)
+                reached += [(key, handed) for key in _local_refs(node.decorator_list, local)]
                 if not isinstance(node, ast.ClassDef):
                     local[node.name] = list(node.body)
             elif isinstance(node, ast.Assign):
@@ -457,22 +487,40 @@ def scan_module(
                 if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
                     if isinstance(node.value, ast.Lambda):
                         local[node.targets[0].id] = [node.value.body]
-        for key in reached:
+        reached.sort(key=lambda r: r[1] is not None)  # a function both called and handed: called
+        for key, ctx in reached:
             nested = key not in reachable
             mark = f"{via}.{key}" if nested else key  # two functions may nest the same name
-            if mark not in seen:
+            if mark in seen:
+                continue
+            if ctx is None:
                 seen.add(mark)
-                scan(local[key], key, local if nested else None)
+            elif f"{mark}@{ctx}" in seen:
+                continue  # handed to two different calls: scanned once per call
+            else:
+                seen.add(f"{mark}@{ctx}")
+            scan(local[key], key, local if nested else None, ctx)
 
     if entry is None:
-        scan(tree.body, None)
+        scan(tree.body, None, None, handed)
     elif entry in reachable:
         seen.add(entry)
-        scan(reachable[entry], entry)
-    uniq = sorted(set(calls), key=lambda c: (c.line, c.name, c.via or ""))
+        scan(reachable[entry], entry, None, handed)
+    uniq = sorted(set(calls), key=lambda c: (c.line, c.name, c.via or "", c.handed_to or ""))
     return ModuleScan(
-        tuple(uniq), tuple(sorted(i for i in resolver.imports if i)), tuple(sorted(calls_out))
+        tuple(uniq),
+        tuple(sorted(i for i in resolver.imports if i)),
+        tuple(sorted(calls_out)),
+        tuple(sorted(handed_out)),
     )
+
+
+def _display(func: ast.expr, resolver: _Resolver, own: frozenset[str]) -> str:
+    """The call a function was handed to, as the finding names it."""
+    name = resolver.resolve(func)
+    if name is not None and name.split(".")[0] not in own:
+        return name
+    return ast.unparse(func)[:60]
 
 
 def index_module(
