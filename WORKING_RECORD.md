@@ -2,6 +2,18 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-30: A Dependabot-opened pull request checked; "checked by" badge on
+
+**State.** Every pending uv update was inside Dependabot's 7-day cooldown, so a run would have opened nothing. #86 exempted ruff from the cooldown for one run; merging it started a Dependabot run, which opened #87 (ruff 0.17.2 → 0.17.3 in the dev group, `uv.lock`) at 20:54 UTC. The dogfood workflow, `.github/workflows/garnet-guard.yml` with the Action pinned at `69c8e01`, ran on it under Dependabot's token with the job's `permissions` block: github-actions[bot] posted "1 update, nothing worth a look" (`ruff` 0.17.2 → 0.17.3, no findings), the SARIF upload reached code scanning, and the job passed in about 20 seconds. The merge also started the github-actions update job, which opened #88 (the actions group); it doesn't touch `uv.lock`, so the workflow didn't run on it.
+
+The README now shows the "checked by" badge, linked to the workflow's runs, as decided on 2026-10-30. The ruff exemption is removed, so every uv update waits 7 days again.
+
+**Open tasks.** Delete the test repository and its fork once the maintainer has looked at them. Move the example pins forward with each release (docs/marketplace.md, step 6).
+
+**Verification.** Documentation and Dependabot configuration only. `uv run pytest`, ruff, mypy (strict) and `lint-imports` pass.
+
+**Review dispositions.** None yet.
+
 ## 2026-10-30: The Action on Renovate and fork pull requests; examples pin v0.1.0a1
 
 **State.** The Action at the `v0.1.0a1` commit (`42547f6`) was run on real pull requests in a throwaway public test repository, `orca-solutions/garnet-guard-action-test`, with the examples from `action/examples/` copied unchanged apart from the pin:

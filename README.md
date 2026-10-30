@@ -15,11 +15,8 @@
   <img src="https://img.shields.io/badge/status-pre--alpha-5C636B" alt="Status: pre-alpha" height="20">
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20releases-51%2F51%20warn-8E1B2C" alt="Replayed malicious releases: 51 of 51 warn" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard#replays-of-real-malicious-releases"><img src="https://img.shields.io/badge/clean%20updates-2.0%25%20flagged%20(366%2F18%2C181)-1B1F24" alt="Clean updates: 366 of 18,181 flagged for a look (2.0%), none a false claim" height="20"></a>
+  <a href="https://github.com/orca-solutions/garnet-guard/actions/workflows/garnet-guard.yml"><img src="https://raw.githubusercontent.com/orca-solutions/garnet-guard/main/docs/brand/badge/checked-by-garnet-guard.svg" alt="Dependencies checked by Garnet Guard" height="20"></a>
 </p>
-
-<!-- The "checked by" badge goes live once Garnet Guard has checked its own dependency PRs on GitHub (SPEC §11):
-[![Dependencies checked by Garnet Guard](https://raw.githubusercontent.com/orca-solutions/garnet-guard/main/docs/brand/badge/checked-by-garnet-guard.svg)](https://github.com/orca-solutions/garnet-guard)
--->
 
 **Garnet Guard checks every dependency update against the last release you trusted, and tells you when it looks different in ways that matter.**
 
