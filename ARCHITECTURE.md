@@ -154,4 +154,4 @@ See [docs/API.md](docs/API.md) §9 for the full layout and §2 for the import ru
 
 ## Backtesting
 
-`backtest/` replays known incidents (26 malicious releases of 15 compromised PyPI packages, listed in `backtest/incidents.toml`, and npm cases once the adapter lands) and a clean corpus of recent releases of the top ~500 PyPI packages. Every rule change runs against it. Two numbers gate releases: detection on the incident set and warn rate on the clean corpus. Where an incident's malicious artifacts were removed from the registry, the replay uses recorded `ReleaseFacts` from public write-ups rather than the files.
+`backtest/` replays known incidents (47 malicious releases of 36 compromised PyPI packages, listed in `backtest/incidents.toml`, and four npm account takeovers in `backtest/npm-incidents.toml`) and a clean corpus of recent releases of the top ~500 PyPI packages. Every rule change runs against it. Two numbers gate releases: detection on the incident set and warn rate on the clean corpus. Where an incident's malicious artifacts were removed from the registry, the replay uses recorded `ReleaseFacts` from public write-ups rather than the files.

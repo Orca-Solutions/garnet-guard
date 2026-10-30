@@ -59,6 +59,11 @@ What it missed in the replay, and why:
 - **num2words 0.5.15 and 0.5.16**: `__init__.py` loads a DLL through
   `getattr(ctypes, "CDLL")`, and the rule doesn't follow calls made through `getattr`.
 - **memoryos 2.0.34**: the payload starts from a logging setup function in another module.
+- **mrmustard 0.7.4** ([MAL-2026-11049](https://osv.dev/vulnerability/MAL-2026-11049)):
+  `__init__.py` calls a new function at import, and the rule follows it. That function starts
+  a thread whose target is a function defined inside it, where `subprocess` and
+  `urllib.request` are called. The rule follows a function handed to a call only when it is
+  defined at module level, so it stopped one step short. A fix is planned.
 
 ## How to resolve it
 

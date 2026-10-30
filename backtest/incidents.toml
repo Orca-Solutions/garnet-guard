@@ -7,9 +7,13 @@
 # (samples/pypi/compromised_lib). litellm 1.82.7/1.82.8 have no snapshot: their
 # URLs come from PyPI Inspector links in PYSEC-2026-2, their SHA-256 match the
 # litellm-pwn-detect hash table, and their upload times come from the
-# advisories, to the minute. A files.pythonhosted.org path is the file's
-# BLAKE2b-256, and every file here hashes to its path. Garnet checks every
-# download against the SHA-256 before reading it. Nothing is executed.
+# advisories, to the minute. Entries without `uploaded_at` have no snapshot:
+# their filenames, SHA-256 and BLAKE2b come from the `package_integrity`
+# records of the OSV advisory named on the entry (ossf/malicious-packages),
+# and the upload day comes from the advisory and the wheel's own timestamps.
+# A files.pythonhosted.org path is the file's BLAKE2b-256, and every file here
+# hashes to its path. Garnet checks every download against the SHA-256 before
+# reading it. Nothing is executed.
 #
 # tags_on_the_day records git tags that changed between the upload and today,
 # with the evidence: `sha` restores a tag deleted since, `absent = true` hides
@@ -550,3 +554,299 @@ url = "https://files.pythonhosted.org/packages/fa/a2/fe059119c07fca569cc874e0029
 sha256 = "f5ff549ae857ab17551d5a6d5bee968ad773aaeaf4a5cbf9d023ff0c77fbd451"
 packagetype = "bdist_wheel"
 uploaded_at = "2026-06-08T03:09:52+00:00"
+
+[[incident]]
+id = "bramin-0.0.3"
+package = "bramin"
+baseline = "0.0.1"
+candidate = "0.0.3"
+source_repo = "Nanguage/bramin"
+osv = "MAL-2026-5280"
+summary = "Hades campaign: the same <name>-setup.pth payload. 0.0.2, 0.0.3 and 0.0.4 were all malicious; the one trusted release, 0.0.1, dates from 2020 and ships an egg, a wheel and an sdist."
+[[incident.files]]
+filename = "bramin-0.0.3-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/10/64/d72770ed10e593fb0159f8ee2c58d101487e5687269445acf9e324de10fc/bramin-0.0.3-py3-none-any.whl"
+sha256 = "d38651d6aaf018b612175ca1ecc0f588b77bef009858427c7028f0bf4e04ee8e"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "cmd2func-0.2.2"
+package = "cmd2func"
+baseline = "0.2.1"
+candidate = "0.2.2"
+source_repo = "Nanguage/cmd2func"
+osv = "MAL-2026-5290"
+summary = "Hades campaign: the same <name>-setup.pth payload."
+[[incident.files]]
+filename = "cmd2func-0.2.2-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/09/c4/9296b151f3afa5c724e40e3f1da320c9ec8a06a3a796b488614f8149271a/cmd2func-0.2.2-py3-none-any.whl"
+sha256 = "6a7c59cc45ccc8d1292d1c5bec35ecd4d3329072e20e562e59c7ae39645384b0"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "coolbox-0.4.1"
+package = "coolbox"
+baseline = "0.4.0"
+candidate = "0.4.1"
+source_repo = "GangCaoLab/CoolBox"
+osv = "MAL-2026-5295"
+summary = "Hades campaign: the same <name>-setup.pth payload."
+[[incident.files]]
+filename = "coolbox-0.4.1-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/9f/02/a14a518d8d7732b6cf4b6bf3eb6c0e9f047cfc1596ef56a15541d6350206/coolbox-0.4.1-py3-none-any.whl"
+sha256 = "676713804352b10f813c3371abffaac2ae670a53dbd924ebaae2e3b190b91eae"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "executor-engine-0.3.4"
+package = "executor-engine"
+baseline = "0.3.3"
+candidate = "0.3.4"
+source_repo = "Nanguage/executor-engine"
+osv = "MAL-2026-5298"
+summary = "Hades campaign: the same <name>-setup.pth payload."
+[[incident.files]]
+filename = "executor_engine-0.3.4-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/7c/6c/d827f37cab98b90c60e4e2d27c85fc15e44f32306f6d1c3ff34f3a76f2f1/executor_engine-0.3.4-py3-none-any.whl"
+sha256 = "54f714d23d272b95d6518ddbc529a93aab1e68a76404b1434bb203caa3c50cc4"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "executor-http-0.1.3"
+package = "executor-http"
+baseline = "0.1.2"
+candidate = "0.1.3"
+source_repo = "Nanguage/executor-http"
+osv = "MAL-2026-5281"
+summary = "Hades campaign: the same <name>-setup.pth payload."
+[[incident.files]]
+filename = "executor_http-0.1.3-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/40/09/cca1f4298a805a33a9a6d3c5fe874606975eb8013041ee759a0d3717c280/executor_http-0.1.3-py3-none-any.whl"
+sha256 = "9f91985b902135d63c1806017690509ab2704ef5f79871b23ddd949076b0e968"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "funcdesc-0.2.2"
+package = "funcdesc"
+baseline = "0.2.1"
+candidate = "0.2.2"
+source_repo = "Nanguage/funcdesc"
+osv = "MAL-2026-5300"
+summary = "Hades campaign: the same <name>-setup.pth payload."
+[[incident.files]]
+filename = "funcdesc-0.2.2-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/06/28/8e97d726678ea254e29cb85daa5645271b59d96cd61d1dc6ae2be8d61715/funcdesc-0.2.2-py3-none-any.whl"
+sha256 = "be6b0a27eba6eeabe1e3c5d5ea1227f96e00291a079266d03d2e9e33f4912c96"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "magique-0.6.9"
+package = "magique"
+baseline = "0.6.7"
+candidate = "0.6.9"
+osv = "MAL-2026-5296"
+summary = "Hades campaign: the same <name>-setup.pth payload. 0.6.8 was malicious too and is not replayed (no file hash published). The package metadata links no repository, so GRN-T004 cannot look for a tag."
+[[incident.files]]
+filename = "magique-0.6.9-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/fb/cf/376a097f8893ac5c63e3d067b233bf16de9e3c980d8da0ac887a5619b297/magique-0.6.9-py3-none-any.whl"
+sha256 = "aa410716549ddcfc97f249cf20c7a49e06f5eb5f57f74625b2a0bc46982ee296"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "magique-ai-0.4.5"
+package = "magique-ai"
+baseline = "0.4.3"
+candidate = "0.4.5"
+osv = "MAL-2026-5294"
+summary = "Hades campaign: the same <name>-setup.pth payload. 0.4.4 was malicious too and is not replayed (no file hash published). The package metadata links no repository."
+[[incident.files]]
+filename = "magique_ai-0.4.5-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/33/51/f36b85977bd09b12a88aff94531b608659312497c8856b73353603f11405/magique_ai-0.4.5-py3-none-any.whl"
+sha256 = "27a3bcd0f5e22b05f22212031f1df1ff55ce972a743262014e6d7e022569b074"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "mrbios-0.1.1"
+package = "mrbios"
+baseline = "0.1.0"
+candidate = "0.1.1"
+source_repo = "Nanguage/mrbios"
+osv = "MAL-2026-5282"
+summary = "Hades campaign: the same <name>-setup.pth payload."
+[[incident.files]]
+filename = "mrbios-0.1.1-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/3f/a6/ec2fd95e0a575e8a94859e34fe212184dff0520ac7bc3c85f6c1e4d53a52/mrbios-0.1.1-py3-none-any.whl"
+sha256 = "efd8de3d3a52962532b7c3fe9601883a1212be14415c77ed9d670c44761e53a8"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "napari-ufish-0.0.3"
+package = "napari-ufish"
+baseline = "0.0.1"
+candidate = "0.0.3"
+osv = "MAL-2026-5275"
+summary = "Hades campaign: the same <name>-setup.pth payload. 0.0.2 was malicious too and is not replayed (no file hash published). The package metadata links no repository."
+[[incident.files]]
+filename = "napari_ufish-0.0.3-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/bb/6f/cae6c37dfcd5b2efa7f1343f70a86d91da6caad923982ac2776873b83243/napari_ufish-0.0.3-py3-none-any.whl"
+sha256 = "123b3a6416c718a0bc1ba0eb808bde5f9027acb23de0f5edb9a5cc5659b570f9"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "nucbox-0.1.2"
+package = "nucbox"
+baseline = "0.1.1"
+candidate = "0.1.2"
+osv = "MAL-2026-5276"
+summary = "Hades campaign: the same <name>-setup.pth payload. The package metadata links no repository."
+[[incident.files]]
+filename = "nucbox-0.1.2-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/c8/af/8b1e85ed9468496d9721fa4800da2d21497793abd2483729b980aabe1aa0/nucbox-0.1.2-py3-none-any.whl"
+sha256 = "2135234c0293518a60d6604f110c7238e319436e17a8f55809d6c85c3a6da3b0"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "okite-0.0.7"
+package = "okite"
+baseline = "0.0.6"
+candidate = "0.0.7"
+source_repo = "Nanguage/okite"
+osv = "MAL-2026-5283"
+summary = "Hades campaign: the same <name>-setup.pth payload."
+[[incident.files]]
+filename = "okite-0.0.7-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/33/4b/094593dec180bc083c1a213042288df4eb7543605bf1718b2894f23e154a/okite-0.0.7-py3-none-any.whl"
+sha256 = "29f0d6556ad9119c2cec9c1c2c88dcd359b6af3f94ef545fabfdcd9b5910364b"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "pantheon-agents-0.6.1"
+package = "pantheon-agents"
+baseline = "0.6.0"
+candidate = "0.6.1"
+source_repo = "aristoteleo/pantheon-agents"
+osv = "MAL-2026-5299"
+summary = "Hades campaign: the same <name>-setup.pth payload. A tag v0.6.1 exists today and points at a commit dated 2026-05-25, before the upload; a lightweight tag carries no date of its own, so the replay assumes it was already there and GRN-T004 stays quiet."
+[[incident.files]]
+filename = "pantheon_agents-0.6.1-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/3a/be/163035ff00867ffaecedb4fa8431538648206e22fb7e0494f6a30cb4eaa9/pantheon_agents-0.6.1-py3-none-any.whl"
+sha256 = "38ee9a48e61e7c813a0b8857e075828aadcbccbe13c1e2ec4082b0a138c8d42a"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "pantheon-toolsets-0.5.5"
+package = "pantheon-toolsets"
+baseline = "0.5.4"
+candidate = "0.5.5"
+osv = "MAL-2026-5277"
+summary = "Hades campaign: the same <name>-setup.pth payload. The package metadata links no repository."
+[[incident.files]]
+filename = "pantheon_toolsets-0.5.5-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/31/bf/6cb983b6a00f1f2a2955d683ebdae4406893fad28ae8f98f1cdcf6e0bab4/pantheon_toolsets-0.5.5-py3-none-any.whl"
+sha256 = "48fdd5ad168e5b909b37b70c1d7cdf4c9585879c3e1b08d26d1697ac593c6458"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "synago-0.1.1"
+package = "synago"
+baseline = "0.1.0"
+candidate = "0.1.1"
+osv = "MAL-2026-5284"
+summary = "Hades campaign: the same <name>-setup.pth payload. The package metadata links no repository."
+[[incident.files]]
+filename = "synago-0.1.1-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/15/83/8ee95a19f0ca591aaabd405a7faee345890a754963850bc0f3334c8f36f2/synago-0.1.1-py3-none-any.whl"
+sha256 = "dc98c8cfc903058aa5ebda632e7f1306a42fbdcf863d84e0b95f5a6e3e6e847a"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "uprobe-0.1.3"
+package = "uprobe"
+baseline = "0.1.2"
+candidate = "0.1.3"
+source_repo = "UFISH-Team/U-Probe"
+osv = "MAL-2026-5279"
+summary = "Hades campaign: the same <name>-setup.pth payload. The project later tagged its own v0.1.3 and v0.1.4 and published 0.1.5 to PyPI (2026-09-30)."
+[[incident.files]]
+filename = "uprobe-0.1.3-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/b3/ec/75821f73b07968399276f171ef5d530233d5ff57e4b6176f9e0262de5daa/uprobe-0.1.3-py3-none-any.whl"
+sha256 = "2f8657749353a7ea2751c1512ac5094d09b521755c8de4e64d0a00bab97d453e"
+packagetype = "bdist_wheel"
+[[incident.tags_on_the_day]]
+repo = "UFISH-Team/U-Probe"
+tag = "v0.1.3"
+absent = true
+evidence = "v0.1.3 points at commit d92e4dd8f9ae18af1e0bae8be061626336eb620e, committed 2026-09-09T11:36:31Z, three months after the malicious wheel was built (2026-06-05, from its zip entries). The repository now lives at u-science-lab/U-Probe."
+
+[[incident]]
+id = "dreamgen-1.8.1"
+package = "dreamgen"
+baseline = "1.8.0"
+candidate = "1.8.1"
+source_repo = "Agentic-Insights/dreamgen"
+osv = "MAL-2026-5313"
+summary = "Hades campaign: the same <name>-setup.pth payload. The linked repository is no longer public, so GRN-T004 reports GRN-E001."
+[[incident.files]]
+filename = "dreamgen-1.8.1-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/17/5b/d156503d17b45fad8acce719202870a7652915141b02ec365f8df88a5b4f/dreamgen-1.8.1-py3-none-any.whl"
+sha256 = "4bd9e9b8c1a0c4006f7cbbebcf524f950efa011a01e139e81bca891ad2fcea40"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "mem8-6.0.1"
+package = "mem8"
+baseline = "6.0.0"
+candidate = "6.0.1"
+source_repo = "killerapp/mem8"
+osv = "MAL-2026-5319"
+summary = "Hades campaign: the same <name>-setup.pth payload."
+[[incident.files]]
+filename = "mem8-6.0.1-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/0f/d8/144a73f115189b08391dfc6862828cb5e39ed36c680e0ff292afba54c730/mem8-6.0.1-py3-none-any.whl"
+sha256 = "a009274484faee0692ad34b3de64eb533747bf8cee23df1116d82a4020e4f690"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "ensmallen-0.8.101"
+package = "ensmallen"
+baseline = "0.8.100"
+candidate = "0.8.101"
+osv = "MAL-2026-5315"
+summary = "Hades campaign: the same <name>-setup.pth payload. The package metadata links no repository. 0.8.100 ships platform wheels only; 0.8.101 is a pure-Python wheel."
+[[incident.files]]
+filename = "ensmallen-0.8.101-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/53/bf/6210699d6165e632ebad20175808bf71e4a09a48dab3a1e0a4c002d8cc5b/ensmallen-0.8.101-py3-none-any.whl"
+sha256 = "b3e778e137a9a8551344d0327ca242b37ba11129cd038311b6dbe497ba35ece1"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "phenopacket-store-toolkit-0.1.7"
+package = "phenopacket-store-toolkit"
+baseline = "0.1.6"
+candidate = "0.1.7"
+source_repo = "monarch-initiative/phenopacket-store-toolkit"
+osv = "MAL-2026-5322"
+summary = "Hades campaign: the same <name>-setup.pth payload."
+[[incident.files]]
+filename = "phenopacket_store_toolkit-0.1.7-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/93/77/84c5272838151db8cb610858293c2a98192736933ae68fcb50275e04ad5f/phenopacket_store_toolkit-0.1.7-py3-none-any.whl"
+sha256 = "e5114ad06b1ec188b796f5ab49b133a05a569d89fe501cacb21f9bef9bc9705c"
+packagetype = "bdist_wheel"
+
+[[incident]]
+id = "mrmustard-0.7.4"
+package = "mrmustard"
+baseline = "0.7.3"
+candidate = "0.7.4"
+osv = "MAL-2026-11049"
+summary = "An attacker took over a maintainer's GitHub account on 2026-07-23, had the project's CI leak its PyPI token, and uploaded 0.7.4; found 2026-07-24. mrmustard/__init__.py starts a thread at import that reads SSH keys and cloud credentials and installs a .pth, a cron job and a shell hook. No v0.7.4 tag exists (StepSecurity), and the package metadata links no repository, so GRN-T004 cannot look for one."
+[[incident.files]]
+filename = "mrmustard-0.7.4-py3-none-any.whl"
+url = "https://files.pythonhosted.org/packages/d7/19/207580db8bb053b052973153dd3c695b385e8fee5a3993a4177657f453d2/mrmustard-0.7.4-py3-none-any.whl"
+sha256 = "81f0d1291a975d012d1b892cf9967557fdbb1ad4e1ac0545702ad235ace1cac5"
+packagetype = "bdist_wheel"
+[[incident.files]]
+filename = "mrmustard-0.7.4.tar.gz"
+url = "https://files.pythonhosted.org/packages/a0/c2/21d4464e1662647242ac16433ecc27aa5e86cae1355bd33d30bc17ad05c4/mrmustard-0.7.4.tar.gz"
+sha256 = "0404f8590fdaef95280c1d908068f31bf2321fe887faabf0c2329ba67c7203cb"
+packagetype = "sdist"
