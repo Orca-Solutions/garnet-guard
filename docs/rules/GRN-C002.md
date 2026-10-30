@@ -61,13 +61,18 @@ nx 21.4.1 → 21.5.0: WARN
 ```
 
 The same replay reports @ctrl/tinycolor 4.1.1, the first Shai-Hulud package, for a new
-`postinstall` running `node bundle.js`. The Python case is illustrative, not from a real
-release:
+`postinstall` running `node bundle.js`.
+
+On PyPI, from the [replay](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml)
+of memoryos 2.0.34 ([MAL-2026-16475](https://osv.dev/vulnerability/MAL-2026-16475)). An
+attacker with write access pushed release commits and a tag, and the project's own release
+workflow published them. The release also bundles a binary that a logging setup function
+starts; no other current rule reported it.
 
 ```text
-examplelib 2.6.1 → 2.6.2: WARN
-  WARN  GRN-C002 new-build-hook: 2.6.2 adds code that runs when the sdist is built
-           - setup.py:41 calls urllib.request.urlopen
+memoryos 2.0.33 → 2.0.34: WARN
+  WARN  GRN-C002 new-build-hook: 2.0.34 adds code that runs when the sdist is built
+           - build backend poetry.core.masonry.api → in-tree:sckit_poetry_build
 ```
 
 ## How to resolve it
