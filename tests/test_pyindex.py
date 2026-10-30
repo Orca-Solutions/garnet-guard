@@ -77,3 +77,63 @@ def test_function_passed_to_a_call_or_decorator_is_reached() -> None:
         ("subprocess.run", "b"),
         ("os.system", "deco"),
     }
+
+
+def test_lambda_called_or_passed_at_import_is_reached() -> None:
+    assert names("import os\n(lambda: os.system('id'))()\n") == {"os.system"}
+    assert names("import atexit, subprocess\natexit.register(lambda: subprocess.run(['x']))\n") == {
+        "subprocess.run"
+    }
+    assert names("import os\nf = lambda: os.system('id')\nf()\n") == {"os.system"}
+    # Stored and never called: not reached, like a function.
+    assert names("import os\nf = lambda: os.system('id')\n") == set()
+
+
+def test_class_instantiated_at_import_runs_its_init() -> None:
+    cls = "import os\nclass Boot:\n    def __init__(self):\n        os.system('id')\n"
+    calls, _ = index_module((cls + "Boot()\n").encode())
+    assert [(c.name, c.via) for c in calls] == [("os.system", "Boot")]
+    assert names(cls) == set()  # defined, never instantiated
+    assert names(cls + "class Sub(Boot):\n    pass\nSub()\n") == {"os.system"}
+    static = "import os\nclass K:\n    @staticmethod\n    def boot():\n        os.system('id')\n"
+    assert names(static + "K.boot()\n") == {"os.system"}
+    assert names(static) == set()
+
+
+def test_star_import_of_a_sensitive_module() -> None:
+    assert names("from subprocess import *\nrun(['x'])\n") == {"subprocess.run"}
+    assert names("from os import *\nsystem('x')\n") == {"os.system"}
+    # Builtins, the module's own definitions and harmless names stay quiet.
+    assert names("from subprocess import *\nprint('x')\nlist()\n") == set()
+    assert names("from subprocess import *\ndef run():\n    pass\nrun()\n") == set()
+    assert names("from os import *\ngetcwd()\n") == set()
+
+
+def test_getattr_and_import_with_literal_names_resolve() -> None:
+    assert names("import os\ngetattr(os, 'system')('id')\n") == {"os.system"}
+    assert names("import os\ngetattr(os, 'sys' + 'tem')('id')\n") == {"os.system"}
+    assert names("import importlib\nimportlib.import_module('os').system('id')\n") == {"os.system"}
+    assert names("__import__('os').system('id')\n") == {"__import__", "os.system"}
+    # A name built at runtime can't be followed without running code.
+    assert names("import os\nn = 'system'\ngetattr(os, n)('id')\n") == set()
+
+
+def test_base64_decode_feeding_a_sensitive_call_is_its_own_entry() -> None:
+    assert names("import base64\nexec(base64.b64decode('aW1wb3J0IG9z'))\n") == {
+        "exec",
+        "base64.b64decode → exec",
+    }
+    assert names("import base64, zlib\nexec(zlib.decompress(base64.b85decode('x')))\n") == {
+        "exec",
+        "base64.b85decode → exec",
+    }
+    assert names("import base64\nblob = base64.b64decode('x')\nexec(blob)\n") == {
+        "exec",
+        "base64.b64decode → exec",
+    }
+    assert names("from base64 import b64decode as d\nexec(d('x'))\n") == {
+        "exec",
+        "base64.b64decode → exec",
+    }
+    # Decoding on its own is not sensitive.
+    assert names("import base64\nprint(base64.b64decode('x'))\n") == set()

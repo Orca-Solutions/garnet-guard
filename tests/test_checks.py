@@ -249,3 +249,26 @@ def test_unparseable_new_file_is_e002() -> None:
     base = release("1.0", {"demo/__init__.py": INIT})
     cand = release("1.1", {"demo/__init__.py": INIT, "demo/x.py": "print 'py2'\n"})
     assert "GRN-E002" in rules(base, cand)
+
+
+def test_payload_through_lambda_or_class_init_fires() -> None:
+    base = release("1.0", {"demo/__init__.py": INIT})
+    lam = INIT + "import os\n(lambda: os.system('id'))()\n"
+    cls = (
+        INIT
+        + "import os\nclass _Boot:\n    def __init__(self):\n        os.system('id')\n_Boot()\n"
+    )
+    assert "GRN-C003" in rules(base, release("1.1", {"demo/__init__.py": lam}))
+    assert "GRN-C003" in rules(base, release("1.1", {"demo/__init__.py": cls}))
+
+
+def test_base64_into_existing_exec_fires() -> None:
+    # typing-inspection builds helpers with exec at import; a release that starts
+    # decoding what it execs is a new thing, not the same call.
+    old = INIT + "exec('X = 1')\n"
+    new = old + "import base64\nexec(base64.b64decode('aW1wb3J0IG9z'))\n"
+    base = release("1.0", {"demo/__init__.py": old})
+    [f] = [f for f in run_checks(CHANGE, base, release("1.1", {"demo/__init__.py": new})).findings]
+    assert f.rule_id == "GRN-C003"
+    assert "base64.b64decode → exec" in f.evidence[0].summary
+    assert "GRN-C003" not in rules(base, release("1.1", {"demo/__init__.py": old + "Y = 2\n"}))
