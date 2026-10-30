@@ -104,7 +104,7 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 - [ ] Pre-install hooks for Claude Code and Codex (SPEC §10.4), announced as the second beat
 - [ ] Rules GRN-C005 and C006 ([#54](https://github.com/orca-solutions/garnet-guard/issues/54), [#60](https://github.com/orca-solutions/garnet-guard/issues/60)); GRN-T006 and C004 moved to the launch list in [Closing the evasion gaps](#closing-the-evasion-gaps)
 - [ ] npm adapter, if it didn't make the launch
-- [ ] Full backtest over the last ~20 releases of the top ~500 PyPI packages (January–February), extending the Dec 1 reduced run, plus the npm corpus; publish warn rate per rule and set the 1.0 target. These numbers feed the PyCon talk.
+- [ ] Full backtest on the 1.0 clean corpus (SPEC §13.2: the last 11 releases of the top 1,000 PyPI and top 1,000 npm packages) with the 0.3 rules (January–February); publish warn rate per rule and set the 1.0 target. These numbers feed the PyCon talk.
 
 **Exit:** the wrapper and hooks ship; the full backtest is published.
 
