@@ -384,3 +384,51 @@ def test_dependency_from_outside_the_registry_warns_without_a_lookup() -> None:
     assert f.severity == Severity.WARN
     assert "through now installs from outside npm" in f.title
     assert "helper installs from outside npm" in f.title
+
+
+# A name that was unpublished and created again (call-bound in 2024)
+
+
+def test_npm_profile_keeps_unpublished_history() -> None:
+    doc = {
+        "name": "call-helper",
+        "time": {
+            "created": "2024-12-05T10:00:00Z",
+            "modified": "2025-01-02T10:00:00Z",
+            "1.0.0": "2024-06-10T10:00:00Z",
+            "1.0.1": "2024-12-05T10:00:00Z",
+            "1.0.2": "2024-12-20T10:00:00Z",
+        },
+        "versions": {"1.0.1": {}, "1.0.2": {}},
+        "dist-tags": {"latest": "1.0.2"},
+    }
+    http = _Http({"https://registry.npmjs.org/call-helper": (200, doc)})
+    h = cast(Http, http)
+    ctx = npm.FetchContext(http=h, limits=Limits(), tags=TagLookup(h))
+    p = npm.package_profile(ctx, "call-helper")
+    assert p.first_release_at == datetime(2024, 12, 5, 10, tzinfo=UTC)
+    assert p.unpublished_versions == ("1.0.0",)
+    assert p.earliest_unpublished_at == datetime(2024, 6, 10, 10, tzinfo=UTC)
+    # a version unpublished after the name was created is not earlier history
+    doc["time"]["1.0.3"] = "2025-01-01T10:00:00Z"
+    assert npm.package_profile(ctx, "call-helper").unpublished_versions == ("1.0.0",)
+
+
+def test_unpublished_history_is_said_and_still_warns() -> None:
+    helper = replace(
+        _profile("helper", 14),
+        unpublished_versions=("1.0.0",),
+        earliest_unpublished_at=UPLOADED - timedelta(days=190),
+    )
+    base = _npm_rel("1.0")
+    cand = replace(_npm_rel("1.1", Requirement("helper", "helper@^1.0.1")), dependencies=(helper,))
+    f = _c008(base, cand)
+    assert f.severity == Severity.WARN
+    assert f.title.endswith(
+        "helper's earliest version still published was released 14 day(s) before it"
+    )
+    assert f.evidence[0].summary == (
+        "helper@^1.0.1: earliest version still published 2026-08-18, 14 day(s) before 1.1; "
+        "npm also lists 1.0.0 from 2026-02-23, since unpublished; 1 release(s); "
+        "no repository link"
+    )

@@ -324,6 +324,10 @@ class DependencyProfile:
     source_repo: str | None = None
     latest_version: str | None = None
     owners: tuple[str, ...] = ()  # registry accounts: PyPI roles and organization, npm maintainers
+    # npm: versions the registry's time table lists from before ``first_release_at``
+    # that are no longer published (a name unpublished and created again), oldest first
+    unpublished_versions: tuple[str, ...] = ()
+    earliest_unpublished_at: datetime | None = None
 
 
 @dataclass(frozen=True)
