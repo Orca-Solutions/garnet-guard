@@ -11,8 +11,8 @@ Someone who gains the ability to publish a new version of a **legitimate, alread
 | Path | Example | Garnet signals |
 |---|---|---|
 | Stolen or leaked long-lived publish token | lightning 2.6.2/2.6.3, litellm 1.82.7/1.82.8, telnyx 4.87.1/4.87.2, ultralytics 8.3.45/8.3.46, xinference 2.6.0–2.6.2, durabletask 1.4.1–1.4.3 | Lost provenance (T001), outside Trusted Publishing (T005), no matching tag (T004) |
-| Hijacked maintainer account (phishing, session theft) | num2words 0.5.15/0.5.16, July 2025; chalk/debug, Sept 2025 | Lost provenance, new install script or obfuscated code (C002, C005) |
-| Compromised CI of the real project (script injection, poisoned action or cache, pushed release tag) | elementary-data 0.23.3, ultralytics 8.3.41/8.3.42, memoryos 2.0.34 | Provenance looks valid, so content rules carry it: new `.pth` (C001), new import-time exec (C003) |
+| Hijacked maintainer account (phishing, session theft) | num2words 0.5.15/0.5.16, July 2025; chalk/debug, Sept 2025 | No matching tag (T004) for all four; new import-time exec (C003) for num2words. Lost provenance (T001) and a new install script (C002) cover the same path when the trusted release was attested or the payload is an install script |
+| Compromised CI of the real project (script injection, poisoned action or cache, pushed release tag) | elementary-data 0.23.3, ultralytics 8.3.41/8.3.42, memoryos 2.0.34 | Provenance looks valid, so content rules carry it: new `.pth` (C001), changed build backend (C002), new import-time exec (C003), code that isn't at the tag (C007, ultralytics 8.3.42) |
 | Moved publishing to a fork or new repo | repo-jacking variants | Publisher changed (T002), workflow changed (T003) |
 | Known-bad release already listed | any feed-confirmed case | OSV `MAL-` match (K001) |
 
@@ -33,6 +33,30 @@ Rules are public, so attackers can read them. Responses:
 - Lean on trust signals that require control of the real publisher identity, not on content patterns alone.
 - Rules run on *changes*, so hiding a payload means making it look like an ordinary diff, which raises the cost.
 - Novel bypasses are reported privately (see [SECURITY.md](SECURITY.md)) and land with a backtest fixture.
+
+### Known gaps and the plan
+
+A red-team pass on 2026-10-30 listed the ways a malicious release could still get past the rules. This is the condensed map: what each gap is, what Garnet sees of it today, and the issue that closes it. The order and phase of each fix are in [ROADMAP.md](ROADMAP.md#closing-the-evasion-gaps). Ideas already public are tracked here and in ordinary issues; a bypass nobody has published yet still goes through private reporting.
+
+| Gap | What Garnet sees today | Planned |
+|---|---|---|
+| A trusted package adds a dependency that carries the payload (event-stream 3.3.6 added flatmap-stream) | Nothing: declared dependencies aren't read, and the added package only gets the OSV lookup | GRN-C008 new-dependency [#44](https://github.com/orca-solutions/garnet-guard/issues/44); a first look at added packages [#58](https://github.com/orca-solutions/garnet-guard/issues/58) |
+| The payload runs when a feature is used, not at import (ultralytics 8.3.42) | GRN-C007, when the build injected code that isn't at the tag; nothing when the payload is in the tagged source | Package-level capability signal, measured on the corpus first [#53](https://github.com/orca-solutions/garnet-guard/issues/53) |
+| The payload calls an API the §6.3 sensitive list doesn't name, or reaches a listed one indirectly | Nothing for unlisted APIs; literal `getattr` and `__import__` lookups of a listed one are followed, computed names aren't | Widen the list [#46](https://github.com/orca-solutions/garnet-guard/issues/46); GRN-C005 indirection and obfuscation [#54](https://github.com/orca-solutions/garnet-guard/issues/54); changed inputs to listed calls, v2 [#65](https://github.com/orca-solutions/garnet-guard/issues/65) |
+| The payload isn't Python source: a native binary, a sourceless `.pyc`, or JavaScript in an npm package | npm install scripts (GRN-C002); not the files themselves | GRN-C004 new-binary [#48](https://github.com/orca-solutions/garnet-guard/issues/48); a JavaScript content rule [#52](https://github.com/orca-solutions/garnet-guard/issues/52) |
+| An extra wheel for one platform, uploaded after the others | Garnet reads one wheel, pure-Python first, so a different wheel can carry the payload | Compare the release's wheels, and GRN-T006 files-uploaded-late [#45](https://github.com/orca-solutions/garnet-guard/issues/45); GRN-C006 sdist-wheel-mismatch [#60](https://github.com/orca-solutions/garnet-guard/issues/60) |
+| An entry point that another tool loads on its own (pytest plugins, setuptools hooks) | Entry points are read (GRN-C003 follows them) but no rule reports a new one | A new-entry-point check [#47](https://github.com/orca-solutions/garnet-guard/issues/47) |
+| A startup file other than `.pth`: `sitecustomize.py`, `usercustomize.py`, files under `.data/` | Nothing | Extend the startup-file check [#49](https://github.com/orca-solutions/garnet-guard/issues/49) |
+| An import hook installed at import (`sys.meta_path`, `settrace`, `builtins`, metaclasses) | Only when the call is on the sensitive list | Hook installation [#55](https://github.com/orca-solutions/garnet-guard/issues/55) |
+| The real release workflow, run from a different branch, ref or trigger | Provenance looks normal; the ref and trigger aren't compared | Different ref or trigger [#56](https://github.com/orca-solutions/garnet-guard/issues/56); release-workflow diff at `info` [#57](https://github.com/orca-solutions/garnet-guard/issues/57) |
+| The attacker also pushes a matching tag | GRN-T004 is satisfied | Tag sanity checks [#61](https://github.com/orca-solutions/garnet-guard/issues/61) |
+| The bad release is between the trusted version and the candidate | Trust rules compare the two ends only | Intermediate releases, SPEC §5.2 [#62](https://github.com/orca-solutions/garnet-guard/issues/62) |
+| The payload sits in a model or data file a loader runs (pickle) | Nothing | Model loaders [#59](https://github.com/orca-solutions/garnet-guard/issues/59) |
+| An ignore added to the policy in the same PR as the update | The ignore is applied | Policy guardrails [#51](https://github.com/orca-solutions/garnet-guard/issues/51) |
+| An update that never reaches a lockfile (installed by hand, or in an image) | Nothing: Garnet checks lockfile diffs | A scheduled check of a deployed environment [#63](https://github.com/orca-solutions/garnet-guard/issues/63) |
+| A risky property added slowly, one small step per release | Each step is compared only with the release before | Per-package history, v2 [#64](https://github.com/orca-solutions/garnet-guard/issues/64) |
+
+Smaller notes that help a reviewer without a new rule (that only content rules applied, credential reads at import, release-notes wording) are tracked in [#50](https://github.com/orca-solutions/garnet-guard/issues/50).
 
 ## Part 2: protecting Garnet itself
 

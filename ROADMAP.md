@@ -1,6 +1,6 @@
 # Garnet Guard roadmap
 
-Months count from the repository going live. Version numbers are targets, not promises. Funding sequencing and go/no-go gates come from [plans/monetization.md](../plans/monetization.md); outreach steps from [plans/outreach.md](../plans/outreach.md). Grants, the fiscal host and the LLC are planned in [plans/funding.md](../plans/funding.md). The PyCon US 2027 talk adds two dated milestones (Nov 15 and Dec 1, 2026) and a Dec 15 proposal submission, and the public launch is set for the week of Dec 8, 2026 (DECISIONS 40), just before that submission; see [plans/pycon-2027.md](../plans/pycon-2027.md). Those dates assume the repo goes live in mid-October 2026 and slip with it. The normative 1.0 behavior is in [docs/SPEC-v1.md](docs/SPEC-v1.md).
+Months count from the repository going live. Version numbers are targets, not promises. Funding sequencing, go/no-go gates, outreach, grants, the fiscal host and the LLC come from the maintainer's planning documents, which are not in this repository. The PyCon US 2027 talk adds two dated milestones (Nov 15 and Dec 1, 2026) and a Dec 15 proposal submission, and the public launch is set for the week of Dec 8, 2026 (DECISIONS 40), just before that submission. Those dates assume the repo goes live in mid-October 2026 and slip with it. The normative 1.0 behavior is in [docs/SPEC-v1.md](docs/SPEC-v1.md).
 
 | Release | When | Theme |
 |---|---|---|
@@ -15,24 +15,26 @@ Months count from the repository going live. Version numbers are targets, not pr
 
 ## Month 0: repo creation
 
-- [ ] Create `orca-solutions/garnet-guard` **public from day one** (ADR-0011) and seed it from the founding documents
-- [ ] Turn on GitHub private vulnerability reporting, branch protection, signed commits
-- [ ] Reserve `garnet-guard` on PyPI with Trusted Publishing configured (ADR-0007)
-- [ ] GitHub Sponsors and `.github/FUNDING.yml` (per plans/funding.md)
-- [ ] Enable GitHub Discussions as the community space
+- [x] Create `orca-solutions/garnet-guard` **public from day one** (ADR-0011) and seed it from the founding documents
+- [x] Turn on GitHub private vulnerability reporting
+- [ ] Branch protection and required signed commits
+- [x] Reserve `garnet-guard` on PyPI with Trusted Publishing configured (ADR-0007); 0.1.0a1 is published
+- [ ] GitHub Sponsors and `.github/FUNDING.yml`
+- [ ] Enable GitHub Discussions as the community space (off for now; questions go to issues)
 
 ## Month 1 → 0.1: engine and PyPI
 
-- [ ] Repo skeleton: uv project, ruff, mypy (strict on `src/`), pytest, import-linter, CI, `uv.lock`, pinned Actions
-- [ ] Models and the public API in [docs/API.md](docs/API.md) §3
-- [ ] `safe_archive.py` and `net.py` with limits and fuzz tests, before any check reads an archive
-- [ ] Lockfile parsers: uv.lock, poetry.lock, pylock.toml, pinned requirements.txt
-- [ ] PyPI adapter: JSON API, Integrity API, attestation verification, cache
-- [ ] GitHub tag lookup; OSV lookup
-- [ ] Rules GRN-T001–T005, T007, T008, C001–C003, K001, E001–E005
-- [ ] Reporters: text, JSON, SARIF
-- [ ] First incident replays: lightning 2.6.2/2.6.3, elementary-data 0.23.3, litellm 1.82.7/1.82.8, telnyx 4.87.1/4.87.2, ultralytics, num2words, xinference, mistralai, guardrails-ai, durabletask, memoryos, mrmustard and the Hades packages (47 releases), reproducible from one command **by Nov 15, 2026** (PyCon proposal dependency)
-- [ ] **Reduced clean-corpus backtest by Dec 1, 2026:** top 100 PyPI packages × last 10 releases, warn rate per rule. Pulled forward from month 2 so the PyCon US 2027 proposal can cite a real false-positive number
+- [x] Repo skeleton: uv project, ruff, mypy (strict on `src/`), pytest, import-linter, CI, `uv.lock`, pinned Actions
+- [x] Models and the public API in [docs/API.md](docs/API.md) §3
+- [x] `safe_archive.py` and `net.py` with limits and their unit tests, before any check reads an archive
+- [ ] Fuzz tests for `safe_archive.py` and `net.py`
+- [x] Lockfile parsers: uv.lock, poetry.lock, pylock.toml, pinned requirements.txt
+- [x] PyPI adapter: JSON API, Integrity API, attestation verification, cache
+- [x] GitHub tag lookup; OSV lookup
+- [x] Rules GRN-T001–T005, T007, T008, C001–C003, K001, E001–E005, and GRN-C007 code-not-in-source
+- [x] Reporters: text, JSON, SARIF
+- [x] First incident replays: lightning 2.6.2/2.6.3, elementary-data 0.23.3, litellm 1.82.7/1.82.8, telnyx 4.87.1/4.87.2, ultralytics, num2words, xinference, mistralai, guardrails-ai, durabletask, memoryos, mrmustard and the Hades packages (47 releases), reproducible from one command **by Nov 15, 2026** (PyCon proposal dependency); four npm replays (chalk, debug, nx, @ctrl/tinycolor) were added
+- [x] **Reduced clean-corpus backtest by Dec 1, 2026:** top 100 PyPI packages × last 10 releases, warn rate per rule. Pulled forward from month 2 so the PyCon US 2027 proposal can cite a real false-positive number. Done as the 974-update corpus (the last 11 releases of the top 100), then widened to the last 11 releases of the top 1,000 PyPI and npm packages (18,181 updates)
 - [ ] Approach-check notes to three to five packaging and security experts on reading the Integrity API (outreach Draft A)
 
 **Exit:** both incidents produce a `warn` from rules that would have fired before any feed listed them; unit tests have no network access.
@@ -41,18 +43,55 @@ Months count from the repository going live. Version numbers are targets, not pr
 
 Launch means the replay write-up plus a working GitHub Action. The bar doesn't move: the replays are caught and the clean-corpus warn rate is met, using the Dec 1 reduced backtest as the launch number. If the bar isn't met, the launch slips, not the bar.
 
-- [ ] GitHub Action with a sticky PR comment and optional SARIF upload
-- [ ] Verify Dependabot token behavior; ship single-job and two-workflow examples
+- [x] GitHub Action with a sticky PR comment and optional SARIF upload
+- [x] Ship single-job and two-workflow examples
+- [ ] Verify Dependabot token behavior on a Dependabot-opened run
 - [x] Policy file with expiring ignores (SPEC §7)
-- [ ] Dogfood on Garnet's own repo and 5–10 friendly repos (outreach Draft B)
+- [x] Dogfood on Garnet's own repo
+- [ ] Dogfood on 5–10 friendly repos (outreach Draft B)
 - [ ] Opt-in interest list link in the README (not telemetry)
 - [ ] Docs site: quickstart, one page per rule, policy guide, comparison page
 - [ ] GitHub Marketplace listing for the Action
-- [ ] Launch write-up "We replayed the 2025–26 supply-chain attacks against Garnet Guard", then Show HN, Python Discourse, r/Python, Mastodon and Bluesky, newsletters (marketing owns the launch; see plans/marketing.md)
+- [ ] Launch write-up "We replayed the 2025–26 supply-chain attacks against Garnet Guard", then Show HN, Python Discourse, r/Python, Mastodon and Bluesky, newsletters (marketing owns the launch)
 - [ ] In launch week: apply to the GitHub Secure Open Source Fund (if a cohort is open) and to Open Source Collective as fiscal host (needs an org-owned repo, which `orca-solutions` satisfies, and a second admin by early December)
 - [ ] *Stretch, not a launch requirement:* npm adapter (package-lock, pnpm-lock, yarn.lock; npm provenance; lifecycle-script and `bin` diffs). `garnet diff npm:…`, provenance, tags and lifecycle-script diffs are built and backtested; the lockfile parsers and `bin` diffs are open.
 
 **Exit:** the launch success criteria in [VISION.md](VISION.md); the Action runs on real Dependabot and Renovate PRs.
+
+## Closing the evasion gaps
+
+A red-team pass over the rules on 2026-10-30 listed the ways a malicious release could still get past Garnet; [THREAT_MODEL.md](THREAT_MODEL.md#known-gaps-and-the-plan) has the condensed map. Every gap with a feasible check has an issue, sorted below (DECISIONS 81–84). Small, quiet checks go first. Each check lands as its own draft PR with fixtures, `garnet explain` text, and the 974-update clean corpus and incident replays before and after (plus the npm corpus for npm rules); a check that the corpus shows to be noisy ships at `info`. The PR closes its issue and ticks its line here.
+
+**Launch (0.2):**
+
+- [ ] GRN-C008 new-dependency: a dependency the trusted release didn't declare, a warning when it is new to the registry [#44](https://github.com/orca-solutions/garnet-guard/issues/44)
+- [ ] A wheel whose Python files differ from the release's other wheels, and GRN-T006 files-uploaded-late (pulled forward from 0.3) [#45](https://github.com/orca-solutions/garnet-guard/issues/45)
+- [ ] Widen the sensitive call set to process, loader and network APIs it doesn't list [#46](https://github.com/orca-solutions/garnet-guard/issues/46)
+- [ ] A new entry point, warning for groups other tools load automatically [#47](https://github.com/orca-solutions/garnet-guard/issues/47)
+- [ ] GRN-C004 new-binary, including sourceless `.pyc` files (pulled forward from 0.3) [#48](https://github.com/orca-solutions/garnet-guard/issues/48)
+- [ ] New startup files beyond `.pth`: `sitecustomize.py`, `usercustomize.py`, `.data/` files [#49](https://github.com/orca-solutions/garnet-guard/issues/49)
+- [ ] Evidence notes: "only content rules apply", credential reads at import, release-notes wording [#50](https://github.com/orca-solutions/garnet-guard/issues/50)
+- [ ] Policy guardrails: cap an ignore's expiry, note a policy edit in the same PR (high-risk path) [#51](https://github.com/orca-solutions/garnet-guard/issues/51)
+- [ ] JavaScript content rule for npm (moves to 0.3 if a dependency-free scan doesn't hold up) [#52](https://github.com/orca-solutions/garnet-guard/issues/52)
+- [ ] Package-level capability signal: measured on the corpus first, `info` at most until the numbers say otherwise [#53](https://github.com/orca-solutions/garnet-guard/issues/53)
+
+**After launch (0.3 to 1.0):**
+
+- [ ] GRN-C005 obfuscation and indirect lookups of sensitive APIs [#54](https://github.com/orca-solutions/garnet-guard/issues/54)
+- [ ] Import-time hook installation (`sys.meta_path`, `settrace`, `builtins`, metaclasses) [#55](https://github.com/orca-solutions/garnet-guard/issues/55)
+- [ ] A release published from a different ref or trigger than the trusted one [#56](https://github.com/orca-solutions/garnet-guard/issues/56)
+- [ ] Release workflow changed between the two attested commits (`info`) [#57](https://github.com/orca-solutions/garnet-guard/issues/57)
+- [ ] First look for newly added packages (`info`) [#58](https://github.com/orca-solutions/garnet-guard/issues/58)
+- [ ] Model loaders fed a bundled file, changed serialized files [#59](https://github.com/orca-solutions/garnet-guard/issues/59)
+- [ ] GRN-C006 sdist-wheel-mismatch [#60](https://github.com/orca-solutions/garnet-guard/issues/60)
+- [ ] Tag sanity: tagged commit on the default branch, tag older than the upload [#61](https://github.com/orca-solutions/garnet-guard/issues/61)
+- [ ] Trust rules on skipped intermediate releases, as SPEC §5.2 requires for 1.0 [#62](https://github.com/orca-solutions/garnet-guard/issues/62)
+- [ ] A scheduled check of a deployed environment, for updates that never reach a lockfile [#63](https://github.com/orca-solutions/garnet-guard/issues/63)
+
+**v2:**
+
+- [ ] Per-package release history: when each risky property first appeared [#64](https://github.com/orca-solutions/garnet-guard/issues/64)
+- [ ] Changed inputs to existing sensitive calls (new hosts, URLs, commands) [#65](https://github.com/orca-solutions/garnet-guard/issues/65)
 
 ## PyCon US 2027 proposal
 
@@ -62,7 +101,7 @@ Launch means the replay write-up plus a working GitHub Action. The bar doesn't m
 
 - [ ] Install wrapper: `garnet pip install …`, `garnet uv add|sync|lock`, `garnet npm install …`
 - [ ] Pre-install hooks for Claude Code and Codex (SPEC §10.4), announced as the second beat
-- [ ] Rules GRN-T006, C004–C006
+- [ ] Rules GRN-C005 and C006 ([#54](https://github.com/orca-solutions/garnet-guard/issues/54), [#60](https://github.com/orca-solutions/garnet-guard/issues/60)); GRN-T006 and C004 moved to the launch list in [Closing the evasion gaps](#closing-the-evasion-gaps)
 - [ ] npm adapter, if it didn't make the launch
 - [ ] Full backtest over the last ~20 releases of the top ~500 PyPI packages (January–February), extending the Dec 1 reduced run, plus the npm corpus; publish warn rate per rule and set the 1.0 target. These numbers feed the PyCon talk.
 
@@ -86,10 +125,10 @@ The theme is seeing more than two releases and more kinds of change, while keepi
 
 - **Per-package registry history baseline.** Compute "how this package has been published" from the last N releases on the registry, not just the previous one, so a one-off publisher change after 40 consistent releases stands out and a project that always varies doesn't. *Free in the engine (ADR-0009).*
 - **New signals:**
-  - *Source mismatch:* the sdist or tarball contains files that aren't in the tagged git tree (the xz-utils pattern). Static comparison of the archive with the tag, no build.
-  - *New dependency added:* a release suddenly depends on a new package, especially one that is young or has no provenance (the event-stream / flatmap-stream pattern).
+  - *Source mismatch:* the sdist or tarball contains files that aren't in the tagged git tree (the xz-utils pattern). Static comparison of the archive with the tag, no build. GRN-C007 (0.2) does this for the wheel's Python files; non-Python files and the sdist remain.
+  - *New dependency added:* moved to launch as GRN-C008 ([#44](https://github.com/orca-solutions/garnet-guard/issues/44)).
   - *Ownership change:* maintainers, collaborators or organization roles changed between releases, where the registry exposes it.
-  - *Entry-point and console-script changes* that shadow common commands.
+  - *Entry-point and console-script changes:* moved to launch ([#47](https://github.com/orca-solutions/garnet-guard/issues/47)).
 - **Stable plugin API.** Entry-point groups for third-party checks and ecosystems, with a compatibility promise.
 - **Shareable policy.** `extends` a policy file from another path or repository, so a team can reuse one policy across its own repos without the Garnet Guard App.
 - **More CI.** Documented recipes for GitLab CI, Buildkite and pre-commit; a container image.
