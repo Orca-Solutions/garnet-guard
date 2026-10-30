@@ -426,6 +426,47 @@ def test_widened_set_leaves_common_calls_alone() -> None:
         assert names(src) == set(), src
 
 
+def test_subprocess_values_that_start_nothing_are_not_in_the_set() -> None:
+    # Building subprocess's exceptions and results, or quoting a command line,
+    # runs nothing; the calls that start a process still count.
+    for src in (
+        "import subprocess\nraise subprocess.CalledProcessError(1, 'x')\n",
+        "from subprocess import TimeoutExpired\nraise TimeoutExpired('x', 1)\n",
+        "import subprocess as sp\nsp.SubprocessError()\n",
+        "import subprocess\nsubprocess.CompletedProcess(['x'], 0)\n",
+        "import subprocess\nsubprocess.list2cmdline(['a', 'b c'])\n",
+    ):
+        assert names(src) == set(), src
+    assert names("import subprocess\nsubprocess.run(['x'])\n") == {"subprocess.run"}
+    assert names("from subprocess import Popen as P\nP(['x'])\n") == {"subprocess.Popen"}
+    assert names("import subprocess\nsubprocess.check_output(['x'])\n") == {
+        "subprocess.check_output"
+    }
+
+
+def test_explain_names_the_subprocess_values_left_out() -> None:
+    from garnet_guard.facts.pyindex import sensitive_set
+
+    assert (
+        "subprocess.* except CalledProcessError, CompletedProcess, SubprocessError, "
+        "TimeoutExpired and list2cmdline, which start nothing"
+    ) in sensitive_set()
+
+
+def test_every_line_of_the_explained_set_starts_with_a_name_in_it() -> None:
+    # GRN-C012 never counts the first name of a line as the release's own.
+    import builtins
+    import sys
+
+    from garnet_guard.facts.pyindex import _THIRD_PARTY, sensitive_set
+
+    removed = {"imp", "telnetlib", "distutils"}
+    names = set(sys.stdlib_module_names) | set(dir(builtins)) | removed | _THIRD_PARTY
+    for line in sensitive_set():
+        head = line.split(".")[0].split(" ")[0]
+        assert head in names, line
+
+
 # The same objects under the module that defines them: one line per module.
 SAME_AS = [
     ("import builtins\nbuiltins.exec('1')\n", "builtins.exec"),
