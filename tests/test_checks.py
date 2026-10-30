@@ -12,6 +12,7 @@ from garnet_guard.models import (
     UnparsedWheelFile,
     UnsourcedFile,
     Verdict,
+    WheelDifference,
 )
 from tests.builders import prov, release
 
@@ -374,6 +375,32 @@ def test_the_other_wheels_of_a_first_wheel_are_read_once() -> None:
     result = run_checks(CHANGE, _sdist("1.0", SRC), cand)
     (e002,) = [f for f in result.findings if f.rule_id == "GRN-E002"]
     assert e002.title.endswith("compare with demo-1.1-py3-none-any.whl")
+
+
+def test_a_first_wheel_that_doesnt_parse_lowers_grn_c012_as_grn_e002_warns() -> None:
+    # GRN-E002 warns for the first wheel's changed copy, read against the
+    # trusted sdist, so GRN-C012's line for that file is listed at info.
+    py2 = "print 'hi'\n"
+    win = "demo-1.1-cp312-cp312-win_amd64.whl"
+    call = CallSite("os.system", 2)
+    cand = replace(
+        release(
+            "1.1",
+            {"demo/__init__.py": py2 + "# 1.1\n"},
+            sdist_files={**SRC, "demo/__init__.py": py2},
+        ),
+        wheel_differences=(
+            WheelDifference(
+                win, "Windows", "demo/__init__.py", True, (call,), read_copy_parsed=False
+            ),
+        ),
+        wheel_families=("any", "Windows"),
+    )
+    result = run_checks(CHANGE, _sdist("1.0", {**SRC, "demo/__init__.py": py2}), cand)
+    (c012,) = [f for f in result.findings if f.rule_id == "GRN-C012"]
+    assert c012.severity is Severity.INFO
+    assert "GRN-E002" in {f.rule_id for f in result.findings}
+    assert result.verdict is Verdict.WARN
 
 
 def test_setup_py_in_a_release_that_adds_an_sdist_counts_as_new() -> None:

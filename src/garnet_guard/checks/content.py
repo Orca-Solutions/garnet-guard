@@ -1442,7 +1442,9 @@ def wheels_differ(
         else:
             before.setdefault((w.family, w.path), set()).update(w.names)
     looked = _families_read(base)
-    _, reported, bad = _unparsed_new(base, cand)
+    # A first wheel beside an sdist is read against the trusted sdist in a view
+    # of its own (each_view), and that view is where GRN-E002 reports it.
+    _, reported, bad = _unparsed_new(base, _views(base, cand)[-1])
     warned = (
         {_site_name(p) for p in bad} if reported and reported.filename == read.filename else set()
     )
