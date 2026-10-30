@@ -229,7 +229,7 @@ class FileEntry:
     sha256: str
     kind: FileKind
     binary: str | None = None  # "ELF", "Mach-O" or "PE" when the bytes are native code
-    unchecked: bool = False  # a .pyc Python loads without checking it against its source
+    hash_based: bool = False  # a PEP 552 .pyc: Python never compares its code with its source
 
 
 @dataclass(frozen=True)

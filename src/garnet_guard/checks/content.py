@@ -9,6 +9,8 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import datetime
 
+from packaging.tags import Tag
+
 from ..models import (
     ArtifactFacts,
     CallSite,
@@ -25,6 +27,7 @@ from ..models import (
     Severity,
     UnparsedWheelFile,
 )
+from . import wheel_tags
 
 MAX_EVIDENCE = 25  # evidence lines per finding; the rest are counted, not listed
 # A wheel's <name>-<version>.data/purelib/ and platlib/ install into site-packages itself.
@@ -1540,15 +1543,46 @@ def late_wheels_not_compared(
 # GRN-C004: a compiled extension module is named for the module it provides,
 # tagged for the interpreter it was built for: ``name.cpython-312-x86_64-linux-gnu.so``,
 # ``name.abi3.so``, ``name.cp312-win_amd64.pyd`` (a ``.pyd`` is one even untagged).
-# A shared library is ``libname.so`` or ``libname.so.1``. mypyc's shared module
-# starts with a hash (``81d243bd2c585b0f4821__mypyc.cpython-313-...so``).
+# A shared library is ``libname.so`` or ``libname.so.1``; an untagged ``name.so``
+# counts as one too. mypyc's shared module starts with a hash
+# (``81d243bd2c585b0f4821__mypyc.cpython-313-...so``).
 _EXTENSION_MODULE = re.compile(r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_-]+\.so|(\.[A-Za-z0-9_-]+)?\.pyd)$")
-# Name parts that say a file is native code; ``libssl.so.3`` and
-# ``libfoo.so.debug`` count. Python's own file types say it is something else.
+# Extensions that say a file is native code. Besides libraries and executables:
+# ELF GPU code objects, NVIDIA's ``.cubin`` and AMD's ``.hsaco`` and ``.co``
+# (rocBLAS kernels, which torch's ROCm wheels bundle); Node.js addons
+# (``.node``), JNI and MATLAB libraries; and LLVM's linker, ``ld.lld``, which
+# pytorch-triton-rocm bundles. A CUDA ``.fatbin`` isn't ELF, so it needs no
+# entry. Python's own file types say a file is something else.
 _NATIVE_PARTS = frozenset(
-    {"so", "pyd", "dylib", "dll", "exe", "o", "obj", "bundle", "bin", "elf", "out", "sys", "ko"}
+    {
+        *("so", "pyd", "dylib", "dll", "exe", "o", "obj", "bundle", "bin", "elf", "out"),
+        *("sys", "ko", "cubin", "hsaco", "co", "node", "jnilib", "lld"),
+        *("mexa64", "mexmaci64", "mexmaca64", "mexw64"),
+    }
 )
+# A separate debug file is named for its library: ``libfoo.so.debug``.
+_DEBUG_PARTS = frozenset({"debug", "dbg"})
 _PYTHON_PARTS = frozenset({"py", "pyw", "pyi", "pth", "pyc"})
+# A cached .pyc is named for its source and the interpreter that compiled it
+# (``a.cpython-313.pyc``, ``a.cpython-313.opt-1.pyc``).
+_CACHED_PYC = re.compile(r"^[^.]+\.[A-Za-z0-9_-]+(\.opt-[0-9]+)?\.pyc$")
+# A version with a pre-release, post-release, dev or free-threading suffix, as
+# one part: ``13t`` (``python3.13t``), ``0rc1``, ``0b2``, ``1post1``, ``1dev0``.
+_SUFFIXED_VERSION = re.compile(r"[0-9]+(a|b|rc|t|post|dev)[0-9]*")
+# A CPython build's ABI tag: ``cp313``, ``cp313t`` (free-threaded), ``cp37m``
+# (before 3.8), ``d`` for a debug build.
+_CPYTHON_ABI = re.compile(r"cp3([0-9]+)([tdm]*)")
+_MANYLINUX = re.compile(r"manylinux_[0-9]+_[0-9]+_(\w+)")
+# CPython's platform triplet for a manylinux wheel's architecture, where it
+# isn't ``<arch>-linux-gnu``: ``.cpython-313-i386-linux-gnu.so`` in an ``i686`` wheel.
+_LINUX_TRIPLET = {
+    "i686": "i386-linux-gnu",
+    "armv6l": "arm-linux-gnueabihf",
+    "armv7l": "arm-linux-gnueabihf",
+    "ppc64": "powerpc64-linux-gnu",
+    "ppc64le": "powerpc64le-linux-gnu",
+}
+_ANY_PYTHON = frozenset({Tag("py3", "none", "any")})
 _WHEEL_DATA = re.compile(r"^[^/]+\.data/([^/]+)/")
 _LIBS_FOLDER = re.compile(r"^([^/]+)\.libs/")
 
@@ -1568,18 +1602,41 @@ def _install_key(path: str) -> str:
     return path
 
 
-def _named_as(path: str) -> str:
-    """What a file's name says it is: "native", "python", "other", or "" when
-    the name has no extension (as an executable usually doesn't). Version
-    numbers at the end don't count: ``libssl.so.3`` is named native."""
-    parts = posixpath.basename(path).lower().split(".")[1:]
-    while parts and parts[-1].isdigit():
+def _strip_versions(parts: list[str]) -> None:
+    """Drop a version at the end. A part that starts with a digit is one when
+    it is all digits (``so.3``), follows a part that is (``1.0.2k``,
+    ``1.2.3rc1``), reads as a version with a suffix (``13t``, ``0rc1``) or
+    isn't a word (``25.1-linux-x86_64``). ``7z``, ``3gp`` and ``3ds`` after a
+    name are extensions."""
+    while parts and parts[-1][:1].isdigit():
+        last = parts[-1]
+        version = last.isdigit() or not last.isalnum() or bool(_SUFFIXED_VERSION.fullmatch(last))
+        if not (version or (len(parts) > 1 and parts[-2].isdigit())):
+            return
         parts.pop()
+
+
+def _named_as(path: str) -> str:
+    """What a file's last extension says it is: "native", "python", "other",
+    or "" when the name has none (as an executable usually doesn't).
+
+    A version at the end doesn't count: ``libssl.so.3`` and ``libssl.so.1.0.2k``
+    are named native, ``tool-1.2.3rc1`` and ``python3.13t`` have no extension,
+    and ``data.7z`` is named as something else. A debug file named for its
+    library is named native, but a native part earlier in the name isn't
+    enough: ``logo.so.png`` says PNG.
+    """
+    parts = posixpath.basename(path).lower().split(".")[1:]
+    _strip_versions(parts)
+    if len(parts) > 1 and parts[-1] in _DEBUG_PARTS:
+        parts.pop()
+        _strip_versions(parts)
+        return "native" if parts and parts[-1] in _NATIVE_PARTS else "other"
     if not parts:
         return ""
     if parts[-1] in _PYTHON_PARTS:
         return "python"
-    return "native" if _NATIVE_PARTS.intersection(parts) else "other"
+    return "native" if parts[-1] in _NATIVE_PARTS else "other"
 
 
 def _native(f: FileEntry) -> bool:
@@ -1605,6 +1662,11 @@ def _os_family(tag: str) -> str:
     return "linux" if "linux" in tag else tag
 
 
+def _ships_compiled(rel: ReleaseFacts) -> bool:
+    """Whether a release has a wheel for some platform, read or not."""
+    return any(_platform_tag(a.filename) not in ("", "any") for a in rel.artifacts)
+
+
 def _natives_comparable(base: ReleaseFacts, b: ArtifactFacts, c: ArtifactFacts) -> bool:
     """Whether the trusted artifact shows what native code its release shipped
     where the new one's would install.
@@ -1612,34 +1674,120 @@ def _natives_comparable(base: ReleaseFacts, b: ArtifactFacts, c: ArtifactFacts) 
     It doesn't when the kinds differ (an sdist compiles its own), when the two
     wheels are for different operating systems, or when the trusted one is a
     pure-Python wheel read in place of compiled ones that don't fit this
-    machine. Both happen when the trusted release had no wheel for the
-    Python Garnet runs on: Garnet read pillow 10.3.0's macOS wheel and
-    frozenlist 1.4.1's pure-Python one.
+    machine, and the new one is compiled. Both happen when the trusted release
+    had no wheel for the Python Garnet runs on: Garnet read pillow 10.3.0's
+    macOS wheel and frozenlist 1.4.1's pure-Python one. Two pure-Python wheels
+    are what pip installs here on both sides, so they are compared.
     """
     if b.packagetype != c.packagetype:
         return False
     old, new = _platform_tag(b.filename), _platform_tag(c.filename)
     if old != "any":
         return _os_family(old) == _os_family(new)
-    return not any(_platform_tag(a.filename) not in ("", "any") for a in base.artifacts)
+    return new == "any" or not _ships_compiled(base)
 
 
-def _pyc_reason(f: FileEntry, key: str, prior: FileEntry | None, sources: set[str]) -> str | None:
-    """Why a new or changed ``.pyc`` is reported, or None when Python won't run it."""
+def _extension_suffixes(tag: Tag) -> frozenset[str]:
+    """The extension suffixes, such as ``.abi3.so``, that every Python
+    installing a wheel tag tries after a module's name: the
+    EXTENSION_SUFFIXES they all share.
+
+    On Linux and macOS: ``.so``; ``.abi3.so`` when only CPython with the GIL
+    installs the tag (an ``abi3`` or ``cp313`` ABI; a free-threaded build
+    doesn't try it); and the version-tagged suffix when the ABI names one
+    CPython build, on a manylinux or macOS platform
+    (``.cpython-313-x86_64-linux-gnu.so``, ``.cpython-313t-darwin.so``). On
+    Windows: ``.pyd``, and ``.cp313-win_amd64.pyd`` likewise. No suffix on
+    another platform, such as ``any``. A musllinux tag gets no tagged suffix:
+    CPython names that triplet ``linux-gnu`` or ``linux-musl``, depending on
+    its version and build.
+    """
+    abi = _CPYTHON_ABI.fullmatch(tag.abi)
+    family = _os_family(tag.platform)
+    if family == "windows":
+        if abi is None:
+            return frozenset({".pyd"})
+        free_threaded = "t" if "t" in abi[2] else ""
+        return frozenset({".pyd", f".cp3{abi[1]}{free_threaded}-{tag.platform}.pyd"})
+    if family not in ("linux", "macos"):
+        return frozenset()
+    found = {".so"}
+    if tag.abi == "abi3" or (abi is not None and "t" not in abi[2]):
+        found.add(".abi3.so")
+    if abi is not None and family == "macos":
+        found.add(f".cpython-3{abi[1]}{abi[2]}-darwin.so")
+    elif abi is not None and (linux := _MANYLINUX.fullmatch(tag.platform)):
+        triplet = _LINUX_TRIPLET.get(linux[1], f"{linux[1]}-linux-gnu")
+        found.add(f".cpython-3{abi[1]}{abi[2]}-{triplet}.so")
+    return frozenset(found)
+
+
+def _ahead_of_pyc(a: ArtifactFacts) -> set[str]:
+    """The modules (``demo/a``) that every Python installing this artifact
+    finds ahead of a ``.pyc`` of their name, under the names its path finder
+    tries in order: a package (``demo/a/__init__`` plus ``.py``, ``.pyc`` or an
+    extension suffix), then an extension module (``demo/a`` plus an extension
+    suffix), then ``demo/a.py`` (and ``.pyw`` in a Windows wheel).
+
+    An extension suffix counts only when every tag of the wheel has it (see
+    ``_extension_suffixes``): ``.cpython-313-x86_64-linux-gnu.so`` only in a
+    wheel for that one CPython build and platform, none in a pure-Python wheel
+    or an sdist. No other name comes first: ``a.x.so`` and
+    ``a/__init__.cpython-313.pyc`` aren't tried."""
+    wheel = wheel_tags.parse(a.filename)
+    tags = wheel.tags if wheel is not None else _ANY_PYTHON
+    extensions = frozenset.intersection(*(_extension_suffixes(t) for t in tags))
+    windows = all(_os_family(t.platform) == "windows" for t in tags)
+    sources = (".py", ".pyw") if windows else (".py",)
+    found: set[str] = set()
+    for f in a.files:
+        folder, name = posixpath.split(_install_key(_installed(a, f.path)))
+        stem, dot, rest = name.partition(".")
+        if not stem or not dot:
+            continue
+        suffix = dot + rest
+        module = suffix in sources or suffix in extensions
+        if module:
+            found.add(posixpath.join(folder, stem))
+        if stem == "__init__" and (module or suffix == ".pyc"):
+            found.add(folder)
+    return found
+
+
+def _pyc_reason(
+    f: FileEntry,
+    key: str,
+    prior: FileEntry | None,
+    sources: set[str],
+    ahead: set[str],
+    lost: str | None,
+) -> str | None:
+    """Why a ``.pyc`` is reported, or None when Python won't run it in place of
+    readable source, or ran it already in the trusted release. ``lost`` names
+    the ``.py`` of that name the trusted release shipped, when the new one
+    removes it."""
     folder, name = posixpath.split(key)
-    if posixpath.basename(folder) == "__pycache__":
-        # Python reads a cached .pyc only for the source it was compiled from,
-        # and checks it against that source unless the file says not to.
+    if posixpath.basename(folder) == "__pycache__" and _CACHED_PYC.match(name):
+        # Python reads a cached .pyc only for the source it was compiled from.
+        # A hash-based one is never compared with that source's code: Python
+        # checks at most the hash in its header, which the release supplies.
         source = posixpath.join(posixpath.dirname(folder), name.split(".")[0] + ".py")
-        if not f.unchecked or source not in sources:
+        if not f.hash_based or source not in sources:
             return None
         return (
-            f"compiled bytecode ({f.size:,} bytes) that Python loads in place of "
-            f"{source} without checking it against that file"
+            f"hash-based bytecode ({f.size:,} bytes) that Python can load in place of "
+            f"{source} without comparing its code with that file"
         )
-    if "__pycache__" in key.split("/") or prior is not None or key[:-1] in sources:
+    # Any other .pyc, in __pycache__ or not, imports as a module of its own
+    # name when Python finds nothing ahead of it. A name with another dot
+    # never imports: pytest's own cache, test_x.cpython-313-pytest-8.4.1.pyc,
+    # carries an extra part after the interpreter's tag.
+    if "." in name[:-4] or key[:-4] in ahead:
         return None
-    return f"compiled bytecode ({f.size:,} bytes) with no source beside it"
+    what = f"compiled bytecode ({f.size:,} bytes) with no source beside it"
+    if lost is not None:
+        return f"{what}; {lost}"
+    return None if prior is not None else what
 
 
 def new_binary(
@@ -1647,14 +1795,18 @@ def new_binary(
 ) -> Iterator[RawFinding]:
     """GRN-C004: the candidate adds native code or bytecode that hides from the rules.
 
-    Warned: native bytes under a name that says otherwise (a DLL named
-    ``.py``), new or changed; any new native file when the trusted release
-    shipped none; a new sourceless ``.pyc``, which Python imports when no
-    ``.py`` of that name exists; and a new or changed unchecked ``.pyc`` in
-    ``__pycache__``, which Python loads in place of its source. A new shared
-    library or executable in a folder that held no native code, in a release
-    that already shipped some, is reported at info. New extension modules in
-    a release that already had some, and rebuilt binaries, are not reported.
+    Warned: native bytes under a name whose last extension says otherwise (a
+    DLL named ``.py``), new or changed; any native file when the trusted
+    release shipped none, new or where a file that wasn't native was; a
+    sourceless ``.pyc``, which Python imports unless a package, extension
+    module or ``.py`` of that name comes first on every Python the wheel
+    installs on, new or whose ``.py`` the trusted release had; and a new or
+    changed hash-based ``.pyc`` in ``__pycache__``, which Python loads in
+    place of its source without comparing its code. A new shared library or
+    executable in a folder that held no native code, in a release that
+    already shipped some, is reported at info. New extension modules in a
+    release that already had some, rebuilt binaries and new ones in a folder
+    that already held native code are not reported.
     """
     if base is None:
         return
@@ -1665,33 +1817,49 @@ def new_binary(
     native_dirs = {posixpath.dirname(k) for k, f in old.items() if _native(f)}
     comparable = _natives_comparable(base, b, c)
     sources = {_install_key(_installed(c, f.path)) for f in c.files if f.kind == "py"}
+    ahead = _ahead_of_pyc(c)
+    old_sources = {k for k, f in old.items() if f.kind == "py"}
     found: list[tuple[bool, str, Evidence]] = []
     changed = False
+    unsourced = 0
     for f in c.files:
         key = _install_key(_installed(c, f.path))
         prior = old.get(key)
-        if prior is not None and prior.sha256 == f.sha256:
+        lost = None
+        if f.kind == "pyc" and key[:-1] in old_sources and key[:-1] not in sources:
+            lost = f"{base.version} shipped {key[:-1]}"
+        # An unchanged .pyc whose .py was removed may now run in its place.
+        unchanged = prior is not None and prior.sha256 == f.sha256
+        if unchanged and (lost is None or f.binary is not None):
             continue
         name = posixpath.basename(f.path)
         strong = True
         if f.binary is not None and _named_as(name) in ("python", "other"):
             why = f"{_what(f)} under the name {name}"
         elif _native(f):
-            if prior is not None or not comparable:
+            if (prior is not None and _native(prior)) or not comparable:
                 continue
             if not native_dirs:
-                had = f"{base.version} shipped" if b.packagetype != "sdist" else f"{b.filename} had"
+                # A release with compiled wheels shipped native code even when
+                # the wheel read has none.
+                if b.packagetype == "sdist" or _ships_compiled(base):
+                    had = f"{b.filename} had"
+                else:
+                    had = f"{base.version} shipped"
                 why = f"{_what(f)}; {had} no native code"
             elif _EXTENSION_MODULE.match(name) or posixpath.dirname(key) in native_dirs:
                 continue
             else:
                 strong = False
                 why = f"{_what(f)} in a folder that held no native code in {base.version}"
-        elif f.kind == "pyc" and (reason := _pyc_reason(f, key, prior, sources)) is not None:
+        elif f.kind == "pyc" and (reason := _pyc_reason(f, key, prior, sources, ahead, lost)):
             why = reason
         else:
             continue
-        changed = changed or prior is not None
+        if unchanged:
+            unsourced += 1
+        else:
+            changed = changed or prior is not None
         evidence = Evidence("file", f"{f.path}: {why}", path=f.path, sha256=f.sha256)
         found.append((strong, f.path, evidence))
     if not found:
@@ -1699,7 +1867,11 @@ def new_binary(
     # The files that hide code first, then the rest, each by path.
     found.sort(key=lambda t: (not t[0], t[1]))
     n = len(found)
-    if changed:
+    if unsourced == n:
+        title = f"{cand.version} removes the source of {n} .pyc file(s), so Python imports the bytecode instead"
+    elif unsourced:
+        title = f"{cand.version} adds, changes or removes the source of {n} file(s) of native code or bytecode"
+    elif changed:
         title = f"{cand.version} adds or changes {n} file(s) of native code or bytecode"
     else:
         title = f"{cand.version} adds {n} file(s) of native code or bytecode that {base.version} didn't have"

@@ -166,16 +166,19 @@ _DOCS: tuple[RuleDoc, ...] = (
         "diff",
         W,
         "The new version adds native code or bytecode the rules can't read: native code under a "
-        "name that says otherwise (a DLL named .py), any native code when the trusted release "
-        "shipped none, a .pyc with no source beside it, or an unchecked .pyc that Python loads "
-        "in place of its source. A new library in a new folder of a release that already "
-        "shipped native code is reported at info.",
+        "name whose last extension says otherwise (a DLL named .py), any native code when the "
+        "trusted release shipped none, a .pyc Python imports with no source beside it, or a "
+        "hash-based .pyc that Python loads in place of its source without comparing its code. A "
+        "new library in a new folder of a release that already shipped native code is reported "
+        "at info.",
         "Content rules read Python source. A payload compiled into a library, or shipped as "
         "bytecode, is invisible to them, and Python loads both. num2words 0.5.15 shipped a "
         "Windows DLL named _build.py and loaded it at import.",
         "Find out why the release needs the file: a new compiled module should appear in the "
         "project's repository, in its build configuration and the CI that builds it. If nothing "
-        "there explains a binary, or the file's name hides what it is, don't merge.",
+        "there explains a binary, or the file's name hides what it is, don't merge. Bytecode in "
+        "__pycache__ can be left over from a build, but Python may run it rather than the .py "
+        "beside it: ask the maintainers to drop it from the wheel.",
     ),
     RuleDoc(
         "GRN-C007",

@@ -114,11 +114,28 @@ def native_format(body: bytes) -> str | None:
     return None
 
 
-def unchecked_pyc(body: bytes) -> bool:
-    """Whether a ``.pyc`` is hash-based and unchecked (PEP 552, flags word set
-    to 1): Python loads it from ``__pycache__`` in place of the source beside
-    it without comparing the two."""
-    return len(body) >= 16 and (int.from_bytes(body[4:8], "little") & 3) == 1
+# The magic numbers of Pythons that read a PEP 552 flags word: 3.7a4 (3392)
+# onward. Python 2's start at 20121.
+_PEP552_MAGIC = range(3392, 20000)
+
+
+def hash_based_pyc(body: bytes) -> bool:
+    """Whether a ``.pyc`` is hash-based (PEP 552, flags word 1 or 3): Python
+    loads it from ``__pycache__`` in place of the source beside it without
+    comparing its code with that source. Unchecked (1), it doesn't look at
+    the source; checked (3), it compares only the source's hash with the one
+    in the file's own header, which anyone can compute from the source.
+
+    Before 3.7 that word held the source's timestamp, so the magic number is
+    checked first. With bit 0 clear (0 or 2) the file is timestamp-based, and
+    Python refuses a value above 3.
+    """
+    return (
+        len(body) >= 16
+        and body[2:4] == b"\r\n"
+        and int.from_bytes(body[0:2], "little") in _PEP552_MAGIC
+        and int.from_bytes(body[4:8], "little") in (1, 3)
+    )
 
 
 def _kind(path: str, body: bytes) -> FileKind:
@@ -226,7 +243,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                     digest,
                     kind,
                     native_format(body),
-                    unchecked=kind == "pyc" and unchecked_pyc(body),
+                    hash_based=kind == "pyc" and hash_based_pyc(body),
                 )
             )
             site = rel if sdist else site_path(rel)

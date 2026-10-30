@@ -132,6 +132,12 @@ def _sourced(rel: ReleaseFacts, *unmatched: UnsourcedFile) -> ReleaseFacts:
     return replace(rel, artifacts=(art, *rel.artifacts[1:]))
 
 
+def _wheel_tag(rel: ReleaseFacts, tag: str) -> ReleaseFacts:
+    """``rel`` with its wheel named for ``tag`` (``cp39-abi3-manylinux_2_28_x86_64``)."""
+    art = replace(rel.artifacts[0], filename=f"demo-{rel.version}-{tag}.whl", wheel_tag=tag)
+    return replace(rel, artifacts=(art, *rel.artifacts[1:]))
+
+
 UPLOADED = datetime(2026, 9, 1, tzinfo=UTC)
 
 
@@ -919,6 +925,201 @@ def _rows() -> list[Row]:
                 **PKG,
                 "demo/a.py": "",
                 "demo/__pycache__/a.cpython-313.pyc": b"\xcb\r\r\n\x01" + b"\0" * 11,
+            },
+        ),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C004",
+        "a checked hash-based .pyc, whose header hash is all Python compares",
+        release("1.0", {**PKG, "demo/a.py": ""}),
+        release(
+            "1.1",
+            {
+                **PKG,
+                "demo/a.py": "",
+                "demo/__pycache__/a.cpython-313.pyc": b"\xcb\r\r\n\x03" + b"\0" * 11,
+            },
+        ),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C004",
+        "a .pyc that loses the .py Python loaded in its place",
+        release("1.0", {**PKG, "demo/a.py": "", "demo/a.pyc": b"\xcb\r\r\n" + b"\0" * 12}),
+        release("1.1", {**PKG, "demo/a.pyc": b"\xcb\r\r\n" + b"\0" * 13}),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C004",
+        "a script replaced by an executable in a release with no native code",
+        release("1.0", {**PKG, "demo/bin/helper": "#!/bin/sh\necho hi\n"}),
+        release("1.1", {**PKG, "demo/bin/helper": ELF}),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C004",
+        "native code whose last extension isn't native (.bin.dat)",
+        release("1.0", {**PKG, "demo/_speed.cpython-313-x86_64-linux-gnu.so": ELF}),
+        release(
+            "1.1",
+            {**PKG, "demo/_speed.cpython-313-x86_64-linux-gnu.so": ELF, "demo/_build.bin.dat": ELF},
+        ),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C004",
+        "native code named as a 7-Zip archive (.7z), not a version",
+        release("1.0", {**PKG, "demo/_speed.cpython-313-x86_64-linux-gnu.so": ELF}),
+        release(
+            "1.1",
+            {**PKG, "demo/_speed.cpython-313-x86_64-linux-gnu.so": ELF, "demo/_assets.7z": ELF},
+        ),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C004",
+        "pytest's assertion cache, which Python never imports",
+        release("1.0", {**PKG, "demo/tests/test_x.py": ""}),
+        release(
+            "1.1",
+            {
+                **PKG,
+                "demo/tests/test_x.py": "",
+                "demo/tests/__pycache__/test_x.cpython-311-pytest-8.0.0.pyc": b"\xcb\r\r\n"
+                + b"\0" * 12,
+            },
+        ),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C004",
+        "a sourceless .pyc beside a name Python doesn't try for it (evil.x.so)",
+        release("1.0", {**PKG, "demo/_speed.cpython-313-x86_64-linux-gnu.so": ELF}),
+        release(
+            "1.1",
+            {
+                **PKG,
+                "demo/_speed.cpython-313-x86_64-linux-gnu.so": ELF,
+                "demo/evil.x.so": ELF,
+                "demo/evil.pyc": b"\xcb\r\r\n" + b"\0" * 12,
+            },
+        ),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C004",
+        "a sourceless .pyc beside an extension name for one CPython, in an abi3 wheel",
+        _wheel_tag(
+            release("1.0", {**PKG, "demo/_rust.abi3.so": ELF}), "cp39-abi3-manylinux_2_28_x86_64"
+        ),
+        _wheel_tag(
+            release(
+                "1.1",
+                {
+                    **PKG,
+                    "demo/_rust.abi3.so": ELF,
+                    "demo/evil.cpython-312-x86_64-linux-gnu.so": ELF,
+                    "demo/evil.pyc": b"\xcb\r\r\n" + b"\0" * 12,
+                },
+            ),
+            "cp39-abi3-manylinux_2_28_x86_64",
+        ),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C004",
+        "a sourceless .pyc beside a tagged extension name in a pure wheel after a compiled one",
+        _wheel_tag(
+            release("1.0", {**PKG, "demo/_speed.cpython-313-x86_64-linux-gnu.so": ELF}),
+            "cp313-cp313-manylinux_2_17_x86_64",
+        ),
+        release(
+            "1.1",
+            {
+                **PKG,
+                "demo/evil.cpython-399.so": b"",
+                "demo/evil.pyc": b"\xcb\r\r\n" + b"\0" * 12,
+            },
+        ),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C004",
+        "a .py turned into an abi3 extension module, beside a .pyc Python still doesn't import",
+        _wheel_tag(
+            release(
+                "1.0",
+                {
+                    **PKG,
+                    "demo/_rust.abi3.so": ELF,
+                    "demo/a.py": "",
+                    "demo/a.pyc": b"\xcb\r\r\n" + b"\0" * 12,
+                },
+            ),
+            "cp39-abi3-manylinux_2_28_x86_64",
+        ),
+        _wheel_tag(
+            release(
+                "1.1",
+                {
+                    **PKG,
+                    "demo/_rust.abi3.so": ELF,
+                    "demo/a.abi3.so": ELF,
+                    "demo/a.pyc": b"\xcb\r\r\n" + b"\0" * 12,
+                },
+            ),
+            "cp39-abi3-manylinux_2_28_x86_64",
+        ),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C004",
+        "a rebuilt free-threaded interpreter, python3.13t, named for its version",
+        release(
+            "1.0",
+            {
+                **PKG,
+                "demo/_speed.cpython-313-x86_64-linux-gnu.so": ELF,
+                "demo/bin/python3.13t": ELF,
+            },
+        ),
+        release(
+            "1.1",
+            {
+                **PKG,
+                "demo/_speed.cpython-313-x86_64-linux-gnu.so": ELF + b"\1",
+                "demo/bin/python3.13t": ELF + b"\1",
+            },
+        ),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C004",
+        "a .py turned into a package, beside a .pyc Python still doesn't import",
+        release("1.0", {**PKG, "demo/a.py": "", "demo/a.pyc": b"\xcb\r\r\n" + b"\0" * 12}),
+        release("1.1", {**PKG, "demo/a/__init__.py": "", "demo/a.pyc": b"\xcb\r\r\n" + b"\0" * 12}),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C004",
+        "a rebuilt GPU kernel (.cubin) and LLVM linker (ld.lld)",
+        release("1.0", {**PKG, "demo/kernels/gemm.cubin": ELF, "demo/bin/ld.lld": ELF}),
+        release(
+            "1.1", {**PKG, "demo/kernels/gemm.cubin": ELF + b"\1", "demo/bin/ld.lld": ELF + b"\1"}
+        ),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C004",
+        "a timestamp-based .pyc beside its source",
+        release("1.0", {**PKG, "demo/a.py": ""}),
+        release(
+            "1.1",
+            {
+                **PKG,
+                "demo/a.py": "",
+                "demo/__pycache__/a.cpython-313.pyc": b"\xcb\r\r\n" + b"\0" * 12,
             },
         ),
         eco=PYPI,
