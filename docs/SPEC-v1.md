@@ -130,7 +130,7 @@ Default severities are what applies with no policy file.
 | GRN-T008 | hash-mismatch | absolute | A downloaded artifact doesn't match its published hash. | block |
 | GRN-C001 | new-pth-file | diff | The candidate contains a `.pth` file at a path the baseline did not have, or an existing `.pth` file gained executable lines (lines starting with `import`). | warn |
 | GRN-C002 | new-build-hook | diff | A new or changed `setup.py` adds calls in the §6.3 sensitive set; the build backend changed to a non-allowlisted backend or an in-tree backend; or an npm `preinstall`/`install`/`postinstall` script was added or changed. (`prepare` was dropped on 2026-10-29: npm doesn't run it for a published tarball, and every `prepare` change in the top-200 backtest was a build-tool switch.) | warn |
-| GRN-C003 | new-import-time-exec | diff | A module's top level (including code reached from `__init__.py` at import) gains a call in the §6.3 sensitive set. It reports at info, as a separate finding, in three cases: in test files (`tests/`, a top-level `test/`, `test_*.py`, `conftest.py`) or reached only from one, unless a non-test module imports the file (directly or through other test modules) or an entry point names it; in sdist files outside the package (`docs/conf.py`, `examples/`) or reached only from one; and for a function import-time code only hands to a call not known to run it (`functools.partial(f)`). A call a package module reaches at import is reported once, at warn. | warn (info in test files and the other two cases) |
+| GRN-C003 | new-import-time-exec | diff | A module's top level (including code reached from `__init__.py` at import) gains a call in the §6.3 sensitive set. It reports at info, as a separate finding, in three cases: in test files (`tests/`, a top-level `test/`, `test_*.py`, `conftest.py`) or reached only from one, unless a non-test module imports the file (directly or through other test modules) or an entry point names it; in sdist files outside the package (`docs/conf.py`, `examples/`) or reached only from one; and for a function import-time code only hands to a call not known to run it (`functools.partial(f)`). A call a package module reaches at import is reported once, at warn. New reads at import of an environment variable that holds a credential or says the code runs in CI, of the whole environment, or of a cloud metadata address are reported in a separate finding at info (docs/rules/GRN-C003.md). | warn (info in test files and the other two cases) |
 | GRN-C004 | new-binary | diff | The candidate adds a native executable or shared library that is not a compiled extension module of a package path present in the baseline, or the release changes from pure-Python to containing binaries. | warn |
 | GRN-C005 | obfuscated-blob | diff | A changed file gains a string or bytes literal over 2,048 characters with Shannon entropy over 4.5 bits per character, or any such literal passed to `exec`, `eval`, `compile`, `base64.*decode`, `zlib.decompress` or `marshal.loads`. | warn |
 | GRN-C006 | sdist-wheel-mismatch | diff | The selected wheel contains a `.py` or `.pth` file with no counterpart in the sdist, when the baseline had none. | warn |
@@ -224,13 +224,16 @@ Human-readable, grouped by change, worst first. Colors only on a TTY. All packag
       "baseline": "2.6.1",
       "candidate": "2.6.2",
       "verdict": "warn",
-      "findings": [ { "rule_id": "GRN-T001", "...": "…" } ]
+      "findings": [ { "rule_id": "GRN-T001", "...": "…" } ],
+      "notes": ["2.6.1 has no attestation and no git tag in github.com/example/examplelib, so GRN-T001 to GRN-T005, which compare how releases were published, had nothing to compare with"]
     }
   ]
 }
 ```
 
 `policy_changes` is present only with `garnet check --git-base REF --policy-change PATH`, when the policy file at `PATH` differs from the one at `REF`: one entry per file, each change a line, those that loosen the policy (a new or extended ignore, a rule lowered or turned off, `fail_on` raised, a limit raised, the file deleted) first and prefixed `loosens:`. It never changes the verdict; the policy that applied is the one in `policy`.
+
+`notes` is present only when there is something to say about what the checks could compare. Today that is one case: the baseline has no attestation and no git tag (Garnet looked and found neither), so GRN-T001 to GRN-T005 had nothing to compare with. A note never changes a verdict; the text report prints it after the change's findings and the PR comment shows it in the change's row.
 
 The schema is published with each release. Within 1.x, fields may be added but not removed or retyped. (The URL names the schema; garnetguard.dev doesn't serve the file yet.)
 

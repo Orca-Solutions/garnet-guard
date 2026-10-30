@@ -379,7 +379,7 @@ def new_import_time_exec(
     live_tests = _live_test_modules(c)
     module_of = {m.path: m.module for m in c.modules}
     outside = _outside_package(c, cand.package)
-    kinds = ("module", "test", "outside", "handed")
+    kinds = ("module", "test", "outside", "handed", "read")
     # per kind: evidence, the files counted in the title, and the trusted
     # copies ast couldn't parse (a Python 2 wheel), module -> path
     found: dict[str, tuple[list[Evidence], set[str], dict[str, str]]] = {
@@ -423,6 +423,10 @@ def new_import_time_exec(
                 kind = "module"
             if origin is not None and kind != "handed" and (from_test or from_outside):
                 counted = module_of.get(origin, origin)
+            if s.read:
+                if kind != "module":
+                    continue  # a read only a test, an sdist extra or a handed function makes
+                kind = "read"
             sites.append((s, kind, counted))
         # A site some package module reaches at import is a warn, whatever
         # else reaches it; a site several files reach is listed once.
@@ -441,10 +445,11 @@ def new_import_time_exec(
             where = "new module " if m.module not in old and m.path not in old_unparsed else ""
             if m.path in old_unparsed:
                 unread[m.module] = m.path
+            verb = "reads" if s.read else "calls"
             evidence.append(
                 Evidence(
                     "file",
-                    f"{where}{m.path}:{s.line} calls {s.name}{via}",
+                    f"{where}{m.path}:{s.line} {verb} {s.name}{via}",
                     path=m.path,
                     line=s.line,
                 )
@@ -479,6 +484,16 @@ def new_import_time_exec(
                     "note",
                     "these files ship in the sdist but not in the installed package, "
                     "so they run only when run on their own; reported at info",
+                ),
+            )
+        elif kind == "read":
+            title = f"{cand.version} reads credentials or CI settings at import in {n} module(s)"
+            note = (
+                Evidence(
+                    "note",
+                    "a read is not a call, so this is reported at info; code that runs only "
+                    "in CI or only when a token is set is how credential stealers stay quiet "
+                    "on a developer's machine",
                 ),
             )
         elif kind == "handed":

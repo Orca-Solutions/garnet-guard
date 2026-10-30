@@ -63,6 +63,10 @@ reaches at import is reported once, at `warn`, whatever else reaches it:
   `executor.submit(f)`, is reported at `warn` as reached at import, which is how lightning
   2.6.2 and mrmustard 0.7.4 ran their payloads.
 
+A fourth finding at `info` lists what the same import-time code newly
+[reads that a credential stealer reads](#credential-and-ci-reads): a read is not a call, but
+it says where a payload would look and when it would run.
+
 ## Why it matters
 
 Top-level module code runs the moment anything imports the package, including your test
@@ -105,9 +109,14 @@ What it missed in the replay, and what changed:
 ## How to resolve it
 
 1. Read the flagged lines.
-2. Ask whether the release notes explain them. Some libraries legitimately probe the
-   environment at import (for example, checking a GPU driver version with `subprocess`).
-3. If the call is expected, merge and add an ignore for this version.
+2. Find them in the repository: the commit on the default branch that added them, at the
+   release's tag. Some libraries legitimately probe the environment at import (for example,
+   checking a GPU driver version with `subprocess`). The release notes alone don't settle it:
+   whoever published the release wrote them, an attacker included.
+3. Read any condition around the call as evidence, not reassurance. Code that runs only in CI,
+   or only when a token is set, is how a credential stealer stays quiet on a developer's
+   machine and runs where the secrets are.
+4. If the call is expected, merge and add an ignore for this version.
 
 ## Allowlisting
 
@@ -120,7 +129,7 @@ report notes that it expired.
 package = "examplelib"
 versions = "==2.6.2"
 rules = ["GRN-C003"]
-reason = "probes nvidia-smi at import, see release notes for 2.6.2"
+reason = "probes nvidia-smi at import, added in example/examplelib#512"
 until = "2027-06-30"
 ```
 
@@ -150,6 +159,25 @@ any code, to one of these ([SPEC §6.3](../SPEC-v1.md#63-sensitive-call-set)):
 - `marshal.loads`, `pickle.loads`
 
 The set is versioned with the rule. `garnet explain GRN-C003` prints the set your version uses.
+
+## Credential and CI reads
+
+Code that runs at import and reads one of these, where the trusted version's module didn't, is
+listed in its own finding at `info` (read set `2026-10-a`):
+
+- an environment variable named `CI` or `GOOGLE_APPLICATION_CREDENTIALS`, starting with
+  `GITHUB_`, `ACTIONS_`, `AWS_`, `AZURE_`, `GCP_`, `NPM_`, `PYPI_` or `TWINE_`, or ending in
+  `_TOKEN`, `_SECRET`, `_SECRET_KEY`, `_API_KEY`, `_ACCESS_KEY` or `_PASSWORD`, read with
+  `os.environ[...]`, `os.environ.get`, `os.getenv` or `"CI" in os.environ`;
+- the whole environment: `dict(os.environ)`, `os.environ.copy()`, `{**os.environ}`, or
+  `os.environ` passed to a call (but not as `env=`, which only hands it to a process);
+- a cloud metadata address: `169.254.169.254`, `169.254.170.2`, `fd00:ec2::254`,
+  `metadata.google.internal` or `100.100.100.200`.
+
+Reads in test files, in sdist files outside the package and in functions only handed to a
+call are left out, as are writes (`os.environ["CI"] = "1"`). The finding never raises a
+verdict on its own. Next to a new sensitive call it shows the condition the call runs under:
+malware that runs only in CI, where the secrets are, reads `CI` or `GITHUB_ACTIONS` first.
 
 ## See also
 

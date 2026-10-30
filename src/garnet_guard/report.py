@@ -40,6 +40,7 @@ def to_text(report: Report, *, color: bool = False) -> str:
             lines.append("  no findings")
         for f in r.findings:
             lines.extend(_finding_text(f, color))
+        lines.extend(escape(f"  note: {n}") for n in r.notes)
         lines.append("")
     if report.policy.source:
         lines.append(escape(f"policy: {report.policy.source}"))
@@ -102,18 +103,19 @@ def to_json(report: Report) -> str:
             if f.suppressed_by:
                 d["suppressed_by"] = _ignore(f.suppressed_by)
             findings.append(_clean(d))
-        changes.append(
-            {
-                "ecosystem": r.change.ecosystem,
-                "package": r.change.package,
-                "baseline": r.change.baseline,
-                "candidate": r.change.candidate,
-                "lockfile": r.change.lockfile,
-                "line": r.change.line,
-                "verdict": r.verdict.value,
-                "findings": findings,
-            }
-        )
+        change: dict[str, Any] = {
+            "ecosystem": r.change.ecosystem,
+            "package": r.change.package,
+            "baseline": r.change.baseline,
+            "candidate": r.change.candidate,
+            "lockfile": r.change.lockfile,
+            "line": r.change.line,
+            "verdict": r.verdict.value,
+            "findings": findings,
+        }
+        if r.notes:
+            change["notes"] = list(r.notes)
+        changes.append(change)
     policy = None
     if report.policy.source:
         policy = {

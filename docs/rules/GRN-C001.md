@@ -59,7 +59,9 @@ is the only pair, says so in the finding, and reports `embiggen-setup.pth`.
 
 1. Read the `.pth` file named in the evidence.
 2. Legitimate uses exist: editable installs, namespace package helpers, and tools that
-   configure coverage or instrumentation at startup. The release notes usually say so.
+   configure coverage or instrumentation at startup. Look for the file, or the code that
+   generates it, in the repository at the release's tag. The release notes alone don't settle
+   it: whoever published the release wrote them, an attacker included.
 3. A `.pth` line that decodes, downloads or executes anything is a reason not to merge.
    Report it to the project and the registry.
 4. If the file is expected, merge and add an ignore for the versions that ship it.

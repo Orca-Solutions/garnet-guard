@@ -14,6 +14,7 @@ from . import policy as pol
 from .checks import ALL_CHECKS, DOCS
 from .checks.content import new_requirement_names
 from .checks.docs import rule_url
+from .checks.trust import coverage_notes
 from .ecosystems import github, gittree, npm, pypi
 from .models import (
     Change,
@@ -232,7 +233,12 @@ def run_checks(
             f.title,
         ),
     )
-    return ChangeResult(change, Verdict.from_severity(_worst(findings)), tuple(findings))
+    return ChangeResult(
+        change,
+        Verdict.from_severity(_worst(findings)),
+        tuple(findings),
+        coverage_notes(base),
+    )
 
 
 def _finding(change: Change, raw: RawFinding, policy: Policy, today: date) -> Finding:
