@@ -24,7 +24,9 @@ No bug turned up, so nothing in the Action changed. The README, docs/action.md a
 
 A documentation review against `main` at `b317d6d` then corrected what still described the repository mid-sprint: the changelog (its "Unreleased" entries had shipped in 0.1.0a1), GRN-C007's status (0.1, not 0.2), the rule coverage page (written while #31 to #38 were open, with the 974-update corpus), ARCHITECTURE (tag source, planned rules, cache, time budget, corpus size), DEVOPS (garnetguard.dev), RELEASING, CONTRIBUTING (Discussions are off), the SPEC's tag source and Action inputs, and the docs index. ROADMAP.md and THREAT_MODEL.md are left to the gap-plan pull request, which edits both.
 
-**Open tasks.** A Dependabot-opened, a Renovate and a fork run of the Action are still to be seen. GRN-C007 has not run on the top-1,000 corpora. The Action examples keep the `<release-commit-sha>` placeholder until 0.2.0, pending the maintainer's say.
+**Open tasks.** A Dependabot-opened, a Renovate and a fork run of the Action are still to be seen. GRN-C007 has not run on the top-1,000 corpora.
+
+**Maintainer decisions (2026-10-30).** The Action examples keep the `<release-commit-sha>` placeholder until 0.2.0. ADR-0014 is accepted. SPEC §13.2's 1.0 clean corpus is the last 11 releases of the top 1,000 PyPI and top 1,000 npm packages, the corpus the published numbers come from. The "checked by" badge goes live once a Dependabot-opened run of the dogfood workflow has been seen.
 
 **Verification.** Documentation only. `uv run pytest`, ruff, mypy (strict) and `lint-imports` pass. Every number was read from the replay output on `42547f6` and the corpus `summary.json` files.
 

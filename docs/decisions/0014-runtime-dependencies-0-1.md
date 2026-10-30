@@ -1,6 +1,6 @@
 # 0014. Runtime dependencies for 0.1
 
-- Status: Proposed
+- Status: Accepted (2026-10-30, after 0.1.0a1 shipped on it)
 - Date: 2026-10-10
 
 ## Context
