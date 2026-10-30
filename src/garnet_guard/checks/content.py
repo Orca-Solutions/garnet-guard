@@ -608,8 +608,7 @@ def code_not_in_source(
 
 
 # GRN-C008: a dependency first published this close to the release that adds
-# it is reported at warn, unless it shares an owner with the trusted package;
-# an established one at info.
+# it is reported at warn, whoever owns it; an established one at info.
 YOUNG_DEPENDENCY_DAYS = 90
 _REGISTRY = {"pypi": "PyPI", "npm": "npm"}
 _REGISTRY_PAGE = {
@@ -689,11 +688,11 @@ def new_dependency(
     Every new dependency is reported, with what the registry says about it.
     The rule keeps its severity for one that installs from outside the
     registry, one the registry doesn't have, and one whose first release came
-    within ``YOUNG_DEPENDENCY_DAYS`` of this release (or after it) and that
-    shares no owner with the trusted version. An established dependency, or a
-    young one owned by an account that already owns the trusted package, is
-    reported at info. A new dependency the engine couldn't look up is listed
-    at info, and GRN-E001 says the lookup failed.
+    within ``YOUNG_DEPENDENCY_DAYS`` of this release (or after it), even when
+    an account that owns the trusted package owns it too: whoever holds that
+    account could have made both. An established dependency is reported at
+    info. A new dependency the engine couldn't look up is listed at info, and
+    GRN-E001 says the lookup failed.
     """
     if base is None:
         return
@@ -768,7 +767,7 @@ def new_dependency(
                     when += f", after {cand.version} itself"
                 else:
                     when += f", {days} day(s) before {cand.version}"
-                if days < YOUNG_DEPENDENCY_DAYS and not shared:
+                if days < YOUNG_DEPENDENCY_DAYS:
                     flagged.append(
                         f"{r.package} was first released {max(days, 0)} day(s) before it"
                     )

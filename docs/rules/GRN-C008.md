@@ -27,13 +27,15 @@ The rule reports every new dependency. It keeps its `warn` severity when the new
 
 - isn't on the registry at all;
 - installs from outside the registry: a git repository, a URL or a local path;
-- was first released less than 90 days before the new version, or after it, and shares no
-  owner with the trusted package. Owners are registry accounts: the owner and maintainer
-  roles and organization on PyPI, the maintainers on npm.
+- was first released less than 90 days before the new version, or after it.
 
-An established dependency is reported at `info`. So is a new one owned by an account that
-already owns the trusted package; maintainers who split code into a helper package
-often publish it the same day as the release that uses it.
+A young dependency keeps `warn` even when an account that owns the trusted package owns it
+too, and the evidence says so. Maintainers who split code into a helper package often publish
+it the same day as the release that uses it, but an attacker who holds a maintainer's account
+can do the same. Owners are registry accounts: the owner and maintainer roles and organization
+on PyPI, the maintainers on npm.
+
+An established dependency is reported at `info`.
 
 A dependency the trusted version already had is reported when it now installs from
 somewhere else: from a git repository or URL, or, on npm, a different package under the same
@@ -71,7 +73,7 @@ event-stream 3.3.5 → 3.3.6: WARN
 npm removed event-stream 3.3.6, so the replay uses its `package.json` dependencies as
 committed in the change that added `flatmap-stream`, and `flatmap-stream`'s registry record as
 the write-ups describe it on the day. The write-ups don't name the npm account that published it,
-so the replay records no owner, and nothing is softened.
+so the replay records no owner.
 
 ## How to resolve it
 
@@ -114,17 +116,14 @@ matched. How to write one is in [the policy guide](../policy.md); the format is 
 - **The new dependency's contents.** Garnet reports that it was added and what the registry
   says about it, but doesn't download or read it. When the dependency later publishes a bad
   release, that release is checked as an update of its own if your lockfile pins it.
-- **A dependency owned by the same accounts.** A young dependency owned by an account that
-  already owns the trusted package is reported at `info`, because an attacker who holds that
-  account could also create it. The trust rules (GRN-T001 to GRN-T005) are the ones that
-  notice a release published from an unusual place.
 - **A changed version range** of a dependency the trusted version already had.
 - **An sdist without fixed metadata.** When a release has no wheel, the sdist's `PKG-INFO` is
   used only from metadata version 2.2 onwards and only when `Requires-Dist` isn't listed as
   `Dynamic`. Older sdists don't record their dependencies reliably, and Garnet never runs
   `setup.py` to find out, so the rule doesn't run on them.
-- **Owners on PyPI are today's.** PyPI's API says who owns a project now, not on the day of
-  the release, and the dependency's age is measured from its earliest file still on PyPI.
+- **Owners are today's.** The registry says who owns a dependency now, not on the day of the
+  release, so the "also owns" line in the evidence can be out of date. A dependency's age is
+  measured from its earliest file still on the registry.
 
 ## See also
 

@@ -15,7 +15,7 @@
 # that records `dependencies` (package.json's, as [name, range]) also records
 # what the registry showed on the day about each new one
 # (`dependency_profiles`), for GRN-C008. A profile's `owners` are left out
-# when no source names the npm account, so nothing is softened on a guess.
+# when no source names the npm account, so the evidence claims none.
 
 [[incident]]
 id = "chalk-5.6.1"

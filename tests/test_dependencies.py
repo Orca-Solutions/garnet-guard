@@ -338,17 +338,20 @@ def _c008(base: ReleaseFacts, cand: ReleaseFacts) -> Any:
     return found[0] if found else None
 
 
-def test_young_dependency_from_a_trusted_owner_is_info() -> None:
-    # The ljharb and sindresorhus pattern: a maintainer splits out a helper
-    # and publishes the release that uses it the same day.
+def test_young_dependency_from_a_trusted_owner_still_warns() -> None:
+    # A maintainer who splits out a helper often publishes the release that
+    # uses it the same day, but whoever holds a maintainer's account can do the
+    # same: the shared owner is evidence, never a reason to lower the finding.
     helper = replace(_profile("helper", 0), owners=("amy",))
     base = _npm_rel("1.0", owners=("amy", "bob"))
     cand = replace(_npm_rel("1.1", Requirement("helper", "helper@^1.0.0")), dependencies=(helper,))
     f = _c008(base, cand)
-    assert f.severity == Severity.INFO
+    assert f.severity == Severity.WARN
+    assert "helper was first released 0 day(s) before it" in f.title
     assert "owned by amy, who also own(s) demo" in f.evidence[0].summary
     other = replace(helper, owners=("mallory",))
-    assert _c008(base, replace(cand, dependencies=(other,))).severity == Severity.WARN
+    f = _c008(base, replace(cand, dependencies=(other,)))
+    assert f.severity == Severity.WARN and "who also own" not in f.evidence[0].summary
 
 
 def test_alias_is_looked_up_under_the_package_it_installs() -> None:
