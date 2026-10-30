@@ -9,16 +9,16 @@
 
 <p align="center">
   <a href="https://github.com/orca-solutions/garnet-guard/actions/workflows/ci.yml"><img src="https://github.com/orca-solutions/garnet-guard/actions/workflows/ci.yml/badge.svg" alt="CI" height="20"></a>
-  <a href="https://scorecard.dev/viewer/?uri=github.com/orca-solutions/garnet-guard"><img src="https://api.scorecard.dev/projects/github.com/orca-solutions/garnet-guard/badge" alt="OpenSSF Scorecard" height="20"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/Orca-Solutions/garnet-guard"><img src="https://api.scorecard.dev/projects/github.com/Orca-Solutions/garnet-guard/badge" alt="OpenSSF Scorecard" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-8E1B2C" alt="License: Apache-2.0" height="20"></a>
+  <a href="https://pypi.org/project/garnet-guard/"><img src="https://img.shields.io/pypi/v/garnet-guard?color=8E1B2C" alt="PyPI version" height="20"></a>
   <img src="https://img.shields.io/badge/status-pre--alpha-5C636B" alt="Status: pre-alpha" height="20">
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20releases-51%2F51%20warn-8E1B2C" alt="Replayed malicious releases: 51 of 51 warn" height="20"></a>
-  <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/clean.toml"><img src="https://img.shields.io/badge/clean%20updates-0%2F20%20warn-1B1F24" alt="Clean updates: 0 of 20 warn" height="20"></a>
+  <a href="https://github.com/orca-solutions/garnet-guard#replays-of-real-attacks"><img src="https://img.shields.io/badge/clean%20updates-2.0%25%20flagged%20(366%2F18%2C181)-1B1F24" alt="Clean updates: 366 of 18,181 flagged for a look (2.0%), none a false claim" height="20"></a>
 </p>
 
-<!-- Badges, once the first release exists (the "checked by" badge goes live when Garnet Guard checks its own dependency PRs, SPEC §11):
+<!-- The "checked by" badge goes live once Garnet Guard has checked its own dependency PRs on GitHub (SPEC §11):
 [![Dependencies checked by Garnet Guard](https://raw.githubusercontent.com/orca-solutions/garnet-guard/main/docs/brand/badge/checked-by-garnet-guard.svg)](https://github.com/orca-solutions/garnet-guard)
-[![PyPI](https://img.shields.io/pypi/v/garnet-guard)](https://pypi.org/project/garnet-guard/)
 -->
 
 **Garnet Guard checks every dependency update against the last release you trusted, and tells you when it looks different in ways that matter.**
