@@ -908,6 +908,102 @@ def new_dependency(
     )
 
 
+# GRN-C009: entry point groups another tool loads on its own, so the target
+# runs inside that tool (pytest, every setuptools build, flake8, keyring...).
+AUTO_LOADED_GROUPS = frozenset(
+    {
+        "pytest11",
+        "egg_info.writers",
+        "flake8.extension",
+        "flake8.report",
+        "keyring.backends",
+        "pydantic",
+        "tox",
+        "hatch",
+        "pdm",
+        "poetry.plugin",
+        "poetry.application.plugin",
+    }
+)
+AUTO_LOADED_PREFIXES = ("setuptools.", "distutils.", "virtualenv.", "pygments.", "opentelemetry_")
+_SCRIPT_GROUPS = ("console_scripts", "gui_scripts")
+
+
+def _auto_loaded(group: str) -> bool:
+    return group in AUTO_LOADED_GROUPS or group.startswith(AUTO_LOADED_PREFIXES)
+
+
+def _spaceless(target: str) -> str:
+    # ``mod:func [extra]`` and ``mod:func[extra]`` are the same target.
+    return "".join(target.split())
+
+
+def _shadows(script: str, package: str) -> bool:
+    """Whether a new script would run in place of a common command. A
+    project's own command doesn't count: pytest installs ``pytest``."""
+    name = script.lower()
+    return name in _COMMANDS and name != re.sub(r"[-_.]+", "-", package).lower()
+
+
+def new_entry_point(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-C009: the candidate's wheel declares an entry point the baseline's
+    didn't, or points an existing one somewhere else.
+
+    It keeps the rule's severity for a group another tool loads without being
+    asked (``AUTO_LOADED_GROUPS``) and for a new script named like a common
+    command other than the project's own; any other new or changed entry
+    point is reported at info. Wheels only: an
+    sdist's entry points may be computed by ``setup.py``.
+    """
+    if base is None:
+        return
+    b, c = _pair(base, cand)
+    if b is None or c is None or not (b.inspected and c.inspected):
+        return
+    if not (b.filename.endswith(".whl") and c.filename.endswith(".whl")):
+        return
+    old = {(e.group, e.name): e.target for e in b.entry_point_specs}
+    changed = [
+        (e, was)
+        for e in c.entry_point_specs
+        if (was := old.get((e.group, e.name))) is None or _spaceless(was) != _spaceless(e.target)
+    ]
+    if not changed:
+        return
+    evidence: list[Evidence] = []
+    loud: list[str] = []
+    for e, was in changed:
+        if _auto_loaded(e.group):
+            why = f"[{e.group}] is loaded automatically by the tool that reads it"
+            loud.append(f"[{e.group}] {e.name}")
+        elif e.group in _SCRIPT_GROUPS and was is None and _shadows(e.name, change.package):
+            why = f"a script named {e.name} can shadow the {e.name} command"
+            loud.append(f"script {e.name}")
+        else:
+            why = ""
+        what = f"[{e.group}] {e.name} = {_clip(e.target, 120)}"
+        what += f" (was {_clip(was, 80)})" if was is not None else " (new)"
+        evidence.append(
+            Evidence(
+                "file", f"{what}{'; ' + why if why else ''}", path=f"{c.filename}:entry_points.txt"
+            )
+        )
+    if any(was is not None for _, was in changed):
+        title = f"{cand.version} adds or changes {len(changed)} entry point(s)"
+    else:
+        title = f"{cand.version} declares {len(changed)} entry point(s) that {base.version} didn't"
+    if loud:
+        title += ", including " + ", ".join(loud[:3])
+    yield RawFinding(
+        "GRN-C009",
+        title,
+        tuple(evidence[:MAX_EVIDENCE]) + _compare_note(b, c),
+        lowered_to=None if loud else Severity.INFO,
+    )
+
+
 # GRN-C010: files that run without the package being imported. Python imports
 # ``sitecustomize`` and ``usercustomize`` from site-packages at every start; a
 # wheel's ``.data/scripts/`` files become commands on PATH, and ``.data/data/``

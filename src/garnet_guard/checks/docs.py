@@ -214,6 +214,24 @@ _DOCS: tuple[RuleDoc, ...] = (
         "release, needs a look before the update merges.",
     ),
     RuleDoc(
+        "GRN-C009",
+        "new-entry-point",
+        "diff",
+        W,
+        "The new version's wheel declares an entry point the trusted version's didn't, or points "
+        "one at different code. It is a warning for a group another tool loads by itself "
+        "(pytest11, setuptools.*, flake8, keyring and others) and for a new script named like a "
+        "common command other than the project's own; any other new or changed entry point is "
+        "info.",
+        "An entry point in an auto-loaded group runs inside another program: every pytest run, "
+        "every setuptools build on the machine. A package can run code there without being "
+        "imported, so no import-time rule sees it. A script named like `pip` or `git` can run "
+        "instead of the real command.",
+        "Read the target the evidence names. A library that has never been a pytest plugin "
+        "rarely becomes one in a patch release. Find the commit that added the entry point in "
+        "the project's repository; if nothing there explains it, don't merge.",
+    ),
+    RuleDoc(
         "GRN-C010",
         "new-startup-file",
         "diff",

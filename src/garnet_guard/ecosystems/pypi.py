@@ -623,6 +623,7 @@ def _inspect(
             build_backend=ins.build_backend,
             setup_py_calls=ins.setup_py_calls,
             entry_points=tuple(sorted(ins.entry_points)),
+            entry_point_specs=ins.entry_point_specs,
             unparsed=tuple(ins.unparsed),
             wheel_tag=wheel_tag,
             requirements=ins.requirements,

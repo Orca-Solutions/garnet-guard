@@ -20,6 +20,7 @@ from packaging.version import InvalidVersion, Version
 
 from ..models import (
     CallSite,
+    EntryPoint,
     FactError,
     FileEntry,
     FileKind,
@@ -80,6 +81,7 @@ class Inspection:
     entry_points: set[str] = field(default_factory=set)
     requirements: tuple[Requirement, ...] = ()
     requirements_read: bool = False
+    entry_point_specs: tuple[EntryPoint, ...] = ()
     errors: list[FactError] = field(default_factory=list)
     complete: bool = True  # False: the archive couldn't be read to the end
 
@@ -266,6 +268,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                 result.entry_points |= _pyproject_entry_points(body)
             elif not sdist and rel.endswith(".dist-info/entry_points.txt") and rel.count("/") == 1:
                 result.entry_points |= entry_point_modules(body)
+                result.entry_point_specs = parse_entry_points(body)
             elif (sdist and rel == "PKG-INFO") or (
                 not sdist and rel.endswith(".dist-info/METADATA") and rel.count("/") == 1
             ):
@@ -428,6 +431,29 @@ def _build_backend(pyproject: bytes) -> str | None:
     if bs.get("backend-path"):
         return f"in-tree:{backend}"
     return backend
+
+
+def parse_entry_points(text: bytes) -> tuple[EntryPoint, ...]:
+    """Every ``name = target`` line of an entry_points.txt, under its ``[group]``.
+
+    Read line by line, like ``importlib.metadata``: a malformed line is
+    skipped, and a name repeated in a group keeps its first target.
+    """
+    out: dict[tuple[str, str], EntryPoint] = {}
+    group = ""
+    for raw in text.decode("utf-8", "replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            group = line[1:-1].strip()
+            continue
+        if not group or "=" not in line:
+            continue
+        name, target = (s.strip() for s in line.split("=", 1))
+        if name and (group, name) not in out:
+            out[(group, name)] = EntryPoint(group, name, target)
+    return tuple(sorted(out.values(), key=lambda e: (e.group, e.name)))
 
 
 def entry_point_modules(text: bytes) -> set[str]:

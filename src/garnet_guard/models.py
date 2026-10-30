@@ -375,6 +375,15 @@ class DependencyProfile:
 
 
 @dataclass(frozen=True)
+class EntryPoint:
+    """One line of a wheel's ``entry_points.txt``: ``name = target`` under ``[group]``."""
+
+    group: str
+    name: str
+    target: str
+
+
+@dataclass(frozen=True)
 class ArtifactFacts:
     """One file of a release (a wheel or an sdist).
 
@@ -397,6 +406,9 @@ class ArtifactFacts:
     unparsed: tuple[str, ...] = ()  # .py files ast couldn't parse
     wheel_tag: str | None = None
     entry_points: tuple[str, ...] = ()  # modules named by entry points
+    # Every entry point a wheel declares (``*.dist-info/entry_points.txt``),
+    # sorted. Read for wheels only: an sdist's may come from ``setup.py``.
+    entry_point_specs: tuple[EntryPoint, ...] = ()
     source_match: SourceMatch | None = None  # None: not compared (no tag, or a fetch error)
     # npm: the registry's Subresource Integrity string ("sha512-…") and the
     # one computed from the download (GRN-T008), and the package.json scripts

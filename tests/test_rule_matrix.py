@@ -185,6 +185,11 @@ ELF = b"\x7fELF" + b"\0" * 60
 PE = b"MZ" + b"\0" * 58 + (64).to_bytes(4, "little") + b"PE\0\0" + b"\0" * 16
 
 
+def _entry_points(version: str, ini: str) -> ReleaseFacts:
+    """A wheel with ``ini`` as its ``entry_points.txt``."""
+    return release(version, {**PKG, f"demo-{version}.dist-info/entry_points.txt": ini})
+
+
 def _rows() -> list[Row]:
     attested = release("1.0")
     rows: list[Row] = []
@@ -629,6 +634,51 @@ def _rows() -> list[Row]:
         _npm_depends("1.0", ("through", "~2.3.1")),
         _npm_depends("1.1", ("through", "~2.3.4")),
         eco=NPM,
+    )
+
+    # GRN-C009 new-entry-point
+    # A pytest plugin that runs in every test session on the machine.
+    fires(
+        "GRN-C009",
+        "new pytest11 plugin",
+        _entry_points("1.0", "[console_scripts]\ndemo = demo.cli:main\n"),
+        _entry_points(
+            "1.1", "[console_scripts]\ndemo = demo.cli:main\n[pytest11]\ndemo = demo._plugin\n"
+        ),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C009",
+        "a script named like a common command",
+        _entry_points("1.0", "[console_scripts]\ndemo = demo.cli:main\n"),
+        _entry_points("1.1", "[console_scripts]\ndemo = demo.cli:main\npip = demo.cli:pip\n"),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C009",
+        "a new script of its own, listed at info",
+        _entry_points("1.0", "[console_scripts]\ndemo = demo.cli:main\n"),
+        _entry_points(
+            "1.1", "[console_scripts]\ndemo = demo.cli:main\ndemo-admin = demo.cli:admin\n"
+        ),
+        Verdict.PASS,
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C009",
+        "same entry points",
+        _entry_points("1.0", "[pytest11]\ndemo = demo._plugin\n"),
+        _entry_points("1.1", "[pytest11]\ndemo = demo._plugin\n"),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C009",
+        "an entry point removed",
+        _entry_points("1.0", "[pytest11]\ndemo = demo._plugin\n"),
+        release("1.1", PKG),
+        eco=PYPI,
     )
 
     # GRN-C010 new-startup-file
