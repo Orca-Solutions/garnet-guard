@@ -13,8 +13,9 @@ uv run python -m backtest corpus npm 1000   # writes this folder's summary.json 
 
 The run used main (`255946a`) with the rule-testing branches stacked on it, up to
 `claude/project-thread-sm89m3-claims` at `935d188` (PRs #32, #33, #34 and #36 plus that
-branch), and this PR's commits: the rules as they are about to ship. Those branches change
-only Python checks, so for npm the result is the same on this PR alone.
+branch, now PR #38), and this PR's commits. Those branches change only Python checks, and
+PR #38's later commits only GRN-C003, so for npm the result is the same on this PR alone
+and on the rules as they are about to ship.
 
 ## Result
 

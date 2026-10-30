@@ -932,7 +932,7 @@
     "note": "2 evidence line(s) checked in the release files with ast: the call is on the cited line (directly or through a local alias), its head is imported, no builtin is shadowed, new-module claims match the trusted release, and each function named is called in the package. The trusted 0.70.12.1 wheel is Python 2 code Garnet can't parse, so the calls can't be compared; the finding says so in a note rather than passing.",
     "package": "multiprocess",
     "rule": "GRN-C003",
-    "title": "0.70.12.2 adds import-time calls to sensitive APIs in 2 module(s)"
+    "title": "0.70.12.2 calls sensitive APIs at import in 2 module(s) whose 0.70.12.1 copy couldn't be parsed"
   },
   {
     "baseline": "0.65.1",
@@ -1006,7 +1006,7 @@
     "candidate": "3.6",
     "candidate_published": "2015-04-26",
     "claim": "true",
-    "note": "2 evidence line(s) checked in the release files with ast: the call is on the cited line (directly or through a local alias), its head is imported, no builtin is shadowed, new-module claims match the trusted release, and each function named is called in the package. The exec calls are in ply/lex.py and ply/yacc.py; the chain starts in example/ansic/, which ships in the sdist only.",
+    "note": "2 evidence line(s) checked in the release files with ast: the call is on the cited line (directly or through a local alias), its head is imported, no builtin is shadowed, new-module claims match the trusted release, and each function named is called in the package. The exec calls are in ply/lex.py and ply/yacc.py; the chains that reach them start in the sdist's test/ folder (test/calclex.py), which GRN-C003 doesn't count as a test folder (it looks for tests/).",
     "package": "ply",
     "rule": "GRN-C003",
     "title": "3.6 adds import-time calls to sensitive APIs in 2 module(s)"

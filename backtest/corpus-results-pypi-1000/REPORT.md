@@ -13,9 +13,12 @@ uv run python -m backtest corpus pypi 1000   # writes this folder's summary.json
 ```
 
 The run used main (`255946a`) with the rule-testing branches stacked on it, up to
-`claude/project-thread-sm89m3-claims` at `935d188` (PRs #32, #33, #34 and #36 plus that
-branch's two commits), and this PR's commits: the rules as they are about to ship. On this
-PR alone the GRN-C003 and GRN-C002 numbers would differ; the trust rules would not.
+`claude/project-thread-sm89m3-claims` at `1063252` (PRs #32, #33, #34, #36 and #38), and
+this PR's commits: the rules as they are about to ship. On this PR alone the content-rule
+numbers would differ; the trust rules would not. The full run was on `935d188`; `1063252`
+changes how GRN-C003 grades and attributes the call sites it finds, not which sites exist,
+so the 105 updates with any GRN-C003 finding were re-run on it from fresh facts, and
+nothing else could change.
 
 ## Result
 
@@ -45,7 +48,7 @@ handed to another call that isn't known to run it (`functools.partial`, `map`, a
 17 in test files nothing else imports, and 2 in sdist files outside the package (`docs/`,
 `demo/`).
 
-297 updates (3.1%) carry a couldn't-check finding (GRN-E), which names what wasn't
+291 updates (3.1%) carry a couldn't-check finding (GRN-E), which names what wasn't
 checked. Some carry more than one kind:
 
 | Why | Updates | Packages |
@@ -55,7 +58,6 @@ checked. Some carry more than one kind:
 | github.com answers HTTP 401 for the tags of a repository that is private, renamed or gone (GRN-E001) | 34 | 8 |
 | Python 2 files that don't parse as Python 3 (GRN-E002) | 23 | 14 |
 | A file over the parser's size limit (GRN-E003): kubernetes, av, pillow, pymssql | 11 | 4 |
-| A download that took longer than 300 s, twice (GRN-E001) | 6 | 3 |
 | A duplicate entry in an sdist (GRN-E002) | 3 | 2 |
 
 ## What the first pass got wrong
@@ -122,11 +124,13 @@ named in "(in f(), reached at import)" is called in the package. By kind of call
   module, runs one to find Tesseract's data.
 
 Three need a word. multiprocess 0.70.12.2's trusted wheel is Python 2 code that doesn't
-parse, so the calls can't be compared; the finding warns and says so, since Garnet doesn't
-treat "couldn't compare" as a pass. ply 3.6's calls are in `ply/lex.py` and `ply/yacc.py`,
-but the chain that reaches them starts in `example/`, which ships in the sdist only. In the
-six copies, the cited line is the Python 2 definition of `exec_`; on Python 3 the module
-runs the builtin `exec` through the same name a few lines later.
+parse, so the calls can't be compared; the finding warns and its title says the trusted
+copy couldn't be parsed, since Garnet doesn't treat "couldn't compare" as a pass. ply
+3.6's calls are in `ply/lex.py` and `ply/yacc.py`, and the chains that reach them start in
+the sdist's `test/` folder (`test/calclex.py`): the rule lowers chains from `tests/`
+folders and `test_*.py` files to info, and `test/` is neither. In the six copies, the
+cited line is the Python 2 definition of `exec_`; on Python 3 the module runs the builtin
+`exec` through the same name a few lines later.
 
 **GRN-C002 (57).** Both sdists were read for each: the cited setup.py line has the call
 and the trusted setup.py doesn't, or the build backend in pyproject.toml changed as
@@ -181,5 +185,5 @@ really added a build-time subprocess call).
   contributes a few months of updates and one that releases yearly contributes a decade.
 - Run in the cloud container: pypi.org, files.pythonhosted.org and github.com git refs are
   reachable, api.osv.dev is not (the run doesn't need it). About 4 hours cold with 3
-  worker processes sharing the machine with other runs; a re-run from the fact cache
-  retried the downloads that had timed out.
+  worker processes sharing the machine with other runs. Downloads that timed out were
+  retried from the fact cache until none was left.

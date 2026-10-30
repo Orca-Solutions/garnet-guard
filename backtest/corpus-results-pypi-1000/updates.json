@@ -34,7 +34,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "2.2.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "2.2.0 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "absl-py",
@@ -15733,46 +15733,20 @@
   {
     "baseline": "2.60.0",
     "candidate": "2.61.0",
-    "coverage_gaps": [
-      "GRN-E001"
-    ],
-    "findings": [
-      {
-        "evidence": [
-          "download datadog_api_client-2.61.0-py3-none-any.whl: request to files.pythonhosted.org exceeded 300s",
-          "not evaluated: GRN-C001, GRN-C002, GRN-C003"
-        ],
-        "release": null,
-        "rule": "GRN-E001",
-        "severity": "warn",
-        "title": "Couldn't fully check 2.61.0: download datadog_api_client-2.61.0-py3-none-any.whl: request to files.pythonhosted.org exceeded 300s"
-      }
-    ],
+    "coverage_gaps": [],
+    "findings": [],
     "package": "datadog-api-client",
-    "verdict": "warn",
+    "verdict": "pass",
     "warn_rules": [],
     "warned": false
   },
   {
     "baseline": "2.61.0",
     "candidate": "2.62.0",
-    "coverage_gaps": [
-      "GRN-E001"
-    ],
-    "findings": [
-      {
-        "evidence": [
-          "download datadog_api_client-2.61.0-py3-none-any.whl: request to files.pythonhosted.org exceeded 300s",
-          "not evaluated: GRN-C001, GRN-C002, GRN-C003"
-        ],
-        "release": "2.61.0",
-        "rule": "GRN-E001",
-        "severity": "warn",
-        "title": "Couldn't fully check 2.61.0: download datadog_api_client-2.61.0-py3-none-any.whl: request to files.pythonhosted.org exceeded 300s"
-      }
-    ],
+    "coverage_gaps": [],
+    "findings": [],
     "package": "datadog-api-client",
-    "verdict": "warn",
+    "verdict": "pass",
     "warn_rules": [],
     "warned": false
   },
@@ -19634,7 +19608,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "0.14 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "0.14 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "ecdsa",
@@ -19665,7 +19639,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "0.15 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "0.15 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "ecdsa",
@@ -23737,7 +23711,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "0.5.0 adds import-time calls to sensitive APIs in 1 file(s) outside the package"
+        "title": "0.5.0 adds import-time calls to sensitive APIs reached only from 1 file(s) outside the package"
       }
     ],
     "package": "flask-login",
@@ -25395,7 +25369,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "25.8.1 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "25.8.1 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "gevent",
@@ -31948,7 +31922,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "3.9.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "3.9.0 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "h5py",
@@ -44104,7 +44078,7 @@
     "findings": [
       {
         "evidence": [
-          "litellm/proxy/pass_through_endpoints/pass_through_endpoints.py:754 calls httpx.URL (in HttpPassThroughEndpointHelpers.forwarded_route(), handed to fastapi.Depends() at import from litellm/proxy/_experimental/mcp_server/discoverable_endpoints.py)",
+          "litellm/proxy/pass_through_endpoints/pass_through_endpoints.py:754 calls httpx.URL (in HttpPassThroughEndpointHelpers.forwarded_route(), handed to fastapi.Depends() at import)",
           "new module litellm/proxy/spend_tracking/background_interaction_settlement.py:201 calls socket.gethostname (in install_background_interaction_settlement(), handed to fastapi.FastAPI() at import from litellm/proxy/proxy_server.py)",
           "whether the receiving call runs them cannot be read from the source, so this is reported at info"
         ],
@@ -47498,46 +47472,20 @@
   {
     "baseline": "3.14.0",
     "candidate": "3.15.0",
-    "coverage_gaps": [
-      "GRN-E001"
-    ],
-    "findings": [
-      {
-        "evidence": [
-          "download mlflow-3.15.0.tar.gz: request to files.pythonhosted.org exceeded 300s",
-          "not evaluated: GRN-C001, GRN-C002, GRN-C003"
-        ],
-        "release": null,
-        "rule": "GRN-E001",
-        "severity": "warn",
-        "title": "Couldn't fully check 3.15.0: download mlflow-3.15.0.tar.gz: request to files.pythonhosted.org exceeded 300s"
-      }
-    ],
+    "coverage_gaps": [],
+    "findings": [],
     "package": "mlflow",
-    "verdict": "warn",
+    "verdict": "pass",
     "warn_rules": [],
     "warned": false
   },
   {
     "baseline": "3.15.0",
     "candidate": "3.15.1",
-    "coverage_gaps": [
-      "GRN-E001"
-    ],
-    "findings": [
-      {
-        "evidence": [
-          "download mlflow-3.15.0.tar.gz: request to files.pythonhosted.org exceeded 300s",
-          "not evaluated: GRN-C001, GRN-C002, GRN-C003"
-        ],
-        "release": "3.15.0",
-        "rule": "GRN-E001",
-        "severity": "warn",
-        "title": "Couldn't fully check 3.15.0: download mlflow-3.15.0.tar.gz: request to files.pythonhosted.org exceeded 300s"
-      }
-    ],
+    "coverage_gaps": [],
+    "findings": [],
     "package": "mlflow",
-    "verdict": "warn",
+    "verdict": "pass",
     "warn_rules": [],
     "warned": false
   },
@@ -48098,8 +48046,8 @@
       },
       {
         "evidence": [
-          "new module modal/_utils/proxy_support.py:33 calls urllib.request.proxy_bypass (in get_proxy_url(), handed to synchronize_api() at import from modal/mount.py)",
-          "new module modal/_utils/proxy_support.py:36 calls urllib.request.getproxies (in get_proxy_url(), handed to synchronize_api() at import from modal/mount.py)",
+          "new module modal/_utils/proxy_support.py:33 calls urllib.request.proxy_bypass (in get_proxy_url(), handed to entrypoint_cli.add_command() at import from modal/cli/entry_point.py)",
+          "new module modal/_utils/proxy_support.py:36 calls urllib.request.getproxies (in get_proxy_url(), handed to entrypoint_cli.add_command() at import from modal/cli/entry_point.py)",
           "new module modal/cli/curl.py:96 calls subprocess.call (in _run_curl(), handed to entrypoint_cli.add_command() at import from modal/cli/entry_point.py)",
           "whether the receiving call runs them cannot be read from the source, so this is reported at info"
         ],
@@ -48735,7 +48683,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "1.2.1 adds import-time calls to sensitive APIs in 2 file(s) outside the package"
+        "title": "1.2.1 adds import-time calls to sensitive APIs reached only from 2 file(s) outside the package"
       }
     ],
     "package": "mpmath",
@@ -48766,7 +48714,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "1.4.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "1.4.0 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "mpmath",
@@ -49576,7 +49524,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "warn",
-        "title": "0.70.12.2 adds import-time calls to sensitive APIs in 2 module(s)"
+        "title": "0.70.12.2 calls sensitive APIs at import in 2 module(s) whose 0.70.12.1 copy couldn't be parsed"
       }
     ],
     "package": "multiprocess",
@@ -51232,7 +51180,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "3.7 adds import-time calls to sensitive APIs in 2 test module(s) that no other module imports"
+        "title": "3.7 adds import-time calls to sensitive APIs reached only from 2 test module(s) that no other module imports"
       }
     ],
     "package": "networkx",
@@ -61031,7 +60979,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "2.7.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "2.7.0 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "papermill",
@@ -61675,7 +61623,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "1.7.2 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "1.7.2 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "passlib",
@@ -63753,46 +63701,20 @@
   {
     "baseline": "12.1.1",
     "candidate": "12.2.0",
-    "coverage_gaps": [
-      "GRN-E001"
-    ],
-    "findings": [
-      {
-        "evidence": [
-          "download pillow-12.2.0.tar.gz: request to files.pythonhosted.org exceeded 300s",
-          "not evaluated: GRN-C001, GRN-C002, GRN-C003"
-        ],
-        "release": null,
-        "rule": "GRN-E001",
-        "severity": "warn",
-        "title": "Couldn't fully check 12.2.0: download pillow-12.2.0.tar.gz: request to files.pythonhosted.org exceeded 300s"
-      }
-    ],
+    "coverage_gaps": [],
+    "findings": [],
     "package": "pillow",
-    "verdict": "warn",
+    "verdict": "pass",
     "warn_rules": [],
     "warned": false
   },
   {
     "baseline": "12.2.0",
     "candidate": "12.3.0",
-    "coverage_gaps": [
-      "GRN-E001"
-    ],
-    "findings": [
-      {
-        "evidence": [
-          "download pillow-12.2.0.tar.gz: request to files.pythonhosted.org exceeded 300s",
-          "not evaluated: GRN-C001, GRN-C002, GRN-C003"
-        ],
-        "release": "12.2.0",
-        "rule": "GRN-E001",
-        "severity": "warn",
-        "title": "Couldn't fully check 12.2.0: download pillow-12.2.0.tar.gz: request to files.pythonhosted.org exceeded 300s"
-      }
-    ],
+    "coverage_gaps": [],
+    "findings": [],
     "package": "pillow",
-    "verdict": "warn",
+    "verdict": "pass",
     "warn_rules": [],
     "warned": false
   },
@@ -64802,8 +64724,8 @@
     "findings": [
       {
         "evidence": [
-          "ply/lex.py:898 calls exec (in lex(), reached at import from example/ansic/clex.py)",
-          "ply/yacc.py:3212 calls exec (in yacc(), reached at import from example/ansic/cparse.py)"
+          "ply/lex.py:898 calls exec (in lex(), reached at import from test/calclex.py)",
+          "ply/yacc.py:3212 calls exec (in yacc(), reached at import from test/pkg_test1/parsing/calcparse.py)"
         ],
         "release": null,
         "rule": "GRN-C003",
@@ -69751,7 +69673,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "4.0.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "4.0.0 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "pycryptodome",
@@ -83574,7 +83496,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "1.17.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "1.17.0 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "scipy",
@@ -86165,7 +86087,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "0.8.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "0.8.0 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "skops",
@@ -93998,7 +93920,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "1.1.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "1.1.0 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "toolz",
@@ -96135,7 +96057,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "24.7.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "24.7.0 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "twisted",
@@ -96171,7 +96093,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "24.11.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "24.11.0 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "twisted",
@@ -96192,7 +96114,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "25.5.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "25.5.0 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "twisted",
@@ -98463,7 +98385,7 @@
         "release": null,
         "rule": "GRN-C003",
         "severity": "info",
-        "title": "0.3.0 adds import-time calls to sensitive APIs in 1 test module(s) that no other module imports"
+        "title": "0.3.0 adds import-time calls to sensitive APIs reached only from 1 test module(s) that no other module imports"
       }
     ],
     "package": "typing-inspect",
@@ -103435,7 +103357,6 @@
       {
         "evidence": [
           "xgboost/core.py:1599 calls ctypes.c_void_p (in _ProxyDMatrix(), handed to isinstance() at import from xgboost/testing/monotone_constraints.py)",
-          "xgboost/core.py:1599 calls ctypes.c_void_p (in _ProxyDMatrix(), handed to typing.TypeVar() at import from xgboost/testing/ordinal.py)",
           "whether the receiving call runs them cannot be read from the source, so this is reported at info"
         ],
         "release": null,

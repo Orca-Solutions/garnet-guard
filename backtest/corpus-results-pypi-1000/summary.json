@@ -34,9 +34,9 @@
       "packages": 3
     }
   },
-  "updates_with_coverage_gaps": 297,
+  "updates_with_coverage_gaps": 291,
   "coverage_gaps_by_rule": {
-    "GRN-E001": 147,
+    "GRN-E001": 141,
     "GRN-E002": 143,
     "GRN-E003": 11
   },
