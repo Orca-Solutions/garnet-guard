@@ -126,6 +126,90 @@ def test_existing_import_time_call_is_quiet() -> None:
     )
 
 
+# Libraries in the 974-update PyPI corpus whose own import-time calls are under a
+# name in the §6.3 set, in the shape of their sources: requests reads its CA
+# bundle path through certs.where(), urllib3 2.0 builds a PoolManager at import.
+# Each pair is (files in both releases, files the new release adds or changes).
+OWN_MODULE_CALLS: dict[str, tuple[dict[str, str], dict[str, str]]] = {
+    "requests": (
+        {
+            "requests/__init__.py": "from . import utils\n",
+            "requests/certs.py": "def where():\n    return 'cacert.pem'\n",
+            "requests/utils.py": "from . import certs\n\nDEFAULT_CA_BUNDLE_PATH = certs.where()\n\n"
+            "def extract_zipped_paths(path):\n    return path\n",
+        },
+        {
+            "requests/adapters.py": "from .utils import DEFAULT_CA_BUNDLE_PATH, extract_zipped_paths\n"
+            "\nCA_PATH = extract_zipped_paths(DEFAULT_CA_BUNDLE_PATH)\n"
+        },
+    ),
+    "urllib3": (
+        {
+            "urllib3/__init__.py": "from .poolmanager import PoolManager\n",
+            "urllib3/poolmanager.py": "class PoolManager:\n    pass\n",
+        },
+        {
+            "urllib3/__init__.py": "from .poolmanager import PoolManager\n\n_DEFAULT_POOL = PoolManager()\n"
+        },
+    ),
+    "httpx": (
+        {"httpx/__init__.py": "", "httpx/_config.py": "class Limits:\n    pass\n"},
+        {"httpx/_client.py": "from ._config import Limits\n\nDEFAULT_LIMITS = Limits()\n"},
+    ),
+    "aiohttp": (
+        {
+            "aiohttp/__init__.py": "",
+            "aiohttp/helpers.py": "def set_result(fut, result):\n    return result\n",
+        },
+        {"aiohttp/__init__.py": "from .helpers import set_result\n\nset_result(None, None)\n"},
+    ),
+    "setuptools": (
+        {
+            "setuptools/__init__.py": "",
+            "setuptools/_distutils/__init__.py": "",
+            "setuptools/_distutils/spawn.py": "def spawn(cmd):\n    return cmd\n",
+        },
+        {"setuptools/__init__.py": "from ._distutils.spawn import spawn\n\nspawn(['true'])\n"},
+    ),
+}
+
+
+def test_a_library_in_the_set_calling_its_own_modules_at_import_is_quiet() -> None:
+    for package, (both, added) in OWN_MODULE_CALLS.items():
+        base = release("1.0", both, package=package)
+        cand = release("1.1", {**both, **added}, package=package)
+        result = run_checks(Change("pypi", package, "1.0", "1.1"), base, cand)
+        assert "GRN-C003" not in {f.rule_id for f in result.findings}, package
+        # The same files shipped by another project are not that library's code.
+        assert "GRN-C003" in rules(release("1.0", both), release("1.1", {**both, **added})), package
+
+
+def test_a_module_named_like_a_library_is_still_followed() -> None:
+    # Where requests isn't installed, Python imports demo's requests.py, so a
+    # function there that import-time code calls or hands to a thread is read.
+    stub = "import subprocess\n\ndef post():\n    subprocess.Popen(['python', 'demo/_rt.py'])\n"
+    for init, want in (
+        (
+            "import requests, threading\n\nthreading.Thread(target=requests.post).start()\n",
+            ["new module requests.py:4 calls subprocess.Popen (in post(), reached at import"],
+        ),
+        (
+            "import requests\n\nrequests.post()\n",
+            [
+                "demo/__init__.py:5 calls requests.post",
+                "new module requests.py:4 calls subprocess.Popen (in post(), reached at import",
+            ],
+        ),
+    ):
+        cand = release("1.1", {"demo/__init__.py": INIT + init, "requests.py": stub})
+        result = run_checks(CHANGE, release("1.0", {"demo/__init__.py": INIT}), cand)
+        [f] = [f for f in result.findings if f.rule_id == "GRN-C003"]
+        assert f.severity == Severity.WARN
+        got = sorted(e.summary for e in f.evidence)
+        assert len(got) == len(want), got
+        assert all(g.startswith(w) for g, w in zip(got, sorted(want), strict=True)), got
+
+
 def test_subprocess_inside_uncalled_function_is_quiet() -> None:
     src = INIT + "import subprocess\ndef run():\n    subprocess.run(['ls'])\n"
     assert "GRN-C003" not in rules(
@@ -417,6 +501,19 @@ def test_setup_py_in_a_release_that_adds_an_sdist_counts_as_new() -> None:
     unread = replace(base_unread.artifacts[1], inspected=False)
     base_unread = replace(base_unread, artifacts=(base_unread.artifacts[0], unread))
     assert "GRN-C002" not in rules(base_unread, cand)
+
+
+def test_setup_py_that_starts_running_a_file_for_its_version_warns() -> None:
+    # runpy and the importlib file loaders run the file they load, so a setup.py
+    # that switches to one to read __version__ is reported (docs/rules/GRN-C002.md).
+    for line, name in (
+        ("v = runpy.run_path('demo/__about__.py')['__version__']\n", "runpy.run_path"),
+        ("s = util.spec_from_file_location('a', 'demo/__about__.py')\n", "importlib.util"),
+    ):
+        setup = "import runpy\nfrom importlib import util\n" + line + SETUP
+        result = run_checks(CHANGE, _sdist("1.0", SRC), _sdist("1.1", {**SRC, "setup.py": setup}))
+        [f] = [f for f in result.findings if f.rule_id == "GRN-C002"]
+        assert f.evidence[0].summary.startswith(f"setup.py:3 calls {name}")
 
 
 def test_unchanged_setup_py_hook_is_quiet() -> None:

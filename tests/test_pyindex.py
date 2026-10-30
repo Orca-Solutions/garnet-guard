@@ -42,10 +42,12 @@ def test_class_body_and_decorators_run_at_import() -> None:
 
 
 def test_own_package_calls_not_sensitive() -> None:
-    calls, _ = index_module(
-        b"from requests.adapters import HTTPAdapter\nHTTPAdapter()\n", own=frozenset({"requests"})
-    )
+    src = b"from requests.adapters import HTTPAdapter\nHTTPAdapter()\n"
+    calls, _ = index_module(src, own=frozenset({"requests"}), project="requests")
     assert calls == ()
+    # The same call from a release that only ships a top-level requests module.
+    calls, _ = index_module(src, own=frozenset({"demo", "requests"}), project="demo")
+    assert [c.name for c in calls] == ["requests.adapters.HTTPAdapter"]
 
 
 def test_returned_function_is_not_reached() -> None:
@@ -306,8 +308,30 @@ WIDENED = [
     ("import asyncio\nasyncio.create_subprocess_exec('x')\n", "asyncio.create_subprocess_exec"),
     ("import asyncio\nasyncio.create_subprocess_shell('x')\n", "asyncio.create_subprocess_shell"),
     ("from multiprocessing import Process\nProcess(target=print)\n", "multiprocessing.Process"),
+    (
+        "from multiprocessing.context import SpawnProcess\nSpawnProcess()\n",
+        "multiprocessing.context.SpawnProcess",
+    ),
+    (
+        "import multiprocessing.context as c\nc.ForkProcess()\n",
+        "multiprocessing.context.ForkProcess",
+    ),
+    (
+        "import multiprocessing.context as c\nc.ForkServerProcess()\n",
+        "multiprocessing.context.ForkServerProcess",
+    ),
     ("import _winapi\n_winapi.CreateProcess(None, 'x')\n", "_winapi.CreateProcess"),
+    ("from distutils.spawn import spawn\nspawn(['x'])\n", "distutils.spawn.spawn"),
+    ("from distutils.util import spawn\nspawn(['x'])\n", "distutils.util.spawn"),
+    ("from distutils.ccompiler import spawn\nspawn(['x'])\n", "distutils.ccompiler.spawn"),
+    (
+        "import distutils.archive_util as a\na.spawn(['x'])\n",
+        "distutils.archive_util.spawn",
+    ),
+    ("import pydoc\npydoc.pipepager('t', 'x')\n", "pydoc.pipepager"),
+    ("import pydoc\npydoc.tempfilepager('t', 'x')\n", "pydoc.tempfilepager"),
     ("import _posixsubprocess\n_posixsubprocess.fork_exec()\n", "_posixsubprocess.fork_exec"),
+    ("import importlib\nimportlib.__import__('json')\n", "importlib.__import__"),
     ("import runpy\nrunpy.run_path('x.py')\n", "runpy.run_path"),
     ("import zipimport\nzipimport.zipimporter('x.zip')\n", "zipimport.zipimporter"),
     (
@@ -326,13 +350,55 @@ WIDENED = [
         "import importlib.machinery\nimportlib.machinery.SourcelessFileLoader('m', 'x.pyc')\n",
         "importlib.machinery.SourcelessFileLoader",
     ),
+    (
+        "from importlib.machinery import ExtensionFileLoader\nExtensionFileLoader('m', 'x.so')\n",
+        "importlib.machinery.ExtensionFileLoader",
+    ),
+    ("import imp\nimp.load_source('m', 'x.py')\n", "imp.load_source"),
+    ("import imp\nimp.load_compiled('m', 'x.pyc')\n", "imp.load_compiled"),
+    ("from imp import load_dynamic\nload_dynamic('m', 'x.so')\n", "imp.load_dynamic"),
+    ("import imp\nimp.load_module('m', None, 'x.py', ('.py', 'r', 1))\n", "imp.load_module"),
+    ("import imp\nimp.load_package('m', 'x')\n", "imp.load_package"),
     ("import types\ntypes.FunctionType(None, {})\n", "types.FunctionType"),
+    ("import types\ntypes.LambdaType(None, {})\n", "types.LambdaType"),
     ("from types import CodeType\nCodeType()\n", "types.CodeType"),
     ("import asyncio\nasyncio.open_connection('h', 1)\n", "asyncio.open_connection"),
+    ("import asyncio\nasyncio.open_unix_connection('p')\n", "asyncio.open_unix_connection"),
+    ("import asyncio\nasyncio.start_server(None, 'h', 1)\n", "asyncio.start_server"),
+    ("import asyncio\nasyncio.start_unix_server(None, 'p')\n", "asyncio.start_unix_server"),
+    ("import ssl\nssl.create_connection(('h', 443))\n", "ssl.create_connection"),
+    ("from ssl import socket\nsocket()\n", "ssl.socket"),
     ("import urllib3\nurllib3.PoolManager()\n", "urllib3.PoolManager"),
+    ("import urllib3\nurllib3.ProxyManager('u')\n", "urllib3.ProxyManager"),
+    ("import urllib3\nurllib3.HTTPConnectionPool('h')\n", "urllib3.HTTPConnectionPool"),
+    (
+        "from urllib3 import HTTPSConnectionPool\nHTTPSConnectionPool('h')\n",
+        "urllib3.HTTPSConnectionPool",
+    ),
+    ("import urllib3\nurllib3.connection_from_url('u')\n", "urllib3.connection_from_url"),
+    ("import urllib3\nurllib3.proxy_from_url('u')\n", "urllib3.proxy_from_url"),
     ("import urllib3\nurllib3.request('GET', 'u')\n", "urllib3.request"),
+    (
+        "import urllib3.connection\nurllib3.connection.HTTPConnection('h')\n",
+        "urllib3.connection.HTTPConnection",
+    ),
+    (
+        "from urllib3.connection import HTTPSConnection\nHTTPSConnection('h')\n",
+        "urllib3.connection.HTTPSConnection",
+    ),
+    (
+        "from urllib3.connection import VerifiedHTTPSConnection\nVerifiedHTTPSConnection('h')\n",
+        "urllib3.connection.VerifiedHTTPSConnection",
+    ),
+    (
+        "from urllib3.contrib.socks import SOCKSProxyManager\nSOCKSProxyManager('u')\n",
+        "urllib3.contrib.socks.SOCKSProxyManager",
+    ),
     ("import ftplib\nftplib.FTP('h')\n", "ftplib.FTP"),
     ("import smtplib\nsmtplib.SMTP('h')\n", "smtplib.SMTP"),
+    ("import poplib\npoplib.POP3('h')\n", "poplib.POP3"),
+    ("import imaplib\nimaplib.IMAP4_SSL('h')\n", "imaplib.IMAP4_SSL"),
+    ("import telnetlib\ntelnetlib.Telnet('h')\n", "telnetlib.Telnet"),
     ("import xmlrpc.client\nxmlrpc.client.ServerProxy('u')\n", "xmlrpc.client.ServerProxy"),
     ("import webbrowser\nwebbrowser.open('u')\n", "webbrowser.open"),
 ]
@@ -352,5 +418,189 @@ def test_widened_set_leaves_common_calls_alone() -> None:
         "import multiprocessing\nmultiprocessing.cpu_count()\n",
         "import types\ntypes.SimpleNamespace()\n",
         "import os\nos.getpid()\n",
+        "from distutils.spawn import find_executable\nfind_executable('git')\n",
+        "import pydoc\npydoc.render_doc(len)\n",
+        "import ssl\nssl.create_default_context()\n",
+        "from distutils.util import strtobool\nstrtobool('yes')\n",
     ):
         assert names(src) == set(), src
+
+
+# The same objects under the module that defines them: one line per module.
+SAME_AS = [
+    ("import builtins\nbuiltins.exec('1')\n", "builtins.exec"),
+    ("import builtins as b\nb.eval('1')\n", "builtins.eval"),
+    ("from builtins import exec as run\nrun('1')\n", "builtins.exec"),
+    ("import builtins\ngetattr(builtins, 'compile')('1', 'f', 'exec')\n", "builtins.compile"),
+    ("import builtins\nbuiltins.__import__('json')\n", "builtins.__import__"),
+    ("__builtins__.exec('1')\n", "builtins.exec"),  # the module itself in a script
+    ("import posix\nposix.system('x')\n", "posix.system"),
+    ("from nt import startfile\nstartfile('x')\n", "nt.startfile"),
+    ("import _socket\n_socket.socket()\n", "_socket.socket"),
+    ("import _ctypes\n_ctypes.dlopen('x')\n", "_ctypes.dlopen"),
+    ("import _pickle\n_pickle.loads(b'')\n", "_pickle.loads"),
+    (
+        "import asyncio\nasyncio.subprocess.create_subprocess_shell('x')\n",
+        "asyncio.subprocess.create_subprocess_shell",
+    ),
+    (
+        "from asyncio import subprocess as asp\nasp.create_subprocess_exec('x')\n",
+        "asyncio.subprocess.create_subprocess_exec",
+    ),
+    (
+        "from asyncio.streams import open_connection\nopen_connection('h', 1)\n",
+        "asyncio.streams.open_connection",
+    ),
+    (
+        "from multiprocessing.context import Process\nProcess()\n",
+        "multiprocessing.context.Process",
+    ),
+    (
+        "import importlib._bootstrap as b\nb.spec_from_loader('m', None)\n",
+        "importlib._bootstrap.spec_from_loader",
+    ),
+    (
+        "import _frozen_importlib\n_frozen_importlib.spec_from_loader('m', None)\n",
+        "_frozen_importlib.spec_from_loader",
+    ),
+    (
+        "from importlib._bootstrap import __import__ as imp\nimp('json')\n",
+        "importlib._bootstrap.__import__",
+    ),
+    ("import _frozen_importlib as f\nf.__import__('json')\n", "_frozen_importlib.__import__"),
+    (
+        "from importlib._bootstrap_external import SourceFileLoader\nSourceFileLoader('m', 'x.py')\n",
+        "importlib._bootstrap_external.SourceFileLoader",
+    ),
+    (
+        "import _frozen_importlib_external as e\ne.spec_from_file_location('m', 'x.py')\n",
+        "_frozen_importlib_external.spec_from_file_location",
+    ),
+    (
+        "from setuptools._distutils.spawn import spawn\nspawn(['x'])\n",
+        "setuptools._distutils.spawn.spawn",
+    ),
+    (
+        "from setuptools._distutils.ccompiler import spawn\nspawn(['x'])\n",
+        "setuptools._distutils.ccompiler.spawn",
+    ),
+    (
+        "from urllib3.poolmanager import PoolManager\nPoolManager()\n",
+        "urllib3.poolmanager.PoolManager",
+    ),
+    (
+        "from urllib3.connectionpool import HTTPSConnectionPool\nHTTPSConnectionPool('h')\n",
+        "urllib3.connectionpool.HTTPSConnectionPool",
+    ),
+    (
+        "import urllib3.connectionpool as p\np.HTTPSConnection('h')\n",
+        "urllib3.connectionpool.HTTPSConnection",
+    ),
+]
+
+
+def test_a_name_under_the_module_that_defines_it_counts() -> None:
+    from garnet_guard.facts.pyindex import sensitive_calls
+
+    for src, name in SAME_AS:
+        assert names(src) == {name}, src
+        assert {c.name for c in sensitive_calls(src.encode())} == {name}, src
+    # Only the listed names count: the rest of those modules stays out.
+    for src in (
+        "import posix\nposix.getcwd()\n",
+        "import nt\nnt._getfullpathname('x')\n",
+        "import _pickle\n_pickle.load(None)\n",
+        "from asyncio.subprocess import Process\nProcess(None, None, None)\n",
+        "import importlib._bootstrap_external as e\ne.cache_from_source('x.py')\n",
+        "from urllib3.poolmanager import PoolKey\nPoolKey()\n",
+        "from setuptools._distutils.spawn import find_executable\nfind_executable('git')\n",
+        "import builtins\nbuiltins.print('x')\nbuiltins.open('x')\n",
+        "import importlib._bootstrap as b\nb._find_spec('x', None)\n",
+        "from urllib3.connectionpool import DummyConnection\nDummyConnection()\n",
+    ):
+        assert names(src) == set(), src
+
+
+def test_a_top_level_module_named_like_the_standard_library_is_not_the_package() -> None:
+    from garnet_guard.facts.pyindex import scan_module, sensitive_calls
+
+    # A wheel that ships an empty os.py or webbrowser.py beside its package:
+    # Python still imports the standard library's, so the calls stay sensitive.
+    own = frozenset({"demo", "os", "webbrowser", "exec"})
+    src = b"import os, webbrowser\nos.system('x')\nwebbrowser.open('u')\nexec('1')\n"
+    want = {"os.system", "webbrowser.open", "exec"}
+    assert {c.name for c in scan_module(src, own=own, project="demo").calls} == want
+    assert {c.name for c in sensitive_calls(src, own=own, project="demo")} == want
+
+
+# A call to each PyPI library in the set, and to the builtins module.
+LIBRARY_CALLS = {
+    "requests": "import requests\nrequests.post('u', data='')\n",
+    "httpx": "import httpx\nhttpx.get('u')\n",
+    "urllib3": "import urllib3\nurllib3.PoolManager()\n",
+    "aiohttp": "import aiohttp\naiohttp.ClientSession()\n",
+    "setuptools": "from setuptools._distutils.spawn import spawn\nspawn(['x'])\n",
+    "builtins": "import builtins\nbuiltins.exec('1')\n",
+}
+
+
+def test_a_top_level_module_named_like_a_library_in_the_set_hides_no_call() -> None:
+    from garnet_guard.facts.pyindex import _THIRD_PARTY, scan_module, sensitive_calls
+
+    assert set(LIBRARY_CALLS) == _THIRD_PARTY | {"builtins"}
+    for head, src in LIBRARY_CALLS.items():
+        # demo ships an empty requests.py (or httpx.py, builtins.py) beside its
+        # package. Python imports the installed library, so the call counts. It
+        # is followed into the stub as well, in case the stub is what Python imports.
+        own = frozenset({"demo", head})
+        scan = scan_module(src.encode(), own=own, project="demo")
+        [call] = scan.calls
+        assert scan.calls_out == (call.name,), head
+        assert len(sensitive_calls(src.encode(), own=own, project="demo")) == 1, head
+
+
+def test_a_library_in_the_set_calls_its_own_modules() -> None:
+    from garnet_guard.facts.pyindex import scan_module, sensitive_calls
+
+    # The requests project calling requests.get: its own code, followed there.
+    for head, src in LIBRARY_CALLS.items():
+        own = frozenset({head})
+        scan = scan_module(src.encode(), own=own, project=head)
+        if head == "builtins":  # no project's own code: builtins is built in
+            assert [c.name for c in scan.calls] == list(scan.calls_out) == ["builtins.exec"]
+        else:
+            assert scan.calls == () and len(scan.calls_out) == 1, head
+            assert sensitive_calls(src.encode(), own=own, project=head) == (), head
+    # A call to the standard library stays sensitive in a project named like it.
+    scan = scan_module(b"exec('1')\n", own=frozenset({"exec"}), project="exec")
+    assert [c.name for c in scan.calls] == ["exec"]
+
+
+def test_project_name_from_wheel_and_sdist_filenames() -> None:
+    from garnet_guard.facts.inventory import project_name
+
+    assert project_name("requests-2.32.3-py3-none-any.whl") == "requests"
+    assert project_name("urllib3-2.2.3.tar.gz") == "urllib3"
+    assert project_name("Typing_Extensions-4.12.0.zip") == "typing-extensions"
+    assert project_name("aiohttp-3.9.5-cp312-cp312-manylinux_2_17_x86_64.whl") == "aiohttp"
+
+
+def test_explain_lists_builtins_as_the_bare_names() -> None:
+    from garnet_guard.facts.pyindex import sensitive_set
+
+    assert "builtins.<name>, counted as <name>" in sensitive_set()
+    assert "importlib._bootstrap.<name>, counted as importlib.<name> or importlib.util.<name>" in (
+        sensitive_set()
+    )
+
+
+def test_every_top_level_name_in_the_set_is_standard_library_unless_listed() -> None:
+    import builtins
+    import sys
+
+    from garnet_guard.facts import pyindex
+
+    removed = {"imp", "telnetlib", "distutils"}  # standard library up to Python 3.11 or 3.12
+    stdlib = set(sys.stdlib_module_names) | set(dir(builtins)) | removed
+    heads = {n.split(".")[0] for n in (*pyindex._EXACT, *pyindex._PREFIXES, *pyindex._SAME_AS)}
+    assert heads - stdlib == pyindex._THIRD_PARTY
