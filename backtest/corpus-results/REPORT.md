@@ -1,6 +1,6 @@
 # Clean-corpus backtest, 2026-10-10
 
-> **Current result:** with the rule tuning from PR #8 (now merged), 12 of 974 clean updates warn (1.2%), and none of those warnings makes a false claim. Confirmed on main on 2026-10-29; see [Re-run on main](#re-run-on-main-2026-10-29). The sections before it describe the first run, which led to that tuning. The incident replay mentioned below covered three releases at the time; it now covers seven malicious releases from four attacks (lightning, elementary-data, litellm, telnyx), and all seven get a warning (PR #24).
+> **Current result:** with the rule tuning from PR #8 (now merged), 12 of 974 clean updates warn (1.2%), and none of those warnings makes a false claim. Confirmed on main on 2026-10-29; see [Re-run on main](#re-run-on-main-2026-10-29). The sections before it describe the first run, which led to that tuning. The incident replay mentioned below covered three releases at the time; it now covers 26 malicious releases of 15 compromised packages, and 24 of them get a warning (see the README).
 
 The PyCon plan needed this number by Dec 1. Garnet `0.1.0.dev0` (the draft PR #1 engine) was run over the top 100 PyPI packages and the update between each pair of consecutive releases among their last 11 releases.
 

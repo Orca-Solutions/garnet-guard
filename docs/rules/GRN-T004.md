@@ -49,7 +49,7 @@ lightning 2.6.1 → 2.6.2: WARN
 The same rule reported lightning 2.6.3 and telnyx 4.87.1 and 4.87.2
 ([PYSEC-2026-3](https://osv.dev/vulnerability/PYSEC-2026-3)) in the replay.
 
-Three replays show what this rule can and can't see:
+Some replays show what this rule can and can't see:
 
 - **elementary-data 0.23.3** ([MAL-2026-3083](https://osv.dev/vulnerability/MAL-2026-3083)):
   no finding on the day. The attacker controlled the project's CI and pushed a `v0.23.3` tag
@@ -59,9 +59,22 @@ Three replays show what this rule can and can't see:
   the release instead. An attacker who can push to the repository can create a tag, so this
   rule is evidence of an upload from outside the repository, not proof that a release came
   from the project.
-- **telnyx 4.87.1**: reported on the day, not today. The release was uploaded with a stolen
-  token and had no tag. Telnyx later published its own 4.87.1 tag, so checking today's tags
-  would miss it.
+- **ultralytics 8.3.42** ([PYSEC-2024-154](https://osv.dev/vulnerability/PYSEC-2024-154)):
+  no finding on the day. A poisoned build cache made the project's own release workflow ship a
+  miner, and the same workflow tagged `v8.3.42` as usual
+  ([GitHub release archived on Zenodo](https://zenodo.org/records/14285281)). The tag has since
+  been deleted. No other rule reported this release.
+- **telnyx 4.87.1, gpsea 0.9.14 and uprobe 0.1.3**: reported on the day, not today. All three
+  were uploaded with no tag. Each project later tagged its own real release with that version
+  number, so checking today's tags would miss them.
+- **pantheon-agents 0.6.1** ([MAL-2026-5299](https://osv.dev/vulnerability/MAL-2026-5299)):
+  no finding. A `v0.6.1` tag exists today and points at a commit from eleven days before the
+  upload. A lightweight tag carries no date of its own, so the replay treats it as already
+  there. [GRN-C001](GRN-C001.md) reported the release.
+- **No repository to check**: nine of the replayed PyPI packages (ensmallen, guardrails-ai,
+  magique, magique-ai, mrmustard, napari-ufish, nucbox, pantheon-toolsets, synago) link no
+  repository in their metadata, and bramin's and ppkt2synergy's repositories have no tags. The
+  rule has nowhere to look and stays silent; it does not guess.
 - **litellm 1.82.7 and 1.82.8**: no finding. litellm tags its builds `v1.82.6-nightly`,
   `v1.82.6.rc.1` and so on, never plain `1.82.6`, so the trusted version had no matching tag
   to lose.

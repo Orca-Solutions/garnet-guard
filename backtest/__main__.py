@@ -8,8 +8,10 @@
 Known-bad lookups (GRN-K001) are off: the question is what Garnet catches
 before any feed lists a release. Incidents are replayed against the git tags
 as they stood when the release was uploaded (``tags_on_the_day`` in
-incidents.toml), and again against today's tags where those differ. Results
-go to backtest/results.json.
+incidents.toml), and again against today's tags where those differ. PyPI
+no longer serves provenance for removed releases; where public sources confirm
+a release had no attestations, ``attested = false`` records it. Results go to
+backtest/results.json.
 """
 
 from __future__ import annotations
@@ -51,9 +53,14 @@ def _tags_then(inc: dict[str, Any]) -> dict[str, dict[str, str | None]]:
 
 
 def _pypi_options(inc: dict[str, Any]) -> Options:
-    """PyPI incidents: the removed files are still served by URL and hash."""
+    """PyPI incidents: the removed files are still served by URL and hash.
+
+    ``uploaded_at`` is recorded where a registry snapshot gives it; ``source_repo``
+    is absent where the project linked no repository (so GRN-T004 cannot run).
+    """
     files = inc["files"]
     assert isinstance(files, list)
+    attested = inc.get("attested")
     replay = ReplayRelease(
         files=tuple(
             RegistryFile(
@@ -61,12 +68,22 @@ def _pypi_options(inc: dict[str, Any]) -> Options:
                 url=f["url"],
                 sha256=f["sha256"],
                 packagetype=f["packagetype"],
-                uploaded_at=datetime.fromisoformat(f["uploaded_at"]),
+                uploaded_at=datetime.fromisoformat(f["uploaded_at"])
+                if "uploaded_at" in f
+                else None,
             )
             for f in files
         ),
-        source_repo=str(inc["source_repo"]),
-        note="replayed: release removed from PyPI; files fetched by URL and hash, provenance not available",
+        source_repo=str(inc["source_repo"]) if inc.get("source_repo") else None,
+        note=(
+            "replayed: release removed from PyPI; files fetched by URL and hash; "
+            + (
+                "no attestations, per incidents.toml"
+                if attested is False
+                else "provenance not available"
+            )
+        ),
+        attested=attested,
     )
     return Options(
         replay={str(inc["candidate"]): replay}, check_known_bad=False, tags_then=_tags_then(inc)

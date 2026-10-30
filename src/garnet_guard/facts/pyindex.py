@@ -6,19 +6,35 @@ Parses source with ``ast`` only. Nothing is imported or executed.
 statements, class bodies, decorators and default arguments, plus the bodies
 of functions in the same module that top-level code calls, decorates with,
 or passes to a call (``threading.Thread(target=f)``, ``atexit.register(f)``).
+The same goes for lambdas it calls or passes, classes it instantiates (their
+``__init__`` and ``__new__``) and methods it calls on those classes.
 A function that is only returned or stored is not followed.
 Code under ``if __name__ == "__main__":`` is skipped.
+
+Calls into the package's own other modules are reported as ``calls_out``
+(``memos.log.get_logger``), and ``scan_module`` can start at such a function
+instead of the module body, so the inventory can follow a chain of calls
+across modules.
+
+Names are resolved through imports and simple aliasing (``sp = subprocess``),
+``from x import *`` of a sensitive module, ``getattr(x, "name")`` with a
+literal name, and ``__import__("x")`` or ``importlib.import_module("x")``
+with a literal name. A ``base64.*decode`` whose result reaches a sensitive
+call is reported with that call, so ``exec(base64.b64decode(...))`` is new
+even where ``exec`` was already used.
 """
 
 from __future__ import annotations
 
 import ast
+import builtins
 import warnings
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Container, Iterable, Iterator, Mapping
+from dataclasses import dataclass
 
 from ..models import CallSite
 
-SENSITIVE_SET_VERSION = "2026-10-a"
+SENSITIVE_SET_VERSION = "2026-10-b"
 
 # SPEC §6.3. Exact names, and prefixes that match a module and everything in it.
 _EXACT = frozenset(
@@ -47,6 +63,7 @@ _PREFIXES = (
     "requests.",
     "aiohttp.",
 )
+_BUILTINS = frozenset(dir(builtins))
 
 
 def sensitive_set() -> tuple[str, ...]:
@@ -73,14 +90,69 @@ def is_sensitive(name: str, call: ast.Call | None = None) -> bool:
     return any(name.startswith(p) for p in _PREFIXES)
 
 
-def _dotted(node: ast.expr) -> list[str] | None:
-    """``a.b.c`` as ``["a", "b", "c"]``, or None if it isn't a plain dotted name."""
+def _is_decode(name: str) -> bool:
+    """``base64.b64decode`` and friends."""
+    return name.startswith("base64.") and name.endswith("decode")
+
+
+def _const_str(node: ast.expr) -> str | None:
+    """A string literal, or ``'a' + 'b'`` folded; None for anything else."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _const_str(node.left), _const_str(node.right)
+        if left is not None and right is not None:
+            return left + right
+    return None
+
+
+def _getattr_literal(call: ast.Call) -> str | None:
+    """The attribute name in ``getattr(obj, "name")``."""
+    if isinstance(call.func, ast.Name) and call.func.id == "getattr" and len(call.args) >= 2:
+        return _const_str(call.args[1])
+    return None
+
+
+def _import_literal(call: ast.Call) -> str | None:
+    """The module in ``__import__("m")`` or ``importlib.import_module("m")``."""
+    func = call.func
+    literal = (
+        isinstance(func, ast.Name)
+        and func.id == "__import__"
+        or isinstance(func, ast.Attribute)
+        and func.attr == "import_module"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "importlib"
+    )
+    if literal and call.args:
+        return _const_str(call.args[0])
+    return None
+
+
+def _dotted(node: ast.expr, modules: Container[str] = ()) -> list[str] | None:
+    """``a.b.c`` as ``["a", "b", "c"]``, or None if it isn't a plain dotted name.
+
+    ``getattr(a, "b").c`` and ``__import__("a").b`` read the same way. So does
+    ``getattr(<anything>, "m")`` when ``m`` names a module the file imported:
+    num2words 0.5.15 wrote ``getattr(sys.modules[__name__], "ctypes")``.
+    """
     parts: list[str] = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
+    while True:
+        if isinstance(node, ast.Attribute):
+            parts.append(node.attr)
+            node = node.value
+        elif isinstance(node, ast.Call) and (attr := _getattr_literal(node)) is not None:
+            parts.append(attr)
+            node = node.args[0]
+            if attr in modules and not isinstance(node, (ast.Name, ast.Attribute, ast.Call)):
+                return list(reversed(parts))
+        else:
+            break
     if isinstance(node, ast.Name):
         parts.append(node.id)
+        return list(reversed(parts))
+    if isinstance(node, ast.Call) and (mod := _import_literal(node)) is not None:
+        parts.extend(reversed(mod.split(".")))
         return list(reversed(parts))
     return None
 
@@ -91,6 +163,8 @@ class _Resolver:
     def __init__(self) -> None:
         self.aliases: dict[str, str] = {}
         self.imports: set[str] = set()
+        self.star_modules: list[str] = []  # ``from m import *``, in order
+        self.defined: set[str] = set()  # names the module defines itself
         self.package: str | None = None  # this module's package, for relative imports
 
     def note_import(self, node: ast.Import | ast.ImportFrom) -> None:
@@ -102,22 +176,36 @@ class _Resolver:
                 else:
                     top = a.name.split(".")[0]
                     self.aliases[top] = top
-        else:
-            if node.level:
-                # Relative imports don't alias outside names; record what they
-                # load so callers can tell which of the package's modules run.
-                base = self._relative_base(node.level)
-                if base is not None:
-                    mod = ".".join(p for p in (base, node.module or "") if p)
-                    self.imports.add(mod)
-                    self.imports.update(f"{mod}.{a.name}" for a in node.names if a.name != "*")
+            return
+        if node.level:
+            # A relative import names one of the package's own modules; record
+            # what it loads, and alias the names so calls into it can be followed.
+            base = self._relative_base(node.level)
+            if base is None:
                 return
+            mod = ".".join(p for p in (base, node.module or "") if p)
+        else:
             mod = node.module or ""
-            self.imports.add(mod)
-            for a in node.names:
-                self.aliases[a.asname or a.name] = f"{mod}.{a.name}" if mod else a.name
-                if mod and a.name != "*":
-                    self.imports.add(f"{mod}.{a.name}")  # may be a submodule
+        self.imports.add(mod)
+        for a in node.names:
+            if a.name == "*":
+                if mod:
+                    self.star_modules.append(mod)
+                continue
+            self.aliases[a.asname or a.name] = f"{mod}.{a.name}" if mod else a.name
+            if mod:
+                self.imports.add(f"{mod}.{a.name}")  # may be a submodule
+
+    def note_assignment(self, node: ast.Assign) -> None:
+        """``sp = subprocess`` or ``ct = getattr(..., "ctypes")`` aliases the name."""
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            return
+        parts = _dotted(node.value, self.module_names())
+        if parts is None:
+            return
+        head = parts[0]
+        if head in self.aliases:
+            self.aliases[node.targets[0].id] = ".".join([self.aliases[head], *parts[1:]])
 
     def _relative_base(self, level: int) -> str | None:
         if self.package is None:
@@ -127,12 +215,33 @@ class _Resolver:
             return None
         return ".".join(parts[: len(parts) - (level - 1)])
 
+    def module_names(self) -> set[str]:
+        """Names bound to a module by a plain ``import m``."""
+        return {k for k, v in self.aliases.items() if "." not in v}
+
     def resolve(self, func: ast.expr) -> str | None:
-        parts = _dotted(func)
+        parts = _dotted(func, self.module_names())
         if not parts:
             return None
-        head = self.aliases.get(parts[0], parts[0])
-        return ".".join([head, *parts[1:]])
+        head, rest = parts[0], parts[1:]
+        if head in self.aliases:
+            return ".".join([self.aliases[head], *rest])
+        if head in self.defined:
+            return None  # the module's own function, class or variable shadows the name
+        if head not in _BUILTINS:
+            # A bare name after ``from subprocess import *`` may be subprocess.run.
+            for mod in self.star_modules:
+                name = ".".join([mod, head, *rest])
+                if is_sensitive(name):
+                    return name
+        root = func
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if rest and isinstance(root, ast.Name):
+            # ``requests.append(r)`` on a local list, or ``socket.settimeout`` on a
+            # local beside ``import socket as socket_``: the head is no module here.
+            return None
+        return ".".join(parts)
 
 
 def _is_main_guard(node: ast.stmt) -> bool:
@@ -151,26 +260,81 @@ def _is_main_guard(node: ast.stmt) -> bool:
 
 
 def _walk_exec(nodes: Iterable[ast.AST]) -> Iterator[ast.AST]:
-    """Yield nodes that execute when these statements run (not function bodies)."""
-    stack = list(nodes)
+    """Yield nodes that execute when these statements run (not function bodies).
+
+    Nodes come out in source order, so an assignment is seen before the
+    statement that uses the name.
+    """
+    stack = list(reversed(list(nodes)))
     while stack:
         node = stack.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             yield node  # for its decorators; the body runs only when called
-            stack.extend(node.decorator_list)
-            stack.extend(d for d in node.args.defaults)
-            stack.extend(d for d in node.args.kw_defaults if d is not None)
+            run_now = [*node.decorator_list, *node.args.defaults]
+            run_now += [d for d in node.args.kw_defaults if d is not None]
+            stack.extend(reversed(run_now))
             continue
         if isinstance(node, ast.Lambda):
-            continue
+            continue  # its body runs only when called; ``scan`` follows those
         if isinstance(node, ast.stmt) and _is_main_guard(node):
             continue
         yield node
-        stack.extend(ast.iter_child_nodes(node))
+        stack.extend(reversed(list(ast.iter_child_nodes(node))))
 
 
-def _local_refs(exprs: Iterable[ast.expr], functions: Mapping[str, ast.AST]) -> list[str]:
-    """Local functions that a call or decorator runs or is handed.
+def _constructor(cls: ast.ClassDef, classes: Mapping[str, ast.ClassDef]) -> list[ast.stmt]:
+    """What runs when the class is instantiated: ``__new__`` and ``__init__``.
+
+    A class without either inherits them from a base defined in the module.
+    """
+    body: list[ast.stmt] = []
+    seen: set[str] = set()
+    todo = [cls]
+    while todo:
+        c = todo.pop(0)
+        if c.name in seen:
+            continue
+        seen.add(c.name)
+        for stmt in c.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if stmt.name in ("__new__", "__init__"):
+                    body.extend(stmt.body)
+        if body:
+            return body
+        todo.extend(classes[b.id] for b in c.bases if isinstance(b, ast.Name) and b.id in classes)
+    return body
+
+
+def _reachable(tree: ast.Module) -> dict[str, list[ast.AST]]:
+    """Module-level callables by name, with what runs when each is called.
+
+    Functions and stored lambdas by name, classes by name (instantiation) and
+    their methods as ``Class.method``.
+    """
+    out: dict[str, list[ast.AST]] = {}
+    classes: dict[str, ast.ClassDef] = {}
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            out[stmt.name] = list(stmt.body)
+        elif isinstance(stmt, ast.ClassDef):
+            classes[stmt.name] = stmt
+        elif (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and isinstance(stmt.value, ast.Lambda)
+        ):
+            out[stmt.targets[0].id] = [stmt.value.body]
+    for name, cls in classes.items():
+        out[name] = list(_constructor(cls, classes))
+        for stmt in cls.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                out[f"{name}.{stmt.name}"] = list(stmt.body)
+    return out
+
+
+def _local_refs(exprs: Iterable[ast.expr], reachable: Mapping[str, object]) -> list[str]:
+    """Module-level callables that a call or decorator runs or is handed.
 
     Only a call's target, its direct arguments (``Thread(target=f)``,
     ``atexit.register(f)``) and decorators count. A function that is merely
@@ -180,24 +344,64 @@ def _local_refs(exprs: Iterable[ast.expr], functions: Mapping[str, ast.AST]) -> 
     for e in exprs:
         if isinstance(e, ast.Starred):
             e = e.value
-        if isinstance(e, ast.Name) and e.id in functions:
+        if isinstance(e, ast.Name) and e.id in reachable:
             out.append(e.id)
+        elif isinstance(e, ast.Attribute):
+            parts = _dotted(e)
+            if parts and len(parts) == 2 and ".".join(parts) in reachable:
+                out.append(".".join(parts))
     return out
 
 
-def index_module(
+def _decoded_inputs(
+    args: Iterable[ast.expr], resolver: _Resolver, decoded: Mapping[str, str]
+) -> list[str]:
+    """``base64.*decode`` calls whose result is among these arguments.
+
+    Direct (``exec(b64decode(x))``), wrapped (``exec(zlib.decompress(b64decode(x))))``)
+    or through a name assigned from a decode in the same scope.
+    """
+    out: list[str] = []
+    for arg in args:
+        for sub in ast.walk(arg):
+            if isinstance(sub, ast.Call):
+                name = resolver.resolve(sub.func)
+                if name is not None and _is_decode(name):
+                    out.append(name)
+            elif isinstance(sub, ast.Name) and sub.id in decoded:
+                out.append(decoded[sub.id])
+    return sorted(set(out))
+
+
+@dataclass(frozen=True)
+class ModuleScan:
+    """What one module runs, from its body or from one of its callables."""
+
+    calls: tuple[CallSite, ...]  # sensitive calls reached
+    imports: tuple[str, ...]  # modules the file imports
+    calls_out: tuple[str, ...]  # the package's own callables it calls, dotted
+    handed_out: tuple[tuple[str, str], ...] = ()  # own callables handed to a call, with the call
+
+
+def scan_module(
     source: bytes,
     *,
     path: str = "<module>",
     own: frozenset[str] = frozenset(),
     module: str | None = None,
-) -> tuple[tuple[CallSite, ...], tuple[str, ...]]:
-    """Return (import-time call sites, imports). Raises SyntaxError/ValueError.
+    entry: str | None = None,
+    handed: str | None = None,
+) -> ModuleScan:
+    """Index what runs at import, or what runs when ``entry`` is called.
 
-    ``own`` names the release's own top-level packages; calls into them are
-    not sensitive even if the names collide (the ``requests`` package calling
-    its own ``requests.adapters``). ``module`` is the dotted module name, used
-    to resolve relative imports into the imports list.
+    Raises SyntaxError/ValueError. ``own`` names the release's own top-level
+    packages; calls into them are not sensitive even if the names collide
+    (the ``requests`` package calling its own ``requests.adapters``) and are
+    returned as ``calls_out`` instead. ``module`` is the dotted module name,
+    used to resolve relative imports. ``entry`` is a function, ``Class``
+    (instantiation) or ``Class.method`` defined in the module; an unknown
+    entry runs nothing. ``handed`` names the call that ``entry`` was handed to
+    when that call is not known to run it; it is carried on every call site.
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # package source triggers SyntaxWarnings
@@ -209,35 +413,126 @@ def index_module(
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             resolver.note_import(node)
-
-    functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
     for stmt in tree.body:
-        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            functions[stmt.name] = stmt
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            resolver.defined.add(stmt.name)
+        elif isinstance(stmt, ast.Assign):
+            resolver.defined.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            resolver.defined.add(stmt.target.id)
 
+    reachable = _reachable(tree)
     calls: list[CallSite] = []
-    seen_funcs: set[str] = set()
+    calls_out: set[str] = set()
+    handed_out: set[tuple[str, str]] = set()
+    seen: set[str] = set()
+    decoded: dict[str, str] = {}  # name → the base64 decode it was assigned from
 
-    def scan(nodes: Iterable[ast.AST], via: str | None) -> None:
-        reached: list[str] = []
+    def scan(
+        nodes: Iterable[ast.AST],
+        via: str | None,
+        scope: Mapping[str, list[ast.AST]] | None = None,
+        handed: str | None = None,
+    ) -> None:
+        # Callables these statements can reach by name: the module's, plus any
+        # function defined inside the body being scanned (mrmustard 0.7.4 ran
+        # ``threading.Thread(target=_run).start()`` on a ``_run`` nested in the
+        # function it called at import). ``handed`` is the call the function
+        # being scanned was handed to (``partial(f)``, ``Thread(target=f)``);
+        # whether that call runs it is for the check to judge, so every call
+        # site found from here carries it.
+        local: dict[str, list[ast.AST]] = dict(scope if scope is not None else reachable)
+        reached: list[tuple[str, str | None]] = []
         for node in _walk_exec(nodes):
             if isinstance(node, ast.Call):
+                args = [*node.args, *(k.value for k in node.keywords)]
                 name = resolver.resolve(node.func)
-                if name is not None and name.split(".")[0] not in own and is_sensitive(name, node):
-                    calls.append(CallSite(name=name, line=node.lineno, via=via))
-                reached += _local_refs(
-                    [node.func, *node.args, *(k.value for k in node.keywords)], functions
-                )
+                if name is not None and name.split(".")[0] in own:
+                    if handed is None:
+                        calls_out.add(name)
+                    else:
+                        handed_out.add((name, handed))
+                elif name is not None and is_sensitive(name, node):
+                    calls.append(CallSite(name, node.lineno, via, handed_to=handed))
+                    for decode in _decoded_inputs(args, resolver, decoded):
+                        calls.append(
+                            CallSite(f"{decode} → {name}", node.lineno, via, handed_to=handed)
+                        )
+                # The call runs its target; ``partial(f)()`` runs f too. What it is
+                # handed (``Thread(target=f)``, ``partial(f)``) is followed as handed.
+                called = _local_refs([node.func], local)
+                if isinstance(node.func, ast.Call):
+                    inner = node.func
+                    called += _local_refs([*inner.args, *(k.value for k in inner.keywords)], local)
+                reached += [(key, handed) for key in called]
+                to = handed or _display(node.func, resolver, own)
+                reached += [(key, to) for key in _local_refs(args, local)]
+                for arg in args:
+                    if isinstance(arg, (ast.Name, ast.Attribute)):
+                        target = resolver.resolve(arg)
+                        if target is not None and target.split(".")[0] in own:
+                            handed_out.add((target, to))
+                if isinstance(node.func, ast.Lambda):
+                    scan([node.func.body], via or "<lambda>", local, handed)
+                for lam in (a for a in args if isinstance(a, ast.Lambda)):
+                    scan([lam.body], via or "<lambda>", local, to)
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                reached += _local_refs(node.decorator_list, functions)
-        for fname in reached:
-            if fname not in seen_funcs:
-                seen_funcs.add(fname)
-                scan(functions[fname].body, fname)
+                reached += [(key, handed) for key in _local_refs(node.decorator_list, local)]
+                if not isinstance(node, ast.ClassDef):
+                    local[node.name] = list(node.body)
+            elif isinstance(node, ast.Assign):
+                resolver.note_assignment(node)
+                for decode in _decoded_inputs([node.value], resolver, decoded):
+                    decoded.update((t.id, decode) for t in node.targets if isinstance(t, ast.Name))
+                if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                    if isinstance(node.value, ast.Lambda):
+                        local[node.targets[0].id] = [node.value.body]
+        reached.sort(key=lambda r: r[1] is not None)  # a function both called and handed: called
+        for key, ctx in reached:
+            nested = key not in reachable
+            mark = f"{via}.{key}" if nested else key  # two functions may nest the same name
+            if mark in seen:
+                continue
+            if ctx is None:
+                seen.add(mark)
+            elif f"{mark}@{ctx}" in seen:
+                continue  # handed to two different calls: scanned once per call
+            else:
+                seen.add(f"{mark}@{ctx}")
+            scan(local[key], key, local if nested else None, ctx)
 
-    scan(tree.body, None)
-    uniq = sorted(set(calls), key=lambda c: (c.line, c.name, c.via or ""))
-    return tuple(uniq), tuple(sorted(i for i in resolver.imports if i))
+    if entry is None:
+        scan(tree.body, None, None, handed)
+    elif entry in reachable:
+        seen.add(entry)
+        scan(reachable[entry], entry, None, handed)
+    uniq = sorted(set(calls), key=lambda c: (c.line, c.name, c.via or "", c.handed_to or ""))
+    return ModuleScan(
+        tuple(uniq),
+        tuple(sorted(i for i in resolver.imports if i)),
+        tuple(sorted(calls_out)),
+        tuple(sorted(handed_out)),
+    )
+
+
+def _display(func: ast.expr, resolver: _Resolver, own: frozenset[str]) -> str:
+    """The call a function was handed to, as the finding names it."""
+    name = resolver.resolve(func)
+    if name is not None and name.split(".")[0] not in own:
+        return name
+    return ast.unparse(func)[:60]
+
+
+def index_module(
+    source: bytes,
+    *,
+    path: str = "<module>",
+    own: frozenset[str] = frozenset(),
+    module: str | None = None,
+) -> tuple[tuple[CallSite, ...], tuple[str, ...]]:
+    """Return (import-time call sites, imports). Raises SyntaxError/ValueError."""
+    scan = scan_module(source, path=path, own=own, module=module)
+    return scan.calls, scan.imports
 
 
 def module_name(path: str) -> str:
@@ -246,3 +541,36 @@ def module_name(path: str) -> str:
     if p.endswith("/__init__"):
         p = p[: -len("/__init__")]
     return p.replace("/", ".")
+
+
+def index_build_script(source: bytes, *, path: str = "setup.py") -> tuple[CallSite, ...]:
+    """Every sensitive call in a build script, at any depth. Raises SyntaxError/ValueError.
+
+    ``setup.py`` runs as a script when the sdist is built, and a ``cmdclass``
+    hook in it runs at install, so a call inside a function or a method counts
+    too. ``via`` names the enclosing function or ``Class.method``.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        tree = ast.parse(source, filename=path)
+    resolver = _Resolver()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            resolver.note_import(node)
+    calls: list[CallSite] = []
+
+    def visit(node: ast.AST, via: str | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(child, f"{via}.{child.name}" if via else child.name)
+            elif isinstance(child, ast.ClassDef):
+                visit(child, child.name)
+            else:
+                if isinstance(child, ast.Call):
+                    name = resolver.resolve(child.func)
+                    if name is not None and is_sensitive(name, child):
+                        calls.append(CallSite(name=name, line=child.lineno, via=via))
+                visit(child, via)
+
+    visit(tree, None)
+    return tuple(sorted(set(calls), key=lambda c: (c.line, c.name, c.via or "")))
