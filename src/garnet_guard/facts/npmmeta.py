@@ -136,7 +136,7 @@ def inspect_tarball(filename: str, data: bytes, limits: Limits) -> NpmInspection
         for entry in entries:
             rel = entry.path[len(prefix) :]
             body = reader.read(entry.path)
-            kind = _kind(rel, body[:4])
+            kind = _kind(rel, body)
             result.files.append(FileEntry(rel, len(body), hashlib.sha256(body).hexdigest(), kind))
             if rel == "package.json":
                 manifest = body
