@@ -6,6 +6,7 @@
 - [API.md](API.md): code design, layers, import rules and the public Python API. Read before changing code structure.
 - [CODE_TOUR.md](CODE_TOUR.md): a plain-language tour of the code as it is in 0.1: the five stages, where each part lives, and how to follow one run. Start here if you're new to the code.
 - [rules/](rules/README.md): one page per rule ID: what it checks, why it matters, an example finding, and how to resolve or allowlist it. Findings and the PR comment link here.
+- [rule-coverage.md](rule-coverage.md): what stands behind each rule: crafted tests, real attacks replayed, real routine updates, and what is not yet proven.
 - [action.md](action.md): setting up the GitHub Action, its inputs and outputs, and the two-workflow pattern for pull requests from forks.
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) and [../THREAT_MODEL.md](../THREAT_MODEL.md): overview and security model. Read the threat model before touching anything that reads package contents or runs in CI.
 - [decisions/](decisions/): architecture decision records, accepted and superseded.

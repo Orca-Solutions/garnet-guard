@@ -30,7 +30,7 @@ New to the code? [docs/CODE_TOUR.md](docs/CODE_TOUR.md) walks through it module 
 1. Open an issue first describing the signal and the incident or risk behind it.
 2. Pick the next free ID in the right family (`GRN-T` trust, `GRN-C` content, `GRN-K` known-bad, `GRN-E` couldn't-check). IDs are never reused. Add it to the table in [docs/SPEC-v1.md](docs/SPEC-v1.md) §6.2.
 3. Implement the check as a pure function in `src/garnet_guard/checks/` and register it in `ALL_CHECKS` in `checks/__init__.py`. No I/O in checks. If it needs a fact Garnet doesn't collect yet, add the field to `ReleaseFacts` or `ArtifactFacts` in `models.py` and fill it in under `facts/` or `ecosystems/`.
-4. Add at least one positive and one negative test in `tests/test_checks.py`, built with `tests/builders.py`.
+4. Add at least one positive and one negative test in `tests/test_checks.py`, built with `tests/builders.py`, and a firing and a quiet row in `tests/test_rule_matrix.py` (the suite fails without them). Record what the rule has and hasn't met in [docs/rule-coverage.md](docs/rule-coverage.md).
 5. Add `garnet explain` text in `checks/docs.py`: what it means, why it matters, what to do.
 6. Add the rule's page at `docs/rules/<ID>.md`, following the existing pages, and list it in [docs/rules/README.md](docs/rules/README.md).
 7. Run the backtest (`uv run python -m backtest`) and include the before/after warn rate in the PR.
