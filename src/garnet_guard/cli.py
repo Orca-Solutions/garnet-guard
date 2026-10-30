@@ -16,7 +16,14 @@ from .engine import ECOSYSTEMS, Options, Report, compare, evaluate, report, unch
 from .facts.pyindex import SENSITIVE_SET_VERSION, sensitive_set
 from .lockfiles import LockfileError
 from .models import Change, Policy, Severity
-from .policy import PolicyError, describe, expired_ignores, load_policy
+from .policy import (
+    MAX_POLICY_BYTES,
+    PolicyError,
+    describe,
+    expired_ignores,
+    load_policy,
+    policy_changes,
+)
 from .report import escape, to_json, to_text
 from .sarif import to_sarif
 from .workspace import Unchecked, changes_for, dedupe, discover, git_show, plain_file
@@ -66,6 +73,12 @@ def _parser() -> argparse.ArgumentParser:
         help="the updated lockfile; repeat for several (default: lockfiles found here)",
     )
     c.add_argument("--git-base", metavar="REF", help="read each base lockfile from this git ref")
+    c.add_argument(
+        "--policy-change",
+        metavar="PATH",
+        action="append",
+        help="with --git-base: report what changed in this policy file since REF (repeatable)",
+    )
     c.add_argument(
         "--format",
         choices=("text", "json", "sarif", "markdown"),
@@ -178,7 +191,7 @@ def _not_yet(flag: str) -> UsageError:
 def _policy(args: argparse.Namespace) -> Policy:
     if args.no_policy:
         return Policy()
-    return load_policy(Path(args.policy) if args.policy else None)
+    return load_policy(Path(args.policy) if args.policy else None, today=_today())
 
 
 def _fail_on(args: argparse.Namespace, policy: Policy) -> Severity:
@@ -228,7 +241,8 @@ def _check(args: argparse.Namespace) -> int:
         unchecked_result(u.change, u.rule_id, u.detail, policy=policy, today=today)
         for u in unchecked
     ]
-    rep = report(results, policy=policy, today=today)
+    edits = _policy_edits(args.git_base, args.policy_change or [], cwd)
+    rep = report(results, policy=policy, today=today, policy_changes=edits)
     if args.format == "json":
         out = to_json(rep)
     elif args.format == "markdown":
@@ -243,6 +257,39 @@ def _check(args: argparse.Namespace) -> int:
     else:
         sys.stdout.write(out)
     return rep.exit_code(_fail_on(args, policy))
+
+
+def _policy_edits(
+    git_base: str | None, paths: list[str], cwd: Path
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """What the working tree changes in each policy file since ``git_base``.
+
+    The check itself uses the policy it was given (the Action passes the base
+    commit's), so these changes apply only after the pull request merges; the
+    report lists them so the reviewer sees a policy edited beside a bump.
+    """
+    if not paths:
+        return ()
+    if not git_base:
+        raise UsageError("--policy-change needs --git-base")
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for name in sorted(set(paths)):
+        path = Path(name)
+        try:
+            before = git_show(git_base, path, cwd=cwd)
+        except ValueError as err:  # a path outside the repository
+            raise UsageError(f"--policy-change {name}: not a file in this repository") from err
+        lines: tuple[str, ...]
+        if path.is_symlink() or (path.exists() and not plain_file(path, cwd)):
+            lines = (f"{name} is not a regular file in this pull request, so it wasn't read",)
+        elif path.exists() and path.stat().st_size > MAX_POLICY_BYTES:
+            lines = (f"{name} is larger than {MAX_POLICY_BYTES} bytes, so it wasn't read",)
+        else:
+            after = path.read_bytes() if path.exists() else None
+            lines = policy_changes(before, after, source=name)
+        if lines:
+            out.append((name, lines))
+    return tuple(out)
 
 
 def _markdown(rep: Report) -> str:
@@ -287,7 +334,7 @@ def _diff(args: argparse.Namespace) -> int:
 
 def _policy_check(path: str | None) -> int:
     """``garnet policy check``: validate a policy file and say what it does."""
-    policy = load_policy(Path(path) if path else None)
+    policy = load_policy(Path(path) if path else None, today=_today())
     if policy.source is None:
         where = path or "here"
         print(f"No policy found {'in ' + where if path else where}; the defaults apply.")

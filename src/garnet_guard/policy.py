@@ -2,6 +2,7 @@
 
 Parsing is strict. An unknown key, a bad value or an ignore without a reason
 or an expiry date is a ``PolicyError`` (exit code 3), never a silent default.
+Given today's date, an ignore that runs more than 12 months past it is one too.
 Applying a policy is pure: the engine passes in today's date.
 """
 
@@ -57,38 +58,48 @@ class PolicyError(ValueError):
 # --- Loading ---------------------------------------------------------------
 
 
-def load_policy(path: Path | None = None, *, cwd: Path | None = None) -> Policy:
+def load_policy(
+    path: Path | None = None, *, cwd: Path | None = None, today: date | None = None
+) -> Policy:
     """Read the policy SPEC §7.1 picks, or the defaults when there is none.
 
     With ``path``, that file must exist. Without it: ``garnet.toml`` in ``cwd``,
-    then ``[tool.garnet]`` in ``cwd/pyproject.toml``.
+    then ``[tool.garnet]`` in ``cwd/pyproject.toml``. With ``today``, an ignore
+    whose ``until`` is more than 12 months after it is refused.
     """
     if path is not None:
         if not path.is_file():
             raise PolicyError(f"no such policy file: {path}")
-        return _load(path, str(path))
+        return _load(path, str(path), today)
     here = cwd or Path.cwd()
     for name in (POLICY_FILE, PYPROJECT):
         candidate = here / name
         if candidate.is_file():
-            return _load(candidate, name)
+            return _load(candidate, name, today)
     return Policy()
 
 
-def _load(path: Path, source: str) -> Policy:
+def _load(path: Path, source: str, today: date | None) -> Policy:
     if path.stat().st_size > MAX_POLICY_BYTES:
         raise PolicyError(f"{source}: larger than {MAX_POLICY_BYTES} bytes")
-    return parse_policy(path.read_bytes(), source=source, pyproject=path.name == PYPROJECT)
+    return parse_policy(
+        path.read_bytes(), source=source, pyproject=path.name == PYPROJECT, today=today
+    )
 
 
-def parse_policy(data: bytes, *, source: str, pyproject: bool = False) -> Policy:
+def parse_policy(
+    data: bytes, *, source: str, pyproject: bool = False, today: date | None = None
+) -> Policy:
     """Parse a policy file's bytes. ``pyproject`` reads ``[tool.garnet]``.
 
     A ``pyproject.toml`` without a ``[tool.garnet]`` table means the defaults.
+    With ``today``, an ignore whose ``until`` is more than 12 months after it
+    is a ``PolicyError``: an ignore is a review that expires, not a standing
+    exception.
     """
     try:
         doc = tomllib.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as err:
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as err:
         raise PolicyError(f"{source}: not valid TOML: {err}") from err
     if pyproject:
         tool = doc.get("tool", {})
@@ -104,10 +115,12 @@ def parse_policy(data: bytes, *, source: str, pyproject: bool = False) -> Policy
             raise PolicyError(f"{source}: no [garnet] table")
         table = doc["garnet"]
         where = "[garnet]"
-    return _policy(_table(table, f"{source}: {where}"), source, where, data)
+    return _policy(_table(table, f"{source}: {where}"), source, where, data, today)
 
 
-def _policy(t: dict[str, Any], source: str, where: str, data: bytes) -> Policy:
+def _policy(
+    t: dict[str, Any], source: str, where: str, data: bytes, today: date | None = None
+) -> Policy:
     ctx = f"{source}: {where}"
     _known(t, _TOP_KEYS, ctx)
     if "version" not in t:
@@ -131,7 +144,7 @@ def _policy(t: dict[str, Any], source: str, where: str, data: bytes) -> Policy:
     if not isinstance(raw_ignores, list):
         raise PolicyError(f"{ctx} ignore must be an array of tables: [[{where[1:-1]}.ignore]]")
     ignores = tuple(
-        _ignore(_table(entry, f"{ctx} ignore #{i}"), f"{source}: ignore #{i}")
+        _ignore(_table(entry, f"{ctx} ignore #{i}"), f"{source}: ignore #{i}", today)
         for i, entry in enumerate(raw_ignores, start=1)
     )
 
@@ -168,7 +181,15 @@ def _rule_setting(rule_id: str, value: object, ctx: str) -> Severity:
     return severity
 
 
-def _ignore(t: dict[str, Any], ctx: str) -> Ignore:
+def year_after(day: date) -> date:
+    """The latest ``until`` a policy read on ``day`` accepts: the same date a year on."""
+    try:
+        return day.replace(year=day.year + 1)
+    except ValueError:  # 29 February
+        return day.replace(year=day.year + 1, day=28)
+
+
+def _ignore(t: dict[str, Any], ctx: str, today: date | None = None) -> Ignore:
     _known(t, _IGNORE_KEYS, ctx)
     for key in ("package", "rules", "reason", "until"):
         if key not in t:
@@ -203,11 +224,17 @@ def _ignore(t: dict[str, Any], ctx: str) -> Ignore:
             f"or is known to be malicious. If you've reviewed it and still accept it, also set "
             f"acknowledge_critical = true."
         )
+    until = _date(t["until"], f"{ctx} until")
+    if today is not None and until > year_after(today):
+        raise PolicyError(
+            f"{ctx} until = {until.isoformat()}: an ignore can last at most 12 months, to "
+            f"{year_after(today).isoformat()}. Review the package again by then and set a new date."
+        )
     return Ignore(
         package=package,
         rules=tuple(sorted(set(rules))),
         reason=_text(t["reason"], f"{ctx} reason"),
-        until=_date(t["until"], f"{ctx} until"),
+        until=until,
         ecosystem=ecosystem,
         versions=versions,
         acknowledge_critical=ack,
@@ -345,3 +372,103 @@ def describe(ignore: Ignore) -> str:
     """One line naming an ignore, for reports: ``numpy >=2.0 GRN-C004 until 2027-06-30``."""
     what = " ".join(x for x in (ignore.ecosystem, ignore.package, ignore.versions) if x)
     return f"{what} {', '.join(ignore.rules)} until {ignore.until.isoformat()}"
+
+
+# --- Changes between two versions of a policy file -------------------------
+
+
+def _severity_name(s: Severity | None, *, fail_on: bool = False) -> str:
+    if s is None:
+        return "unset"
+    return "never" if fail_on and s == Severity.OFF else s.label
+
+
+def policy_changes(before: bytes | None, after: bytes | None, *, source: str) -> tuple[str, ...]:
+    """What a pull request changes in a policy file, one line per change.
+
+    ``before`` is the file at the base commit and ``after`` the file in the pull
+    request; None means it doesn't exist there. The lines say what each change
+    does, worst first: a change that loosens the policy (a new ignore, a rule
+    lowered or turned off, ``fail_on`` raised, a limit removed) is marked
+    "loosens". A file that doesn't parse says so and why. Pure: the caller reads
+    both files, and nothing here applies either policy.
+    """
+    if before == after:
+        return ()
+    pyproject = Path(source).name == PYPROJECT
+
+    def read(data: bytes | None) -> Policy | str:
+        if data is None:
+            return Policy()
+        try:
+            return parse_policy(data, source=source, pyproject=pyproject)
+        except PolicyError as err:
+            return str(err)
+
+    old, new = read(before), read(after)
+    if isinstance(new, str):
+        return (
+            f"the policy in this pull request doesn't parse, so every check after it merges stops with exit code 3: {new}",
+        )
+    if isinstance(old, str):
+        old = Policy()
+    loosens: list[str] = []
+    other: list[str] = []
+    if before is None and new.source is not None:
+        other.append(f"{source} is new: it sets the policy for pull requests after this one")
+    if after is None and old.source is not None:
+        loosens.append(f"{source} is deleted, and with it every setting and ignore it held")
+
+    if old.fail_on != new.fail_on:
+        line = (
+            f"fail_on: {_severity_name(old.fail_on, fail_on=True)} → "
+            f"{_severity_name(new.fail_on, fail_on=True)}"
+        )
+        was = old.fail_on if old.fail_on is not None else Severity.BLOCK
+        now = new.fail_on if new.fail_on is not None else Severity.BLOCK
+        (loosens if now == Severity.OFF or (was != Severity.OFF and now > was) else other).append(
+            line
+        )
+    if old.default != new.default:
+        line = f"default: {_severity_name(old.default)} → {_severity_name(new.default)}"
+        was = old.default if old.default is not None else Severity.WARN
+        now = new.default if new.default is not None else Severity.WARN
+        (loosens if now < was else other).append(line)
+    for rid in sorted(set(old.rules) | set(new.rules)):
+        sa, sb = old.rules.get(rid), new.rules.get(rid)
+        if sa == sb:
+            continue
+        doc = DOCS.get(rid)
+        default = doc.default if doc is not None else Severity.WARN
+        line = f"{rid}: {_severity_name(sa) if sa is not None else 'default'} → {_severity_name(sb) if sb is not None else 'default'}"
+        (
+            loosens if (default if sb is None else sb) < (default if sa is None else sa) else other
+        ).append(line)
+
+    def key(i: Ignore) -> tuple[object, ...]:
+        return (i.ecosystem, canonicalize_name(i.package), i.versions, i.rules)
+
+    was_ignored = {key(i): i for i in old.ignores}
+    now_ignored = {key(i): i for i in new.ignores}
+    for k in sorted(now_ignored.keys() - was_ignored.keys(), key=str):
+        i = now_ignored[k]
+        loosens.append(f"new ignore: {describe(i)}, reason: {i.reason}")
+    for k in sorted(was_ignored.keys() & now_ignored.keys(), key=str):
+        ia, ib = was_ignored[k], now_ignored[k]
+        if ib.until > ia.until:
+            loosens.append(f"ignore extended: {describe(ib)} (was until {ia.until.isoformat()})")
+        elif (ib.until, ib.reason, ib.acknowledge_critical) != (
+            ia.until,
+            ia.reason,
+            ia.acknowledge_critical,
+        ):
+            other.append(f"ignore changed: {describe(ib)}, reason: {ib.reason}")
+    for k in sorted(was_ignored.keys() - now_ignored.keys(), key=str):
+        other.append(f"ignore removed: {describe(was_ignored[k])}")
+
+    for f in fields(Limits):
+        la, lb = getattr(old.limits, f.name), getattr(new.limits, f.name)
+        if la != lb:
+            (loosens if lb > la else other).append(f"limit {f.name}: {la} → {lb}")
+
+    return tuple([f"loosens: {x}" for x in loosens] + other)

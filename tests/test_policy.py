@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -15,6 +15,8 @@ from tests.builders import release
 
 TODAY = date(2026, 11, 1)
 CHANGE = Change("pypi", "demo", "1.0", "1.1")
+# An until the CLI accepts on any day the tests run: within 12 months of today.
+SOON = (datetime.now(UTC).date() + timedelta(days=90)).isoformat()
 
 SPEC_EXAMPLE = """
 [garnet]
@@ -336,7 +338,7 @@ def check(*extra: str) -> int:
 def test_cli_reads_garnet_toml_and_fail_on(project, capsys) -> None:
     assert check("--fail-on", "warn") == 1
     capsys.readouterr()
-    (project / "garnet.toml").write_text(ignore_toml(until='"2099-12-31"'))
+    (project / "garnet.toml").write_text(ignore_toml(until=f'"{SOON}"'))
     assert check("--fail-on", "warn", "--format", "json") == 0
     doc = json.loads(capsys.readouterr().out)
     assert doc["policy"]["source"] == "garnet.toml" and doc["verdict"] == "pass"
@@ -358,14 +360,206 @@ def test_policy_check_command(project, capsys) -> None:
     assert main(["policy", "check"]) == 0
     assert "defaults apply" in capsys.readouterr().out
     (project / "garnet.toml").write_text(
-        ignore_toml(until='"2099-12-31"')
+        ignore_toml(until=f'"{SOON}"')
         + '\n[[garnet.ignore]]\npackage = "old"\nrules = ["GRN-C001"]\n'
         'reason = "reviewed"\nuntil = "2020-01-01"\n'
     )
     assert main(["policy", "check"]) == 0
     out = capsys.readouterr().out
     assert "garnet.toml: valid" in out
-    assert "ignore demo GRN-T004 until 2099-12-31 (applies)" in out
+    assert f"ignore demo GRN-T004 until {SOON} (applies)" in out
     assert "ignore old GRN-C001 until 2020-01-01 (EXPIRED, no longer applies)" in out
     (project / "bad.toml").write_text("[garnet]\nversion = 1\nextra = 1\n")
     assert main(["policy", "check", "bad.toml"]) == 3
+
+
+def test_ignore_longer_than_12_months_is_refused() -> None:
+    ok = ignore_toml(until='"2027-11-01"')
+    assert parse_policy(ok.encode(), source="garnet.toml", today=TODAY).ignores
+    late = ignore_toml(until='"2027-11-02"')
+    with pytest.raises(PolicyError) as err:
+        parse_policy(late.encode(), source="garnet.toml", today=TODAY)
+    assert str(err.value) == (
+        "garnet.toml: ignore #1 until = 2027-11-02: an ignore can last at most 12 months, "
+        "to 2027-11-01. Review the package again by then and set a new date."
+    )
+    # Without today (reading a policy as data, not to apply it) there is no cap.
+    assert parse_policy(late.encode(), source="garnet.toml").ignores
+
+
+def test_cap_on_29_february() -> None:
+    from garnet_guard.policy import year_after
+
+    assert year_after(date(2028, 2, 29)) == date(2029, 2, 28)
+    assert year_after(date(2026, 10, 30)) == date(2027, 10, 30)
+
+
+def test_cli_refuses_a_far_off_until(project, capsys) -> None:
+    (project / "garnet.toml").write_text(ignore_toml(until='"2099-12-31"'))
+    assert check() == 3
+    assert "an ignore can last at most 12 months" in capsys.readouterr().err
+    assert main(["policy", "check"]) == 3
+
+
+# What a pull request changes in the policy (issue #51)
+
+BASE_POLICY = """[garnet]
+version = 1
+fail_on = "warn"
+
+[garnet.rules]
+"GRN-C003" = "block"
+
+[[garnet.ignore]]
+package = "kept"
+rules = ["GRN-T004"]
+reason = "tags in a monorepo"
+until = "2027-01-31"
+
+[[garnet.ignore]]
+package = "gone"
+rules = ["GRN-C001"]
+reason = "namespace .pth"
+until = "2027-01-31"
+"""
+
+
+def test_policy_changes_lists_loosening_first() -> None:
+    from garnet_guard.policy import policy_changes
+
+    after = (
+        BASE_POLICY.replace('fail_on = "warn"', 'fail_on = "never"')
+        .replace('"GRN-C003" = "block"', '"GRN-C003" = "off"')
+        .replace(
+            'reason = "tags in a monorepo"\nuntil = "2027-01-31"',
+            'reason = "tags in a monorepo"\nuntil = "2027-09-30"',
+        )
+        .replace('package = "gone"', 'package = "evil"')
+    )
+    lines = policy_changes(BASE_POLICY.encode(), after.encode(), source="garnet.toml")
+    assert lines == (
+        "loosens: fail_on: warn → never",
+        "loosens: GRN-C003: block → off",
+        "loosens: new ignore: evil GRN-C001 until 2027-01-31, reason: namespace .pth",
+        "loosens: ignore extended: kept GRN-T004 until 2027-09-30 (was until 2027-01-31)",
+        "ignore removed: gone GRN-C001 until 2027-01-31",
+    )
+
+
+def test_policy_changes_for_new_deleted_broken_and_unchanged_files() -> None:
+    from garnet_guard.policy import policy_changes
+
+    data = BASE_POLICY.encode()
+    assert policy_changes(data, data, source="garnet.toml") == ()
+    added = policy_changes(None, data, source="garnet.toml")
+    assert added[0].startswith("loosens: new ignore: gone GRN-C001")
+    assert "garnet.toml is new: it sets the policy for pull requests after this one" in added
+    assert policy_changes(data, None, source="garnet.toml")[0] == (
+        "loosens: garnet.toml is deleted, and with it every setting and ignore it held"
+    )
+    (broken,) = policy_changes(data, b"[garnet]\nversion = 2\n", source="garnet.toml")
+    assert broken.startswith("the policy in this pull request doesn't parse")
+    # A pyproject.toml edit that doesn't touch [tool.garnet] is not a policy change.
+    assert (
+        policy_changes(
+            b"[project]\nname = 'a'\n", b"[project]\nname = 'b'\n", source="pyproject.toml"
+        )
+        == ()
+    )
+
+
+def test_tightening_is_listed_without_loosens() -> None:
+    from garnet_guard.policy import policy_changes
+
+    after = BASE_POLICY.replace('fail_on = "warn"', 'fail_on = "warn"\ndefault = "block"')
+    after = after.replace('"GRN-C003" = "block"', '"GRN-C003" = "block"\n"GRN-T004" = "block"')
+    assert policy_changes(BASE_POLICY.encode(), after.encode(), source="garnet.toml") == (
+        "default: unset → block",
+        "GRN-T004: default → block",
+    )
+    # fail_on = "block" fails a run on fewer findings than "warn": it loosens.
+    looser = BASE_POLICY.replace('fail_on = "warn"', 'fail_on = "block"')
+    assert policy_changes(BASE_POLICY.encode(), looser.encode(), source="garnet.toml") == (
+        "loosens: fail_on: warn → block",
+    )
+
+
+def _policy_repo(tmp_path) -> None:
+    """A git repository whose one commit has an empty requirements.txt and STRICT_POLICY."""
+    import subprocess
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    git("config", "commit.gpgsign", "false")
+    (tmp_path / "requirements.txt").write_text("")
+    (tmp_path / "garnet.toml").write_text(STRICT_POLICY)
+    git("add", ".")
+    git("commit", "-q", "-m", "base")
+
+
+def test_check_lists_a_policy_edit_since_the_git_base(tmp_path, monkeypatch, capsys) -> None:
+    _policy_repo(tmp_path)
+    (tmp_path / "garnet.toml").write_text(STRICT_POLICY.replace("'warn'", "'never'"))
+    monkeypatch.chdir(tmp_path)
+    args = ["check", "--git-base", "HEAD", "--head", "requirements.txt", "--no-policy"]
+    assert main([*args, "--policy-change", "garnet.toml", "--format", "json"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["policy_changes"] == [
+        {"path": "garnet.toml", "changes": ["loosens: fail_on: warn → never"]}
+    ]
+    assert main([*args, "--policy-change", "garnet.toml", "--format", "markdown"]) == 0
+    out = capsys.readouterr().out
+    assert "> [!IMPORTANT]" in out and "> - loosens\\: fail\\_on\\: warn → never" in out
+    assert main([*args, "--policy-change", "garnet.toml"]) == 0
+    assert "policy file garnet.toml changed since the base:" in capsys.readouterr().out
+    assert (
+        main(
+            [
+                "check",
+                "--base",
+                "requirements.txt",
+                "--head",
+                "requirements.txt",
+                "--policy-change",
+                "garnet.toml",
+            ]
+        )
+        == 3
+    )
+
+
+STRICT_POLICY = "[garnet]\nversion = 1\nfail_on = 'warn'\n"
+
+
+def test_a_policy_edit_garnet_cannot_read_is_reported(tmp_path, monkeypatch, capsys) -> None:
+    from garnet_guard.policy import MAX_POLICY_BYTES
+
+    _policy_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    args = ["check", "--git-base", "HEAD", "--head", "requirements.txt", "--no-policy"]
+    json_args = [*args, "--policy-change", "garnet.toml", "--format", "json"]
+
+    def changes() -> list[str]:
+        assert main(json_args) == 0
+        (entry,) = json.loads(capsys.readouterr().out)["policy_changes"]
+        return list(entry["changes"])
+
+    # A symbolic link could point at a file on the runner: never read.
+    (tmp_path / "secret.txt").write_text("[garnet]\nversion = 1\n")
+    (tmp_path / "garnet.toml").unlink()
+    (tmp_path / "garnet.toml").symlink_to(tmp_path / "secret.txt")
+    assert changes() == [
+        "garnet.toml is not a regular file in this pull request, so it wasn't read"
+    ]
+    (tmp_path / "garnet.toml").unlink()
+    (tmp_path / "garnet.toml").write_text("#" * (MAX_POLICY_BYTES + 1))
+    assert changes() == [f"garnet.toml is larger than {MAX_POLICY_BYTES} bytes, so it wasn't read"]
+    (tmp_path / "garnet.toml").write_text("[garnet]\nversion = 1\nx = " + "[" * 100_000)
+    (line,) = changes()
+    assert line.startswith("the policy in this pull request doesn't parse")
+    assert main([*args, "--policy-change", "/etc/hostname"]) == 3
+    assert "not a file in this repository" in capsys.readouterr().err

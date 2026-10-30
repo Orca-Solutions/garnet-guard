@@ -43,6 +43,9 @@ def to_text(report: Report, *, color: bool = False) -> str:
         lines.append("")
     if report.policy.source:
         lines.append(escape(f"policy: {report.policy.source}"))
+    for path, changes in report.policy_changes:
+        lines.append(escape(f"policy file {path} changed since the base:"))
+        lines.extend(escape(f"  - {c}") for c in changes)
     for ignore in report.expired:
         lines.append(escape(f"note: this ignore expired and no longer applies: {describe(ignore)}"))
     lines.append(f"verdict: {report.verdict.value}")
@@ -118,11 +121,15 @@ def to_json(report: Report) -> str:
             "sha256": report.policy.sha256,
             "expired": [_ignore(i) for i in report.expired],
         }
-    doc = {
+    doc: dict[str, Any] = {
         "schema": "https://garnetguard.dev/schema/report/v1.json",
         "garnet_version": report.garnet_version,
         "verdict": report.verdict.value,
         "policy": policy,
         "changes": changes,
     }
+    if report.policy_changes:
+        doc["policy_changes"] = [
+            {"path": path, "changes": list(lines)} for path, lines in report.policy_changes
+        ]
     return json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=True) + "\n"

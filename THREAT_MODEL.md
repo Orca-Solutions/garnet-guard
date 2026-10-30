@@ -52,7 +52,7 @@ A red-team pass on 2026-10-30 listed the ways a malicious release could still ge
 | The attacker also pushes a matching tag | GRN-T004 is satisfied | Tag sanity checks [#61](https://github.com/orca-solutions/garnet-guard/issues/61) |
 | The bad release is between the trusted version and the candidate | Trust rules compare the two ends only | Intermediate releases, SPEC §5.2 [#62](https://github.com/orca-solutions/garnet-guard/issues/62) |
 | The payload sits in a model or data file a loader runs (pickle) | Nothing | Model loaders [#59](https://github.com/orca-solutions/garnet-guard/issues/59) |
-| An ignore added to the policy in the same PR as the update | The ignore is applied | Policy guardrails [#51](https://github.com/orca-solutions/garnet-guard/issues/51) |
+| An ignore added to the policy in the same PR as the update | The Action checks the pull request with the base commit's policy, so the new ignore doesn't apply to it, and the comment lists the edit, loosening changes first. After the merge it applies to every later pull request, for at most 12 months | Done: policy guardrails [#51](https://github.com/orca-solutions/garnet-guard/issues/51) |
 | An update that never reaches a lockfile (installed by hand, or in an image) | Nothing: Garnet checks lockfile diffs | A scheduled check of a deployed environment [#63](https://github.com/orca-solutions/garnet-guard/issues/63) |
 | A risky property added slowly, one small step per release | Each step is compared only with the release before | Per-package history, v2 [#64](https://github.com/orca-solutions/garnet-guard/issues/64) |
 

@@ -486,3 +486,33 @@ def test_comment_job_renders_report_or_says_it_couldnt_check(
     proc = _run("action/comment/render.sh", e)
     assert proc.returncode == 0, proc.stderr
     assert "couldn't check" in Path(_outputs(e)["comment-path"]).read_text()
+
+
+def _policy_changes_passed(env: dict[str, str]) -> list[str]:
+    calls = Path(env["STUB_LOG"]).read_text()
+    return re.findall(r"--policy-change (\S+)", calls)
+
+
+def test_policy_edit_in_the_pull_request_is_listed(env: dict[str, str]) -> None:
+    _commit_at_base(env, {"garnet.toml": STRICT})
+    ws = Path(env["GITHUB_WORKSPACE"])
+    (ws / "garnet.toml").write_text(RELAXED)
+    _git(ws, "add", "garnet.toml")
+    _git(ws, "commit", "-q", "-m", "relax")
+    assert _run("action/run.sh", env).returncode == 0
+    assert _policy_passed(env) == STRICT  # still checked with the base's policy
+    assert _policy_changes_passed(env) == ["garnet.toml"]
+
+
+def test_policy_added_by_the_pull_request_is_listed(env: dict[str, str]) -> None:
+    (Path(env["GITHUB_WORKSPACE"]) / "garnet.toml").write_text(RELAXED)
+    assert _run("action/run.sh", env).returncode == 0
+    assert _policy_passed(env) is None
+    assert _policy_changes_passed(env) == ["garnet.toml"]
+
+
+def test_explicit_policy_edit_is_listed(env: dict[str, str]) -> None:
+    _commit_at_base(env, {"ci/garnet.toml": STRICT})
+    env |= {"GARNET_POLICY": "ci/garnet.toml"}
+    assert _run("action/run.sh", env).returncode == 0
+    assert _policy_changes_passed(env) == ["ci/garnet.toml"]
