@@ -40,8 +40,9 @@ examplelib 2.6.1 → 2.6.2: WARN
 
 ## How to resolve it
 
-1. Confirm the move from the old home: release notes, the README, or an announcement in
-   the old repository. Don't rely on what the new repository says about itself.
+1. Confirm the move from the old home: an announcement or a commit in the old repository,
+   or the project's page linking the new one. Don't rely on the release notes or on what the
+   new repository says about itself; whoever published the release wrote them.
 2. If the move is real, merge and add an ignore for this version. Later releases from the
    new repository compare against this one and stay quiet.
 

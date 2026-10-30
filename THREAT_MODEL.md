@@ -56,7 +56,7 @@ A red-team pass on 2026-10-30 listed the ways a malicious release could still ge
 | An update that never reaches a lockfile (installed by hand, or in an image) | Nothing: Garnet checks lockfile diffs | A scheduled check of a deployed environment [#63](https://github.com/orca-solutions/garnet-guard/issues/63) |
 | A risky property added slowly, one small step per release | Each step is compared only with the release before | Per-package history, v2 [#64](https://github.com/orca-solutions/garnet-guard/issues/64) |
 
-Smaller notes that help a reviewer without a new rule (that only content rules applied, credential reads at import, release-notes wording) are tracked in [#50](https://github.com/orca-solutions/garnet-guard/issues/50).
+Smaller notes that help a reviewer without a new rule are done ([#50](https://github.com/orca-solutions/garnet-guard/issues/50)): a change whose trusted release has no attestation and no git tag says that GRN-T001 to GRN-T005 had nothing to compare with, GRN-C003 lists new reads of credentials and CI settings at import at `info`, and the remediation text points at the repository before the release notes, which whoever published the release also wrote.
 
 ## Part 2: protecting Garnet itself
 

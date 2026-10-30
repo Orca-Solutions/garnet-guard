@@ -122,6 +122,7 @@ class ChangeResult:
     change: Change
     verdict: Verdict
     findings: tuple[Finding, ...]
+    notes: tuple[str, ...] = ()  # what the checks could and couldn't compare; never a verdict
 
 
 @dataclass(frozen=True)
@@ -221,6 +222,7 @@ class CallSite:
     via: str | None = None  # function in this module the call was reached through
     from_module: str | None = None  # path of the module whose import started the chain
     handed_to: str | None = None  # the call the function went to, when it may not run it
+    read: bool = False  # a read of a credential or CI setting, not a call (GRN-C003, info)
 
 
 @dataclass(frozen=True)

@@ -38,8 +38,9 @@ _DOCS: tuple[RuleDoc, ...] = (
         "Attestations name the repository whose CI built the release. A different repository means "
         "someone else's CI published this version: a fork, a new home, or an attacker's repository. "
         "Renames are ignored when GitHub's repository id is unchanged.",
-        "Confirm the move with the project (release notes, README, an announcement from the old "
-        "repository). Don't merge on the strength of the new repository's own claims.",
+        "Confirm the move from the old repository: an announcement or a commit there, or the "
+        "project's page linking the new home. Don't rely on the release notes or on what the new "
+        "repository says about itself; whoever published the release wrote them.",
     ),
     RuleDoc(
         "GRN-T003",
@@ -125,8 +126,9 @@ _DOCS: tuple[RuleDoc, ...] = (
         "Python runs `import` lines in .pth files in site-packages every time the interpreter starts, "
         "for every program, before any of your code. Almost no package needs a new one. "
         "elementary-data 0.23.3 used exactly this to steal credentials.",
-        "Read the .pth file. If it is a legitimate path hook (editable installs, namespace helpers) the "
-        "release notes usually say so; otherwise treat the release as compromised.",
+        "Read the .pth file. A legitimate path hook (editable installs, namespace helpers) is in the "
+        "repository at the release's tag; check there, not only in the release notes, which whoever "
+        "published the release wrote. Otherwise treat the release as compromised.",
     ),
     RuleDoc(
         "GRN-C002",
@@ -152,8 +154,11 @@ _DOCS: tuple[RuleDoc, ...] = (
         "Module top-level code runs the moment anything imports the package, including your test suite "
         "and CI. lightning 2.6.2 started a credential stealer this way, from a thread launched in "
         "lightning/__init__.py.",
-        "Read the flagged lines. Network or subprocess calls at import are rare in libraries; ask "
-        "whether the release notes explain them.",
+        "Read the flagged lines, then find them in the repository: the commit on the default branch "
+        "that added them, at the release's tag. Network or subprocess calls at import are rare in "
+        "libraries. A condition around the call, such as running only in CI or only when a token is "
+        "set, is evidence, not reassurance. Release notes don't settle it: whoever published the "
+        "release wrote them.",
     ),
     RuleDoc(
         "GRN-C007",

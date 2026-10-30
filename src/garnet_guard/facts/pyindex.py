@@ -22,12 +22,19 @@ literal name, and ``__import__("x")`` or ``importlib.import_module("x")``
 with a literal name. A ``base64.*decode`` whose result reaches a sensitive
 call is reported with that call, so ``exec(base64.b64decode(...))`` is new
 even where ``exec`` was already used.
+
+Reads of credentials and CI settings in the same code are indexed too, as
+call sites marked ``read``: an environment variable such as ``GITHUB_TOKEN``
+or ``CI`` (``os.environ[...]``, ``os.getenv``, ``"CI" in os.environ``), the
+whole environment (``dict(os.environ)``), or a cloud metadata address. They
+are evidence, not sensitive calls; GRN-C003 reports new ones at info.
 """
 
 from __future__ import annotations
 
 import ast
 import builtins
+import re
 import warnings
 from collections.abc import Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -74,6 +81,79 @@ def sensitive_set() -> tuple[str, ...]:
         *(p + "*" for p in _PREFIXES),
         "base64.*decode (when the result reaches one of the above)",
     )
+
+
+# Reads of credentials and CI settings at import (GRN-C003 reports new ones at info).
+READ_SET_VERSION = "2026-10-a"
+_ENV_NAMES = frozenset({"CI", "GOOGLE_APPLICATION_CREDENTIALS"})
+_ENV_PREFIXES = ("GITHUB_", "ACTIONS_", "AWS_", "AZURE_", "GCP_", "NPM_", "PYPI_", "TWINE_")
+_ENV_SUFFIXES = ("_TOKEN", "_SECRET", "_SECRET_KEY", "_API_KEY", "_ACCESS_KEY", "_PASSWORD")
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,99}")
+_ENV_GETTERS = frozenset(
+    {"os.getenv", "os.getenvb", "os.environ.get", "os.environ.setdefault", "os.environ.pop"}
+)
+_ENV_COPIES = frozenset({"copy", "items", "keys", "values"})
+_METADATA_HOSTS = (
+    "169.254.169.254",  # AWS, Azure, GCP, Oracle and others
+    "169.254.170.2",  # AWS ECS task credentials
+    "fd00:ec2::254",  # AWS over IPv6
+    "metadata.google.internal",
+    "100.100.100.200",  # Alibaba Cloud
+)
+WHOLE_ENVIRONMENT = "the whole environment (os.environ)"
+
+
+def credential_env(name: str) -> bool:
+    """An environment variable that holds a credential or says the code runs in CI."""
+    if not _ENV_NAME.fullmatch(name):
+        return False
+    upper = name.upper()
+    return upper in _ENV_NAMES or upper.startswith(_ENV_PREFIXES) or upper.endswith(_ENV_SUFFIXES)
+
+
+def _env_read(name: str) -> str:
+    return f"environment variable {name}"
+
+
+def _reads(node: ast.AST, resolver: _Resolver) -> list[str]:
+    """What this node reads that a credential stealer reads, as call-site names."""
+
+    def environ(expr: ast.expr) -> bool:
+        return resolver.resolve(expr) == "os.environ"
+
+    out: list[str] = []
+    if isinstance(node, ast.Call):
+        name = resolver.resolve(node.func)
+        key = _const_str(node.args[0]) if node.args else None
+        if name in _ENV_GETTERS and key is not None and credential_env(key):
+            out.append(_env_read(key))
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in _ENV_COPIES and environ(func.value):
+            out.append(WHOLE_ENVIRONMENT)
+        # dict(os.environ), json.dumps(os.environ); env=os.environ only hands it on
+        values = [*node.args, *(k.value for k in node.keywords if k.arg != "env")]
+        values = [v.value if isinstance(v, ast.Starred) else v for v in values]
+        if any(environ(v) for v in values):
+            out.append(WHOLE_ENVIRONMENT)
+    elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+        key = _const_str(node.slice)
+        if key is not None and credential_env(key) and environ(node.value):
+            out.append(_env_read(key))
+    elif isinstance(node, ast.Compare) and len(node.ops) == 1:
+        key = _const_str(node.left)
+        if (
+            isinstance(node.ops[0], (ast.In, ast.NotIn))
+            and key is not None
+            and credential_env(key)
+            and environ(node.comparators[0])
+        ):
+            out.append(_env_read(key))
+    elif isinstance(node, ast.Dict):
+        if any(k is None and environ(v) for k, v in zip(node.keys, node.values, strict=True)):
+            out.append(WHOLE_ENVIRONMENT)  # {**os.environ}
+    elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+        out += [f"cloud metadata address {h}" for h in _METADATA_HOSTS if h in node.value]
+    return out
 
 
 def is_sensitive(name: str, call: ast.Call | None = None) -> bool:
@@ -444,6 +524,10 @@ def scan_module(
         local: dict[str, list[ast.AST]] = dict(scope if scope is not None else reachable)
         reached: list[tuple[str, str | None]] = []
         for node in _walk_exec(nodes):
+            for read in _reads(node, resolver):
+                calls.append(
+                    CallSite(read, getattr(node, "lineno", 0), via, handed_to=handed, read=True)
+                )
             if isinstance(node, ast.Call):
                 args = [*node.args, *(k.value for k in node.keywords)]
                 name = resolver.resolve(node.func)

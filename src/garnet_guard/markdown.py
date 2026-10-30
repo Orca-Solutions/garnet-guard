@@ -167,6 +167,7 @@ def _flagged_block(change: Mapping[str, Any]) -> list[str]:
     ignored = _ignored(change)
     if ignored:
         lines.append(f"> - ignored by the policy: {', '.join(f'`{r}`' for r in ignored)}")
+    lines += [f"> - note: {text(n)}" for n in _list(change.get("notes")) if isinstance(n, str)]
     return lines
 
 
@@ -178,6 +179,8 @@ def _pass_row(change: Mapping[str, Any]) -> str:
         parts.append("info: " + ", ".join(f"`{r}`" for r in infos))
     if ignored:
         parts.append("ignored by the policy: " + ", ".join(f"`{r}`" for r in ignored))
+    if any(isinstance(n, str) for n in _list(change.get("notes"))):
+        parts.append("publishing not compared (no attestation or tag)")
     checks = " · ".join(parts) or "no findings"
     return (
         f"| {code(change.get('package', '?'), in_table=True)} "

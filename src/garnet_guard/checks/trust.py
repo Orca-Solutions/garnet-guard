@@ -22,6 +22,31 @@ def _provs(rel: ReleaseFacts) -> list[tuple[ArtifactFacts, FileProvenance | None
     return [(a, a.provenance) for a in rel.artifacts]
 
 
+def coverage_notes(base: ReleaseFacts | None) -> tuple[str, ...]:
+    """What a reviewer should know about what the trust rules could compare.
+
+    GRN-T001 to T005 are diff rules: each needs an attestation or a git tag
+    on the trusted release to compare with. A trusted release with neither
+    arms none of them, so a pass rests on the content and absolute rules. Said only when
+    Garnet looked and found nothing: a lookup that failed is GRN-E001.
+    """
+    if base is None or not base.artifacts or base.tag is not None:
+        return ()
+    if any(p is None or p.present for _, p in _provs(base)):
+        return ()
+    repos = base.tag_repos or ((base.source_repo,) if base.source_repo else ())
+    if repos and base.tag_checked:
+        where = "no git tag in " + " or ".join(f"github.com/{r}" for r in repos)
+    elif not repos:
+        where = "links no GitHub repository to look for a tag in"
+    else:
+        return ()  # the tag lookup failed: GRN-E001 says so
+    return (
+        f"{base.version} has no attestation and {where}, so GRN-T001 to GRN-T005, which "
+        "compare how releases were published, had nothing to compare with",
+    )
+
+
 def _all_verified(rel: ReleaseFacts) -> bool:
     """True when the release has files and every one has a verified attestation."""
     ps = _provs(rel)
