@@ -74,7 +74,7 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 - [x] Evidence notes: "only content rules apply", credential reads at import, release-notes wording [#50](https://github.com/orca-solutions/garnet-guard/issues/50)
 - [x] Policy guardrails: cap an ignore's expiry, note a policy edit in the same PR (high-risk path) [#51](https://github.com/orca-solutions/garnet-guard/issues/51)
 - [x] JavaScript content rule for npm (GRN-C011, at `info`; a dependency-free scan) [#52](https://github.com/orca-solutions/garnet-guard/issues/52)
-- [ ] Package-level capability signal: measured on the corpus first, `info` at most until the numbers say otherwise [#53](https://github.com/orca-solutions/garnet-guard/issues/53)
+- [x] Package-level capability signal: measured on the corpus and replays, and not built, since it added no detection and misses ultralytics 8.3.42 [#53](https://github.com/orca-solutions/garnet-guard/issues/53)
 
 **After launch (0.3 to 1.0):**
 
