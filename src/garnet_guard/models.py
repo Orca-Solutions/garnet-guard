@@ -220,6 +220,7 @@ class CallSite:
     line: int
     via: str | None = None  # function in this module the call was reached through
     from_module: str | None = None  # path of the module whose import started the chain
+    handed_to: str | None = None  # the call the function went to, when it may not run it
 
 
 @dataclass(frozen=True)

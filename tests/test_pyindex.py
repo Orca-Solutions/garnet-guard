@@ -219,3 +219,57 @@ def test_nested_function_handed_to_a_call_is_followed() -> None:
         "handler = make()\n"
     )
     assert names(stored) == set()
+
+
+def test_a_dotted_name_needs_an_imported_head() -> None:
+    # curl-cffi 0.15.0: a local list called requests; oscrypto 0.17.3: a local
+    # socket beside ``import socket as socket_``.
+    assert names("def run():\n    requests = []\n    requests.append(1)\nrun()\n") == set()
+    assert (
+        names(
+            "import socket as socket_\ndef f(s):\n    socket = s\n    socket.settimeout(5)\nf(1)\n"
+        )
+        == set()
+    )
+    assert names("import os.path\nos.system('x')\n") == {"os.system"}
+    assert names("import socket as socket_\nsocket_.socket()\n") == {"socket.socket"}
+
+
+def test_a_module_level_definition_shadows_a_builtin() -> None:
+    # nltk 3.10.4 redos.py defines its own compile().
+    assert names("def compile(src, flags):\n    return src\n\ncompile('a', 0)\n") == set()
+    assert names("import re\ncompile = re.compile\ncompile('a')\n") == set()
+    assert names("class exec:\n    pass\n\nexec('a')\n") == set()
+    assert names("compile('a', 'b', 'exec')\n") == {"compile"}
+
+
+def test_a_handed_function_carries_the_call_it_went_to() -> None:
+    from garnet_guard.facts.pyindex import scan_module
+
+    def handed(src: str) -> set[str | None]:
+        return {c.handed_to for c in scan_module(src.encode()).calls}
+
+    body = "import subprocess\nfrom functools import partial\n\ndef _run():\n    subprocess.run(['x'])\n\n"
+    # partd 1.3.0 built partial(Encode, ...) at import; nothing ran Encode.
+    assert handed(body + "runner = partial(_run)\n") == {"functools.partial"}
+    # The same partial called at once runs _run.
+    assert handed(body + "partial(_run)()\n") == {None}
+    # A function both handed and called counts as called.
+    assert handed(body + "runner = partial(_run)\n_run()\n") == {None}
+    assert handed(body + "import threading\nthreading.Thread(target=_run).start()\n") == {
+        "threading.Thread"
+    }
+    assert handed("import atexit, os\natexit.register(lambda: os.system('x'))\n") == {
+        "atexit.register"
+    }
+    # A factory the module defines itself is named as written.
+    src = body + "def wrap(f):\n    return f\n\nrun = wrap(_run)\n"
+    assert handed(src) == {"wrap"}
+    # Handing one of the package's own callables is recorded with the call.
+    scan = scan_module(
+        b"from functools import partial\nfrom memos import work\njob = partial(work.go)\n",
+        own=frozenset({"memos"}),
+        module="memos.api",
+        path="memos/api.py",
+    )
+    assert scan.calls_out == () and scan.handed_out == (("memos.work.go", "functools.partial"),)
