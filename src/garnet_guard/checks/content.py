@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import functools
 import posixpath
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import replace
 from datetime import datetime
 
 from ..models import (
@@ -52,6 +54,9 @@ BACKEND_ALLOWLIST = frozenset(
 )
 
 
+CheckRule = Callable[[Change, ReleaseFacts | None, ReleaseFacts], Iterator[RawFinding]]
+
+
 def _pick(rel: ReleaseFacts, kind: str) -> ArtifactFacts | None:
     """The inspected wheel or sdist of a release, if there is one."""
     for a in rel.content:
@@ -70,6 +75,8 @@ def _pair(
     When neither pairing is possible (the trusted version shipped only a
     wheel and the new one only an sdist, or the other way round) the two
     kinds are compared with each other, with a note, rather than not at all.
+    A new version that adds a wheel beside its sdist is read both ways: see
+    ``each_view``.
     """
     bw, cw = _pick(base, "wheel"), _pick(cand, "wheel")
     if bw is not None and cw is not None:
@@ -78,6 +85,51 @@ def _pair(
     if bs is not None and cs is not None:
         return bs, cs
     return bw or bs, cw or cs
+
+
+def _views(base: ReleaseFacts | None, cand: ReleaseFacts) -> tuple[ReleaseFacts, ...]:
+    """The candidate as the content rules read it.
+
+    A new version that is the first to ship a wheel beside its sdist is read
+    twice, each time against the trusted sdist: its sdist, which pip builds
+    where no wheel fits, and its wheel, which pip installs everywhere else.
+    Every other change is read once.
+    """
+    if (
+        base is None
+        or cand.ecosystem != "pypi"
+        or _pick(base, "wheel") is not None
+        or _pick(base, "sdist") is None
+        or _pick(cand, "wheel") is None
+        or _pick(cand, "sdist") is None
+    ):
+        return (cand,)
+    sdist = tuple(a for a in cand.artifacts if not a.filename.endswith(".whl"))
+    wheel = tuple(a for a in cand.artifacts if a.packagetype != "sdist")
+    return replace(cand, artifacts=sdist), replace(cand, artifacts=wheel)
+
+
+def each_view(rule: CheckRule) -> CheckRule:
+    """Run a content rule on each way the candidate is read, and report each
+    finding once: one that differs only in its notes is the same finding."""
+
+    @functools.wraps(rule)
+    def run(change: Change, base: ReleaseFacts | None, cand: ReleaseFacts) -> Iterator[RawFinding]:
+        seen: set[tuple[str, str, tuple[Evidence, ...]]] = set()
+        for view in _views(base, cand):
+            for f in rule(change, base, view):
+                key = (f.rule_id, f.title, tuple(e for e in f.evidence if e.kind != "note"))
+                if key not in seen:
+                    seen.add(key)
+                    yield f
+
+    return run
+
+
+def _installed(a: ArtifactFacts, path: str) -> str:
+    """A path as the wheel built from ``a`` would hold it: an sdist's
+    ``src/`` folder is not part of the installed name."""
+    return path[4:] if a.packagetype == "sdist" and path.startswith("src/") else path
 
 
 def _clip(text: str, n: int = 160) -> str:
@@ -116,12 +168,12 @@ def new_pth_file(
     b, c = _pair(base, cand)
     if b is None or c is None:
         return
-    old = {_site_name(p.path): p for p in b.pth_files}
+    old = {_site_name(_installed(b, p.path)): p for p in b.pth_files}
     old_lines = {p.exec_lines for p in b.pth_files if p.exec_lines}
     evidence: list[Evidence] = []
     for p in c.pth_files:
         size = next((f.size for f in c.files if f.path == p.path), 0)
-        name = _site_name(p.path)
+        name = _site_name(_installed(c, p.path))
         if name not in old:
             if p.exec_lines in old_lines:
                 continue  # renamed (protobuf-<version>-nspkg.pth), same lines
@@ -539,27 +591,32 @@ def new_import_time_exec(
 
 def _unparsed_new(
     base: ReleaseFacts | None, cand: ReleaseFacts
-) -> tuple[ArtifactFacts | None, list[str]]:
-    """The artifact GRN-E002 reads, and its new or changed .py files ast
-    couldn't parse."""
+) -> tuple[ArtifactFacts | None, ArtifactFacts | None, list[str]]:
+    """The trusted and the new artifact GRN-E002 compares, and the new one's
+    new or changed .py files ast couldn't parse."""
     b, c = (
         _pair(base, cand)
         if base is not None
         else (None, _pick(cand, "wheel") or _pick(cand, "sdist"))
     )
     if c is None:
-        return None, []
-    old_hashes = {f.path: f.sha256 for f in b.files} if b is not None else {}
-    new_hashes = {f.path: f.sha256 for f in c.files}
-    return c, [p for p in c.unparsed if old_hashes.get(p) != new_hashes.get(p)]
+        return None, None, []
+    old_hashes = {_installed(b, f.path): f.sha256 for f in b.files} if b is not None else {}
+    new_hashes = {_installed(c, f.path): f.sha256 for f in c.files}
+    bad = [
+        p
+        for p in c.unparsed
+        if old_hashes.get(_installed(c, p)) != new_hashes.get(_installed(c, p))
+    ]
+    return b, c, bad
 
 
-def unparsed_changed(
+@each_view
+def _unparsed_read(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
-    """GRN-E002 for new or changed .py files ast couldn't parse, in the
-    artifact the content rules read and in each wheel GRN-C012 compared."""
-    _, bad = _unparsed_new(base, cand)
+    """GRN-E002 for the artifact the content rules read, each way they read it."""
+    b, c, bad = _unparsed_new(base, cand)
     if bad:
         yield RawFinding(
             "GRN-E002",
@@ -567,8 +624,19 @@ def unparsed_changed(
             tuple(
                 Evidence("file", f"{p}: not valid Python 3 syntax", path=p)
                 for p in bad[:MAX_EVIDENCE]
-            ),
+            )
+            + (_compare_note(b, c) if b is not None and c is not None else ()),
         )
+
+
+def unparsed_changed(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-E002 for new or changed .py files ast couldn't parse, in the
+    artifact the content rules read (a first wheel and its sdist each, see
+    ``each_view``) and in each wheel GRN-C012 compared. GRN-C012's wheels are
+    read once, against the whole candidate."""
+    yield from _unparsed_read(change, base, cand)
     yield from _compared_unparsed(base, cand)
 
 
@@ -1374,7 +1442,9 @@ def wheels_differ(
         else:
             before.setdefault((w.family, w.path), set()).update(w.names)
     looked = _families_read(base)
-    reported, bad = _unparsed_new(base, cand)
+    # A first wheel beside an sdist is read against the trusted sdist in a view
+    # of its own (each_view), and that view is where GRN-E002 reports it.
+    _, reported, bad = _unparsed_new(base, _views(base, cand)[-1])
     warned = (
         {_site_name(p) for p in bad} if reported and reported.filename == read.filename else set()
     )
@@ -1591,14 +1661,14 @@ def new_binary(
     b, c = _pair(base, cand)
     if b is None or c is None or not (b.inspected and c.inspected):
         return
-    old = {_install_key(f.path): f for f in b.files}
+    old = {_install_key(_installed(b, f.path)): f for f in b.files}
     native_dirs = {posixpath.dirname(k) for k, f in old.items() if _native(f)}
     comparable = _natives_comparable(base, b, c)
-    sources = {_install_key(f.path) for f in c.files if f.kind == "py"}
+    sources = {_install_key(_installed(c, f.path)) for f in c.files if f.kind == "py"}
     found: list[tuple[bool, str, Evidence]] = []
     changed = False
     for f in c.files:
-        key = _install_key(f.path)
+        key = _install_key(_installed(c, f.path))
         prior = old.get(key)
         if prior is not None and prior.sha256 == f.sha256:
             continue

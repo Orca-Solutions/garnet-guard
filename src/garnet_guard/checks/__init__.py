@@ -34,6 +34,9 @@ PYPI = frozenset({"pypi"})
 NPM = frozenset({"npm"})
 
 # (rule id, function, ecosystems). Diff rules return nothing without a baseline.
+# Content rules that compare a pair of artifacts read a first wheel and the
+# sdist beside it both ways (content.each_view). GRN-E002 does so inside
+# unparsed_changed, which reads GRN-C012's wheels once.
 ALL_CHECKS: tuple[tuple[str, CheckFn, frozenset[str]], ...] = (
     ("GRN-T001", trust.lost_provenance, BOTH),
     ("GRN-T002", trust.publisher_changed, BOTH),
@@ -43,12 +46,12 @@ ALL_CHECKS: tuple[tuple[str, CheckFn, frozenset[str]], ...] = (
     ("GRN-T006", trust.files_uploaded_late, PYPI),
     ("GRN-T007", trust.invalid_attestation, BOTH),
     ("GRN-T008", trust.hash_mismatch, BOTH),
-    ("GRN-C001", content.new_pth_file, PYPI),
+    ("GRN-C001", content.each_view(content.new_pth_file), PYPI),
     ("GRN-C002", content.new_build_hook, BOTH),
-    ("GRN-C003", content.new_import_time_exec, PYPI),
-    ("GRN-C004", content.new_binary, PYPI),
+    ("GRN-C003", content.each_view(content.new_import_time_exec), PYPI),
+    ("GRN-C004", content.each_view(content.new_binary), PYPI),
     ("GRN-C007", content.code_not_in_source, PYPI),
-    ("GRN-C008", content.new_dependency, BOTH),
+    ("GRN-C008", content.each_view(content.new_dependency), BOTH),
     ("GRN-C009", content.new_entry_point, PYPI),
     ("GRN-C010", content.new_startup_file, PYPI),
     ("GRN-C011", content.new_js_use, NPM),

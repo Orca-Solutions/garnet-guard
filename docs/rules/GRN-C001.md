@@ -53,7 +53,10 @@ a new `<name>-setup.pth` that downloads and runs Bun. For twelve of those packag
 rule that fired. embiggen 0.11.97 from the same campaign was missed at first: the trusted 0.11.96
 shipped only an sdist and 0.11.97 only a wheel, so there was no pair of artifacts to compare, and
 the content rules passed without saying so. The rule now compares a wheel with an sdist when that
-is the only pair, says so in the finding, and reports `embiggen-setup.pth`.
+is the only pair, says so in the finding, and reports `embiggen-setup.pth`. When a release is the
+first to ship a wheel beside its sdist, both are compared with the trusted sdist. A `-nspkg.pth`
+that setuptools generates for namespace packages appears in such a first wheel but not in any
+sdist, so it is reported then, with the note that the two kinds of file were compared.
 
 ## How to resolve it
 
