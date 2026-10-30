@@ -1,7 +1,16 @@
 # npm clean-corpus backtest, 2026-10-29
 
+> **Superseded and corrected (2026-10-30).** The [top-1,000 run](../corpus-results-npm-1000/REPORT.md)
+> replaces this one: 146 of 8,742 updates flagged for a look (1.7%). Two triage readings
+> below were wrong. @jridgewell/trace-mapping is tagged by folder (`trace-mapping/0.3.26`),
+> so its GRN-T004 warning was a false claim, now fixed. whatwg-url 17.1.1 wasn't a manual
+> publish: its version document lists an attestation the registry doesn't serve (HTTP 404),
+> and the finding now says so. uuid 12.0.0 and 13.0.0 weren't manual publishes either: the
+> trusted versions, 11.1.1 and 12.0.1, are maintenance releases published later, with
+> provenance.
+
 The last 11 final, non-deprecated releases of the 200 most downloaded npm packages
-([top-npm-200.json](../top-npm-200.json), from wooorm/npm-high-impact 1.13.0), each
+(the first 200 of [top-npm-1000.json](../top-npm-1000.json), from wooorm/npm-high-impact 1.13.0), each
 compared with the release before it, the way a Dependabot or Renovate update would be:
 200 packages, 1,809 updates. Known-bad lookups (GRN-K001) were off. Run with
 `uv run python -m backtest select npm && uv run python -m backtest corpus npm`;

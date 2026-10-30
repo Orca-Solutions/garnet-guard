@@ -17,10 +17,17 @@ status: implemented
 ## What it checks
 
 The trusted version has a matching git tag in the project's source repository and the new
-version has none. A tag matches if it is named `X`, `vX`, `<name>-X` or `<name>-vX`, where
-`<name>` is the package name. For npm packages `<name>@X` also matches, with or without
-the `@scope/`, since monorepo tools tag that way. An exact name wins; otherwise `X` is
-compared as a PEP 440 version, so tag `2026.01.04` matches release `2026.1.4`.
+version has none. A tag matches if its name is the version, `X` or `vX`, either alone or
+after a prefix that names the package, joined by `-`, `_`, `==` or `/` (and `@` for npm).
+The prefix can be the package name (`lightning-2.6.1`, `azure-mgmt-core_1.1.0`,
+`@ctrl/tinycolor@4.2.2`), the name without its npm scope (`tinycolor@4.2.1`), or the word
+`release` (`release-v1.0.0`). A folder prefix (`/`) or a `==` prefix can also use the end of
+the name, since monorepos tag a package by its folder (`api/v1.4.1` for `@opentelemetry/api`,
+`resolvers/node/v0.3.3` for `eslint-import-resolver-node`, `prebuilt==1.0.11` for
+`langgraph-prebuilt`), but only in a repository with no tag under the full name: one that
+tags `socks-proxy-agent@8.0.1` tags a different package as `proxy-agent@8.0.1`. `-` and `_`
+count as the same in names, and case doesn't matter. A tag named exactly `X` or `vX` wins; otherwise `X`
+is compared as a PEP 440 version, so tag `2026.01.04` matches release `2026.1.4`.
 
 Garnet Guard looks for the tag in the repository named by the attestation first, then in
 the repository in the package's project URLs, and accepts a tag in either. Some projects

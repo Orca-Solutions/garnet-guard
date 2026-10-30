@@ -7,6 +7,12 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 ### Added
 
 - npm: `garnet diff npm:<name> <old> <new>` compares two npm releases. It reads the registry's package document, npm provenance (verified with Sigstore, including the older `intoto` log-entry format that sigstore-python no longer accepts), git tags, OSV advisories and the tarball's `package.json`. The trust rules, GRN-K001 and GRN-T008 (Subresource Integrity) apply to npm; GRN-C002 reports an added or changed `preinstall`, `install` or `postinstall` script (not `prepare`, which npm doesn't run for a published tarball); GRN-T004 also accepts `<name>@X` tags. The backtest replays chalk 5.6.1, debug 4.4.2, nx 21.5.0 and @ctrl/tinycolor 4.1.1 from recorded registry facts, and `python -m backtest corpus npm` runs the top-200 npm clean corpus. npm lockfiles are not read yet.
+- `python -m backtest select|corpus [pypi|npm] [SIZE]` runs a clean corpus of up to the top 1,000 packages, in worker processes (`GARNET_BACKTEST_WORKERS`). The top-1,000 PyPI and npm runs and their reports are in `backtest/corpus-results-pypi-1000/` and `backtest/corpus-results-npm-1000/`.
+
+### Changed
+
+- GRN-T004 reads more tag forms: `X` or `vX` after a prefix that names the package or is `release`, joined by `-`, `_`, `==` or `/` (and `@` for npm), as in `release-v1.0.0`, `azure-mgmt-core_1.1.0` and `prebuilt==1.0.11`. A monorepo's folder or `==` prefix may use the end of the name (`api/v1.4.1`, `utils/v2.8.1`) when the repository never tags the package by its full name. The top-1,000 corpora found 16 releases that it wrongly said had no tag.
+- GRN-T001 on npm says "no attestation served", with the HTTP status, when a version document lists an attestation that the registry's attestations endpoint doesn't serve (whatwg-url 17.1.1).
 
 ### Changed
 

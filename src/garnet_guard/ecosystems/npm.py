@@ -164,7 +164,14 @@ def _fetch_provenance(
     url = f"{REGISTRY}/-/npm/v1/attestations/{quote(package, safe='@')}@{version}"
     resp = ctx.http.get(url, max_bytes=16 * 1024 * 1024)
     if resp.status == 404:
-        return FileProvenance(filename=filename, present=False, verified=False)
+        # Only called when the version document lists attestations, so this
+        # is a listed attestation the registry doesn't serve (whatwg-url 17.1.1).
+        return FileProvenance(
+            filename=filename,
+            present=False,
+            verified=False,
+            error="the registry lists an attestation, but its attestations endpoint returns HTTP 404",
+        )
     if resp.status != 200:
         raise NetError(f"attestations endpoint returned HTTP {resp.status} for {filename}")
     return verify_provenance(

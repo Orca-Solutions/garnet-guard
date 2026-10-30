@@ -9,7 +9,7 @@ repositories. One request per repository covers every version.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Container, Iterator, Mapping
 
 from packaging.version import InvalidVersion, Version
 
@@ -93,21 +93,56 @@ class TagLookup:
         return self._cache[repo]
 
 
-def _prefixes(package: str, *, npm: bool = False) -> list[str]:
-    """Tag prefixes to try: none, then ``<name>-`` in each spelling of the name.
+# Separators between a tag's prefix and its version: ``lightning-2.6.1``,
+# ``azure-mgmt-core_1.1.0``, ``prebuilt==1.0.11``, ``api/v1.4.1`` and, for npm,
+# ``@ctrl/tinycolor@4.2.2``.
+_SEPARATORS = ("-", "_", "==", "/")
+# Prefixes that name a release rather than a package: ``release-v1.0.0``.
+_RELEASE_WORDS = frozenset({"release"})
 
-    npm monorepos tag ``<name>@X`` (lerna, changesets), with or without the
-    ``@scope/``, so those forms are added for npm packages.
+
+def _norm(name: str) -> str:
+    return name.lower().replace("_", "-")
+
+
+def _package_names(package: str) -> tuple[str, set[str]]:
+    """The package's name without its npm scope, and its shorter folder names.
+
+    Both lowercased, ``_`` as ``-``. The shorter names are the runs of its
+    trailing hyphenated words, since monorepos tag a package by its folder:
+    ``eslint-module-utils`` is tagged ``utils/v2.8.1``,
+    ``eslint-import-resolver-node`` ``resolvers/node/v0.3.3`` and
+    ``langgraph-prebuilt`` ``prebuilt==1.0.11``.
     """
-    out = [""]
-    names = {package, package.replace("-", "_"), package.replace("_", "-")}
-    if npm and "/" in package:
-        names.add(package.rpartition("/")[2])
-    for n in sorted(names):
-        out.append(f"{n}-")
-        if npm:
-            out.append(f"{n}@")
-    return out
+    words = _norm(package.rpartition("/")[2]).split("-")
+    return "-".join(words), {"-".join(words[i:]) for i in range(1, len(words)) if words[i]}
+
+
+def _readings(name: str, *, npm: bool) -> Iterator[tuple[str, str, str]]:
+    """Each (prefix, separator, rest) split of a tag name, and ("", "", name)."""
+    yield "", "", name
+    for sep in (*_SEPARATORS, *(("@",) if npm else ())):
+        start = name.find(sep, 1)
+        while start != -1:
+            yield name[:start], sep, name[start + len(sep) :]
+            start = name.find(sep, start + 1)
+
+
+def _names_package(prefix: str, sep: str, full: str, short: Container[str]) -> bool:
+    """Does a tag prefix name this package (or a release)?
+
+    ``-``, ``_`` and ``@`` prefixes must use the full name (``@`` may keep
+    the npm scope); a folder (``/``) or ``==`` prefix may use a shorter
+    name from ``short``.
+    """
+    if not prefix:
+        return True
+    if sep == "@":
+        return _norm(prefix).rpartition("/")[2] == full
+    last = _norm(prefix.rpartition("/")[2])
+    if last == full or last in _RELEASE_WORDS:
+        return True
+    return sep in ("/", "==") and last in short
 
 
 def _as_version(text: str) -> Version | None:
@@ -125,25 +160,39 @@ def match_tag(
     *,
     npm: bool = False,
 ) -> TagInfo | None:
-    """SPEC GRN-T004: accept X, vX, <name>-X and <name>-vX (and <name>@X for npm).
+    """SPEC GRN-T004: a tag whose name is the version, alone or after a prefix.
 
-    An exact name wins. Otherwise X is compared as a PEP 440 version, so
-    tag ``2026.01.04`` matches release ``2026.1.4``.
+    The version is ``X`` or ``vX``. The prefix, before a ``-``, ``_``, ``==``
+    or ``/`` (and ``@`` for npm), must name the package or be ``release``
+    (see ``_names_package``): ``2.6.1``, ``v1.18.0``, ``lightning-2.6.1``,
+    ``release-v1.0.0``, ``api/v1.4.1``. A shorter folder name counts only if
+    no tag uses the full name. ``X`` alone wins, then an exact name, in
+    sorted order; otherwise X is compared as a PEP 440 version, so tag
+    ``2026.01.04`` matches release ``2026.1.4``.
     """
-    prefixes = _prefixes(package, npm=npm)
-    for p in prefixes:
-        for name in (f"{p}{version}", f"{p}v{version}"):
-            if name in tags:
-                return TagInfo(name=name, sha=tags[name], repo=repo)
+    full, short = _package_names(package)
+    for name in (version, f"v{version}"):
+        if name in tags:
+            return TagInfo(name=name, sha=tags[name], repo=repo)
+    # A repository that tags the package by its full name tags other packages
+    # by the shorter ones: TooTallNate/proxy-agents has socks-proxy-agent@8.0.1
+    # and proxy-agent@8.0.1.
+    if any(
+        p and _norm(p.rpartition("/")[2]) == full and rest.lstrip("vV")[:1].isdigit()
+        for name in tags
+        for p, _, rest in _readings(name, npm=npm)
+    ):
+        short = set()
     wanted = _as_version(version)
-    if wanted is None:
-        return None
+    loose: str | None = None
     for name in sorted(tags):
-        for p in prefixes:
-            if not name.startswith(p):
+        for prefix, sep, rest in _readings(name, npm=npm):
+            if not _names_package(prefix, sep, full, short):
                 continue
-            rest = name[len(p) :]
             rest = rest[1:] if rest[:1] in ("v", "V") else rest
-            if rest and rest[0].isdigit() and _as_version(rest) == wanted:
+            if rest == version:
                 return TagInfo(name=name, sha=tags[name], repo=repo)
-    return None
+            if loose is None and wanted is not None and rest[:1].isdigit():
+                if _as_version(rest) == wanted:
+                    loose = name
+    return TagInfo(name=loose, sha=tags[loose], repo=repo) if loose is not None else None

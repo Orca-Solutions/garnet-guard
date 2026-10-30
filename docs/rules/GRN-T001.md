@@ -23,6 +23,11 @@ npm), and at least one file of the new version has none.
 A project that has never attested its releases is not flagged. The rule only looks for
 attestations that went away.
 
+On npm, a version document can list an attestation that the registry's attestations
+endpoint doesn't serve (whatwg-url 17.1.1 answers HTTP 404). Garnet Guard can't verify an
+attestation it can't fetch, so the file counts as missing one, and the finding says the
+registry lists it: "have no attestation served", with the 404 on the evidence line.
+
 ## Why it matters
 
 An attestation ties a file to the CI run that built it. When a project has been

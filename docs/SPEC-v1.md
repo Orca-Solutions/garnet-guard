@@ -120,7 +120,7 @@ Default severities are what applies with no policy file.
 | GRN-T001 | lost-provenance | diff | Every baseline artifact had a verified attestation and at least one candidate artifact has none. | warn |
 | GRN-T002 | publisher-changed | diff | The verified source repository differs between baseline and candidate attestations. Repository renames that GitHub redirects MUST NOT fire. | warn |
 | GRN-T003 | workflow-changed | diff | Same repository, but the workflow file path or deployment environment differs. | warn |
-| GRN-T004 | no-matching-tag | diff | The baseline version had a matching git tag in the source repository and the candidate does not. Tag matching accepts `X`, `vX`, `<name>-X` and `<name>-vX`. | warn |
+| GRN-T004 | no-matching-tag | diff | The baseline version had a matching git tag in the source repository and the candidate does not. Tag matching accepts `X` or `vX`, alone or after a prefix that names the package or is `release`, joined by `-`, `_`, `==` or `/`, and `@` for npm. A `/` or `==` prefix may use the end of the name, as monorepos tag by folder, when no tag uses the full name. | warn |
 | GRN-T005 | outside-trusted-publishing | diff | Baseline files were published via Trusted Publishing and at least one candidate file was not. | warn |
 | GRN-T006 | files-uploaded-late | absolute | A candidate file was uploaded more than 24 hours after the release's first file. | warn |
 | GRN-T007 | invalid-attestation | absolute | An attestation is present but fails verification. | block |

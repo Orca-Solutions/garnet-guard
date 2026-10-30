@@ -4,6 +4,8 @@
     uv run python -m backtest corpus           # run every consecutive update in corpus.json
     uv run python -m backtest select npm       # the same for npm (corpus-npm.json)
     uv run python -m backtest corpus npm       # results go to corpus-results-npm/
+    uv run python -m backtest select pypi 1000 # the top 1,000 (corpus-pypi-1000.json)
+    uv run python -m backtest corpus pypi 1000 # results go to corpus-results-pypi-1000/
 
 Every update in the corpus is a legitimate release, so every warn from a
 detection rule is either a false positive or a real finding worth a look.
@@ -23,7 +25,7 @@ import types
 import typing
 from collections import Counter
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -37,19 +39,35 @@ from garnet_guard.models import Change, ChangeResult, Limits, ReleaseFacts, Seve
 from garnet_guard.net import Http, NetError
 
 HERE = Path(__file__).parent
-TOP = {"pypi": HERE / "top-pypi-100.json", "npm": HERE / "top-npm-200.json"}
-CORPUS = {"pypi": HERE / "corpus.json", "npm": HERE / "corpus-npm.json"}
-RESULTS = {"pypi": HERE / "corpus-results", "npm": HERE / "corpus-results-npm"}
+TOP = {"pypi": HERE / "top-pypi-1000.json", "npm": HERE / "top-npm-1000.json"}
+DEFAULT_SIZE = {"pypi": 100, "npm": 200}
+# The first corpora keep the names they were published under.
+FIRST = {
+    ("pypi", 100): ("corpus.json", "corpus-results"),
+    ("npm", 200): ("corpus-npm.json", "corpus-results-npm"),
+}
 NOT_DETECTION = {"GRN-K001", "GRN-E001", "GRN-E002", "GRN-E003"}
 RELEASES_PER_PACKAGE = 11  # 11 releases give 10 updates per package
 CACHE_FORMAT = 3
 
 
-def _ecosystem(argv: list[str]) -> tuple[str, list[str]]:
-    """``npm`` as the first argument selects that ecosystem; PyPI otherwise."""
+def _ecosystem(argv: list[str]) -> tuple[str, int, list[str]]:
+    """``[pypi|npm] [SIZE]``: the ecosystem (PyPI by default) and how many top packages."""
+    eco = "pypi"
     if argv and argv[0] in ("pypi", "npm"):
-        return argv[0], argv[1:]
-    return "pypi", argv
+        eco, argv = argv[0], argv[1:]
+    size = DEFAULT_SIZE[eco]
+    if argv and argv[0].isdigit():
+        size, argv = int(argv[0]), argv[1:]
+    return eco, size, argv
+
+
+def _paths(eco: str, size: int) -> tuple[Path, Path]:
+    """The corpus file and the results folder for the top ``size`` packages."""
+    corpus_file, results = FIRST.get(
+        (eco, size), (f"corpus-{eco}-{size}.json", f"corpus-results-{eco}-{size}")
+    )
+    return HERE / corpus_file, HERE / results
 
 
 # --- Choosing versions ---------------------------------------------------
@@ -95,28 +113,37 @@ def pick_npm_versions(packument: dict[str, Any], count: int) -> list[str]:
     return [raw for _, raw in keep[-count:]]
 
 
+def _select_one(eco: str, http: Http, name: str) -> dict[str, Any]:
+    if eco == "npm":
+        norm = npm.normalize(name)
+        resp = http.get(npm.registry_url(norm), max_bytes=npm.PACKUMENT_MAX_BYTES)
+    else:
+        norm = pypi.normalize(name)
+        resp = http.get(f"https://pypi.org/pypi/{norm}/json", max_bytes=512 * 1024 * 1024)
+    if resp.status != 200:
+        raise NetError(f"select: {norm}: HTTP {resp.status}")
+    if eco == "npm":
+        versions = pick_npm_versions(resp.json(), RELEASES_PER_PACKAGE)
+    else:
+        versions = pick_versions(resp.json().get("releases", {}), RELEASES_PER_PACKAGE)
+    print(f"{norm}: {' '.join(versions)}", flush=True)
+    return {"package": norm, "versions": versions}
+
+
 def select(argv: list[str]) -> int:
-    eco, argv = _ecosystem(argv)
+    eco, size, _ = _ecosystem(argv)
     top = json.loads(TOP[eco].read_text())
-    count = int(argv[0]) if argv else len(top["projects"])
-    packages: list[dict[str, Any]] = []
-    with Http() as http:
-        for name in top["projects"][:count]:
-            if eco == "npm":
-                norm = npm.normalize(name)
-                resp = http.get(npm.registry_url(norm), max_bytes=npm.PACKUMENT_MAX_BYTES)
-            else:
-                norm = pypi.normalize(name)
-                resp = http.get(f"https://pypi.org/pypi/{norm}/json", max_bytes=512 * 1024 * 1024)
-            if resp.status != 200:
-                print(f"select: {norm}: HTTP {resp.status}", file=sys.stderr)
-                return 3
-            if eco == "npm":
-                versions = pick_npm_versions(resp.json(), RELEASES_PER_PACKAGE)
-            else:
-                versions = pick_versions(resp.json().get("releases", {}), RELEASES_PER_PACKAGE)
-            packages.append({"package": norm, "versions": versions})
-            print(f"{norm}: {' '.join(versions)}")
+    if size > len(top["projects"]):
+        print(f"select: {TOP[eco].name} lists {len(top['projects'])} packages", file=sys.stderr)
+        return 3
+    with Http() as http, ThreadPoolExecutor(max_workers=8) as pool:
+        try:
+            packages = list(
+                pool.map(lambda name: _select_one(eco, http, name), top["projects"][:size])
+            )
+        except NetError as err:
+            print(err, file=sys.stderr)
+            return 3
     out = {
         "ecosystem": eco,
         "selected_on": datetime.now().astimezone().date().isoformat(),
@@ -124,7 +151,7 @@ def select(argv: list[str]) -> int:
         "top_list": {k: top[k] for k in ("source", "last_update", "package_version") if k in top},
         "packages": packages,
     }
-    CORPUS[eco].write_text(json.dumps(out, indent=2) + "\n")
+    _paths(eco, size)[0].write_text(json.dumps(out, indent=2) + "\n")
     return 0
 
 
@@ -318,30 +345,35 @@ def _version_key(v: str) -> tuple[int, Version | str]:
         return (0, v)
 
 
+def _run_one(job: tuple[str, str, list[str], Path]) -> list[dict[str, Any]]:
+    """One package, in a worker process: the fact inspection is CPU-bound."""
+    eco, package, versions, cache_root = job
+
+    def log(msg: str) -> None:
+        print(msg, flush=True)
+
+    try:
+        return run_package(eco, package, versions, FactCache(cache_root), log)
+    except NetError as err:
+        log(f"{package}: FAILED {err}")
+        raise
+
+
 def corpus(argv: list[str]) -> int:
-    eco, argv = _ecosystem(argv)
-    out_dir = Path(argv[0]) if argv else RESULTS[eco]
+    eco, size, argv = _ecosystem(argv)
+    corpus_file, results = _paths(eco, size)
+    out_dir = Path(argv[0]) if argv else results
     cache_root = Path(
         os.environ.get(
             "GARNET_BACKTEST_CACHE", Path.home() / ".cache" / "garnet-guard" / "backtest"
         )
     )
-    cache = FactCache(cache_root)
-    spec = json.loads(CORPUS[eco].read_text())
+    spec = json.loads(corpus_file.read_text())
     workers = int(os.environ.get("GARNET_BACKTEST_WORKERS", "4"))
+    jobs = [(eco, p["package"], p["versions"], cache_root) for p in spec["packages"]]
 
-    def log(msg: str) -> None:
-        print(msg, flush=True)
-
-    def one(p: dict[str, Any]) -> list[dict[str, Any]]:
-        try:
-            return run_package(eco, p["package"], p["versions"], cache, log)
-        except NetError as err:
-            log(f"{p['package']}: FAILED {err}")
-            raise
-
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        per_pkg = list(pool.map(one, spec["packages"]))
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        per_pkg = list(pool.map(_run_one, jobs))
     rows = sorted(
         (r for rs in per_pkg for r in rs),
         key=lambda r: (r["package"], _version_key(r["candidate"])),

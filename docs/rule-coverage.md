@@ -58,10 +58,11 @@ kinds of warning a reviewer cannot act on (a function handed to a call that may 
 a chain that starts in a test file, sdist files outside the package); #38 fixes the four and
 moves the three to `info`. On the 974-update corpus #38 changes no verdict (18 → 18); the
 seven GRN-C003 warns all stay at `warn`, so none rested on a kind it moves to `info`. On
-the top-1,000 corpus with #38, the clean-package thread counts 221 of 9,439 updates warned
-(2.3%), 66 of them GRN-C003, each read line by line with none false, and 44 GRN-C003
-findings at `info`; its last read also showed a latent first-chain-wins bug in the origin
-of a call, fixed in #38's third commit.
+the top-1,000 corpus with #38, the clean-package thread counts 220 of 9,439 updates warned
+(2.3%), 65 of them GRN-C003, each read line by line with none false, and 46 GRN-C003
+findings at `info`; its last reads also showed a latent first-chain-wins bug in the origin
+of a call, fixed in #38's third commit, and a top-level `test/` folder not counted as test
+files (ply 3.6), fixed in its fourth.
 
 | Shape | Rule | What happened | Fix |
 |---|---|---|---|

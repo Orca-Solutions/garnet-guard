@@ -117,6 +117,7 @@ We fed the original malicious files from 36 compromised PyPI packages (47 malici
 | bramin, dreamgen, ensmallen, magique, magique-ai, napari-ufish, nucbox, pantheon-agents, pantheon-toolsets, synago | 0.0.3, 1.8.1, 0.8.101, 0.6.9, 0.4.5, 0.0.3, 0.1.2, 0.6.1, 0.5.5, 0.1.1 | warn | GRN-C001 new `<name>-setup.pth` only; GRN-T004 had nothing to check, see the limits below |
 | mrmustard | **0.7.4** | **pass (missed)** | none: see the limits below |
 | 20 clean updates ([list](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/clean.toml)) | | 0 warn | none |
+| 9,439 updates of the top 1,000 PyPI packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-pypi-1000/REPORT.md)) | | 220 flagged for a look (2.3%); none makes a false claim | GRN-C003 65, GRN-C002 57, GRN-T004 49, GRN-T001 18, GRN-T003 16, GRN-T002 14, GRN-C001 3 |
 
 The same replay covers the npm account takeovers of August and September 2025. npm deletes the tarball of a removed version, so these use the registry facts the public write-ups recorded (provenance present or not, the `package.json` scripts) and fetch the previous release and the repository's tags live. The malicious tarballs were not inspected.
 
@@ -126,7 +127,7 @@ The same replay covers the npm account takeovers of August and September 2025. n
 | debug 4.4.1 → 4.4.2 | warn | GRN-T004 no tag `4.4.2` |
 | nx 21.4.1 → 21.5.0 | warn | GRN-T001 21.4.1 had provenance, 21.5.0 has none; GRN-C002 `postinstall` became `node telemetry.js`; GRN-T004 no tag |
 | @ctrl/tinycolor 4.1.0 → 4.1.1 | warn | GRN-C002 new `postinstall` running `node bundle.js`; GRN-T004 no tag |
-| 1,809 updates of the top 200 npm packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-npm/REPORT.md)) | 33 warn (1.8%) | GRN-T004 25, GRN-T001 5, GRN-T002 2, GRN-T003 1 |
+| 8,742 updates of the top 1,000 npm packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-npm-1000/REPORT.md)) | 146 flagged for a look (1.7%); none makes a false claim | GRN-T004 89, GRN-T001 48, GRN-T002 3, GRN-C002 3, GRN-T003 2, GRN-T005 1 |
 
 Limits, stated plainly:
 - **ultralytics 8.3.42 was missed.** The project's own release workflow built and published it through Trusted Publishing, with valid attestations and its usual git tag, after a GitHub Actions cache-poisoning attack. The miner runs when a model is downloaded, not at import, so no current rule sees it. Against today's tags GRN-T004 would report it, but only because the tag was deleted afterwards.
@@ -140,7 +141,7 @@ Limits, stated plainly:
 - In telnyx 4.87.1 a typo stopped the payload from running. GRN-C003 reads code; it reports what the module calls at import, not whether the call would succeed.
 - The litellm 1.82.7 sdist isn't replayed, because no public source gives its URL. Its wheel is, and content rules compare wheels.
 - chalk and debug are reported by the missing tag alone: they never used provenance, and the one changed file, `index.js`, is gone from the registry. A JavaScript content rule is still to come.
-- Twenty clean updates is a small sample. The [clean-corpus backtest](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results/REPORT.md) covers 974 updates of the top 100 PyPI packages.
+- Twenty clean updates is a small sample. The clean-corpus backtests cover the last 11 releases of the top 1,000 PyPI and npm packages: every warning there states something true, but none of those updates is malicious, so each is a false alarm a reviewer has to dismiss.
 
 Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightning](https://snyk.io/blog/lightning-pypi-compromise-bun-based-credential-stealer), [CSA on elementary-data](https://labs.cloudsecurityalliance.org/research/csa-research-note-pypi-elementarydata-supply-chain-20260429/), [PyPI's incident report on litellm and telnyx](https://blog.pypi.org/posts/2026-04-02-incident-report-litellm-telnyx-supply-chain-attack/), [PyPI's analysis of ultralytics](https://blog.pypi.org/posts/2024-12-11-ultralytics-attack-analysis/), [The Hacker News on the Hades campaign](https://thehackernews.com/2026/06/hades-pypi-attack-19-packages-poisoned.html), [StepSecurity on mrmustard](https://www.stepsecurity.io/blog/compromised-pypi-mrmustard-0-7-4-credential-stealer), the OSV advisory named on each entry in incidents.toml, the PyPI snapshots in DataDog's malicious-software-packages dataset, and the file hashes in [ossf/malicious-packages](https://github.com/ossf/malicious-packages).
 
