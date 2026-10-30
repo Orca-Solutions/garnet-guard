@@ -28,7 +28,7 @@ from .npm_provenance import verify_provenance
 
 REGISTRY = "https://registry.npmjs.org"
 TRUST_RULES = ("GRN-T001", "GRN-T002", "GRN-T003", "GRN-T005", "GRN-T007")
-CONTENT_RULES = ("GRN-C002",)
+CONTENT_RULES = ("GRN-C002", "GRN-C011")
 PACKUMENT_MAX_BYTES = 64 * 1024 * 1024  # the largest packuments are tens of MB
 
 
@@ -374,6 +374,8 @@ def _inspect(
             install_scripts=ins.scripts,
             requirements=ins.requirements,
             requirements_read=ins.requirements_read,
+            js_uses=ins.js_uses,
+            js_scanned=ins.js_scanned,
         ),
         ins.errors,
     )

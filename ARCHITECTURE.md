@@ -115,6 +115,7 @@ IDs are stable forever. A retired rule keeps its ID reserved. Exact firing condi
 | GRN-C006 | sdist-wheel-mismatch (planned) | Wheel contains files with no counterpart in the sdist. |
 | GRN-C007 | code-not-in-source | A Python file in the release isn't the one at its git tag and has sensitive calls the source lacks (code injected by the build, as in ultralytics 8.3.42). |
 | GRN-C008 | new-dependency | A dependency the old release didn't declare, a warning when it is missing from the registry, less than 90 days old there, or installed from outside it, whoever owns it (event-stream 3.3.6). |
+| GRN-C011 | new-js-capability | The JavaScript an npm package loads uses a process, network or eval module or global, or obfuscated names, that the old release's didn't (`info`). |
 | GRN-T007 | invalid-attestation | An attestation exists but fails verification (blocks by default). |
 | GRN-T008 | hash-mismatch | A download doesn't match the registry's published hash (blocks by default). |
 | GRN-K001 | known-malicious | OSV `MAL-` advisory for this package version. |

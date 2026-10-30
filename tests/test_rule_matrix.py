@@ -22,6 +22,7 @@ from garnet_guard.models import (
     Change,
     DependencyProfile,
     FactError,
+    JsUse,
     Limits,
     ReleaseFacts,
     Requirement,
@@ -89,6 +90,14 @@ def _npm(version: str, scripts: dict[str, str] | None = None) -> ReleaseFacts:
         install_scripts=tuple(sorted((scripts or {}).items())),
     )
     return replace(rel, ecosystem="npm", artifacts=(art,))
+
+
+def _npm_js(version: str, *uses: tuple[str, str, bool]) -> ReleaseFacts:
+    """An npm release whose loaded JavaScript has ``uses`` (kind, name, at load)."""
+    rel = _npm(version)
+    found = tuple(JsUse("index.js", 1, kind, name, at) for kind, name, at in uses)
+    art = replace(rel.artifacts[0], js_uses=found, js_scanned=True)
+    return replace(rel, artifacts=(art,))
 
 
 def _downloaded(rel: ReleaseFacts, sha256: str) -> ReleaseFacts:
@@ -594,6 +603,37 @@ def _rows() -> list[Row]:
         "npm: same dependencies",
         _npm_depends("1.0", ("through", "~2.3.1")),
         _npm_depends("1.1", ("through", "~2.3.4")),
+        eco=NPM,
+    )
+
+    # GRN-C011 new-js-capability: the JavaScript an npm package loads gains a
+    # process, network or eval use, or obfuscated names (the chalk 5.6.1 shape).
+    fires(
+        "GRN-C011",
+        "child_process at load",
+        _npm_js("1.0"),
+        _npm_js("1.1", ("process", "child_process", True)),
+        eco=NPM,
+    )
+    fires(
+        "GRN-C011",
+        "obfuscated names",
+        _npm_js("1.0", ("network", "fetch", False)),
+        _npm_js("1.1", ("network", "fetch", False), ("obfuscated", "_0x… names", True)),
+        eco=NPM,
+    )
+    quiet(
+        "GRN-C011",
+        "the same uses",
+        _npm_js("1.0", ("network", "https", True)),
+        _npm_js("1.1", ("network", "https", False)),
+        eco=NPM,
+    )
+    quiet(
+        "GRN-C011",
+        "a tarball that wasn't read (a replay)",
+        _npm("1.0"),
+        _npm("1.1"),
         eco=NPM,
     )
 

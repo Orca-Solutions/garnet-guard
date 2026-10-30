@@ -11,6 +11,7 @@ from ..models import (
     CallSite,
     Change,
     Evidence,
+    JsUse,
     ModuleIndex,
     RawFinding,
     ReleaseFacts,
@@ -808,4 +809,66 @@ def new_dependency(
         title,
         tuple(evidence[:MAX_EVIDENCE]) + _compare_note(b, c),
         lowered_to=None if flagged else Severity.INFO,
+    )
+
+
+# GRN-C011: what each kind of JavaScript use is, for the evidence line.
+_JS_GLOBALS = {
+    "eval": "calls eval, which runs a string as code",
+    "Function": "calls Function, which runs a string as code",
+    "fetch": "calls fetch",
+    "XMLHttpRequest": "uses XMLHttpRequest",
+    "WebSocket": "uses WebSocket",
+}
+
+
+def _js_what(u: JsUse) -> str:
+    if u.kind == "obfuscated":
+        return f"has {u.name} in the shape javascript-obfuscator writes"
+    return _JS_GLOBALS.get(u.name, f"loads {u.name}")
+
+
+def new_js_use(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-C011: the JavaScript an npm package loads uses a process, network or
+    eval API, or carries obfuscated code, that the trusted version's didn't.
+
+    Compared by name across the package: a use moved from one file to another
+    is not new. Each name is shown once, at a place where it runs when the file
+    loads when there is one. npm only, and only when both tarballs were read.
+    """
+    if base is None:
+        return
+    b = next(iter(base.content), None)
+    c = next(iter(cand.content), None)
+    if b is None or c is None or not (b.js_scanned and c.js_scanned):
+        return
+    old = {(u.kind, u.name) for u in b.js_uses}
+    added: dict[tuple[str, str], list[JsUse]] = {}
+    for u in c.js_uses:
+        if (u.kind, u.name) not in old:
+            added.setdefault((u.kind, u.name), []).append(u)
+    if not added:
+        return
+    evidence: list[Evidence] = []
+    for key in sorted(added):
+        uses = added[key]
+        first = min(uses, key=lambda u: (not u.at_load, u.path, u.line))
+        when = "when the file loads" if first.at_load else "inside a function"
+        more = f"; {len(uses) - 1} more place(s)" if len(uses) > 1 else ""
+        evidence.append(
+            Evidence(
+                "file",
+                f"{first.path}:{first.line} {_js_what(first)} ({when}){more}",
+                path=first.path,
+                line=first.line,
+            )
+        )
+    names = sorted({name for _, name in added})
+    shown = ", ".join(names[:4]) + (f" and {len(names) - 4} more" if len(names) > 4 else "")
+    yield RawFinding(
+        "GRN-C011",
+        f"{cand.version}'s JavaScript uses {shown}, which {base.version}'s didn't",
+        tuple(evidence[:MAX_EVIDENCE]),
     )

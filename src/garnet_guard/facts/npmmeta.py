@@ -7,9 +7,10 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from ..models import FactError, FileEntry, Limits, Requirement
+from ..models import FactError, FileEntry, JsUse, Limits, Requirement
 from ..safe_archive import ArchiveError, LimitExceeded, open_archive
 from .inventory import _kind, _strip_prefix
+from .jsscan import is_js, loaded_uses
 
 # Lifecycle scripts npm runs on the machine that installs a package from the
 # registry (GRN-C002). ``prepare`` is left out on purpose: npm runs it for git
@@ -27,6 +28,8 @@ class NpmInspection:
     scripts: tuple[tuple[str, str], ...] = ()
     requirements: tuple[Requirement, ...] = ()
     requirements_read: bool = False
+    js_uses: tuple[JsUse, ...] = ()
+    js_scanned: bool = False
     errors: list[FactError] = field(default_factory=list)
 
 
@@ -118,9 +121,14 @@ def inspect_tarball(filename: str, data: bytes, limits: Limits) -> NpmInspection
 
     npm puts the package under one folder (normally ``package/``); paths are
     recorded relative to it. ``package.json`` at that root is the manifest npm
-    installs from, so its scripts are the ones that would run.
+    installs from, so its scripts are the ones that would run, and its entry
+    points name the JavaScript GRN-C011 reads. A JavaScript file over the
+    source size limit isn't read; that is GRN-E003 for GRN-C011.
     """
     result = NpmInspection()
+    sources: dict[str, str] = {}
+    manifest: bytes | None = None
+    too_big: list[str] = []
     try:
         reader = open_archive(data, filename, limits)
         entries = reader.entries()
@@ -131,12 +139,32 @@ def inspect_tarball(filename: str, data: bytes, limits: Limits) -> NpmInspection
             kind = _kind(rel, body[:4])
             result.files.append(FileEntry(rel, len(body), hashlib.sha256(body).hexdigest(), kind))
             if rel == "package.json":
+                manifest = body
                 result.scripts = install_scripts(body)
                 result.requirements = declared_dependencies(body)
                 result.requirements_read = True
+            if is_js(rel):
+                if len(body) > limits.max_js_file_bytes:
+                    too_big.append(rel)
+                else:
+                    sources[rel] = body.decode("utf-8", "replace")
     except LimitExceeded as err:
-        result.errors.append(FactError("GRN-E003", f"{filename}: {err}", ("GRN-C002",)))
+        result.errors.append(FactError("GRN-E003", f"{filename}: {err}", _CONTENT))
+        return _sorted(result)
     except ArchiveError as err:
-        result.errors.append(FactError("GRN-E002", f"{filename}: {err}", ("GRN-C002",)))
+        result.errors.append(FactError("GRN-E002", f"{filename}: {err}", _CONTENT))
+        return _sorted(result)
+    result.js_uses, unread = loaded_uses(manifest, sources, frozenset(too_big))
+    result.js_scanned = True
+    for rel in unread:
+        msg = f"{filename}: {rel} is larger than {limits.max_js_file_bytes:,} bytes, so it wasn't read"
+        result.errors.append(FactError("GRN-E003", msg, ("GRN-C011",)))
+    return _sorted(result)
+
+
+_CONTENT = ("GRN-C002", "GRN-C011")
+
+
+def _sorted(result: NpmInspection) -> NpmInspection:
     result.files.sort(key=lambda f: f.path)
     return result
