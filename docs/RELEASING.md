@@ -19,8 +19,8 @@ A tag `v*` pushed to the repository starts it:
 
    ```sh
    git switch main && git pull --ff-only
-   git tag -s v0.1.0 -m "Garnet Guard 0.1.0"
-   git push origin v0.1.0
+   git tag -s v0.2.0 -m "Garnet Guard 0.2.0"
+   git push origin v0.2.0
    ```
 
 4. Approve the `pypi` deployment on the workflow run (Actions → Release → Review deployments).
@@ -28,7 +28,7 @@ A tag `v*` pushed to the repository starts it:
 
 ## One-time setup (maintainer)
 
-These need an account owner and can't be done from the repository.
+These need an account owner and can't be done from the repository. All of them were done before 0.1.0a1 was published on 2026-10-30; they are kept here for reference and for a move to another account.
 
 ### PyPI
 
@@ -39,7 +39,7 @@ These need an account owner and can't be done from the repository.
    - Repository name: `garnet-guard`
    - Workflow name: `release.yml`
    - Environment name: `pypi`
-3. A pending publisher does not reserve the name. The project is created, and the name claimed, by the first successful publish. Cut a first pre-release (for example `0.1.0a1`) soon after the release workflow merges, so nobody else registers `garnet-guard` first.
+3. A pending publisher does not reserve the name. The project is created, and the name claimed, by the first successful publish. 0.1.0a1 claimed `garnet-guard` on 2026-10-30.
 
 ### GitHub repository settings
 

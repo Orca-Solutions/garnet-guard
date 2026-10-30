@@ -2,6 +2,18 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-30: 0.1.0a1 published; documentation refreshed
+
+**State.** 0.1.0a1 is on PyPI (wheel and sdist uploaded 10:59 UTC, with PEP 740 attestations from `release.yml`) and tagged `v0.1.0a1` at `42547f6`, the merge of #41. It claims the `garnet-guard` name. It includes everything merged through #41: GRN-C007, npm `garnet diff`, the policy file, SARIF, the Action preview and the rule fixes from the replays and the top-1,000 corpora. The replay on that commit warns on all 51 malicious releases (47 PyPI, 4 npm) with the tags of the day; the clean corpora flag 366 of 18,181 updates for a look (2.0%), none a false claim. #42 refreshed the README, its Limits list, the rule pages and the expert brief for those numbers, and #43 fixed the badges PyPI shows.
+
+A documentation review against `main` at `b317d6d` then corrected what still described the repository mid-sprint: the changelog (its "Unreleased" entries had shipped in 0.1.0a1), GRN-C007's status (0.1, not 0.2), the rule coverage page (written while #31 to #38 were open, with the 974-update corpus), ARCHITECTURE (tag source, planned rules, cache, time budget, corpus size), DEVOPS (garnetguard.dev), RELEASING, CONTRIBUTING (Discussions are off), the SPEC's tag source and Action inputs, and the docs index. ROADMAP.md and THREAT_MODEL.md are left to the gap-plan pull request, which edits both.
+
+**Open tasks.** A Dependabot-opened, a Renovate and a fork run of the Action are still to be seen. GRN-C007 has not run on the top-1,000 corpora. The Action examples keep the `<release-commit-sha>` placeholder until 0.2.0, pending the maintainer's say.
+
+**Verification.** Documentation only. `uv run pytest`, ruff, mypy (strict) and `lint-imports` pass. Every number was read from the replay output on `42547f6` and the corpus `summary.json` files.
+
+**Review dispositions.** None yet.
+
 ## 2026-10-30: Clean corpus grows to the top 1,000 PyPI and npm packages
 
 **State.** `python -m backtest select|corpus [pypi|npm] [SIZE]` runs the clean corpus for up to the top 1,000 packages of each registry (lists frozen as `backtest/top-pypi-1000.json` and `top-npm-1000.json`; the old top-100 and top-200 files were their first rows), in worker processes. Defaults stay at 100 and 200 so a rule PR's backtest delta stays quick. Results, with every warning triaged:
@@ -133,6 +145,7 @@ Two things the spec didn't anticipate:
   - Replays litellm 1.82.7 (GRN-C003) and 1.82.8 (GRN-C001, GRN-C003), and telnyx 4.87.1 and 4.87.2 (GRN-C003, GRN-T004).
   - 2026-10-30: adds 19 more malicious releases from 11 packages (ultralytics, num2words, xinference, mistralai, guardrails-ai, durabletask, memoryos and four Hades-campaign packages). 24 of the 26 releases warn on the day. ultralytics 8.3.42 (attested and tagged by the project's own hijacked workflow, payload not at import) and embiggen 0.11.97 (sdist-only baseline, wheel-only release, so content rules found nothing to compare and passed silently) get nothing. ultralytics 8.3.45/8.3.46 are the first replays where GRN-T001 fires, using `attested = false` recorded from PyPI's analysis.
   - 2026-10-30, second pass: adds 21 more releases from 21 packages whose files come from the `package_integrity` hashes in ossf/malicious-packages (no PyPI snapshot, so no `uploaded_at`): 20 Hades-campaign packages and mrmustard 0.7.4. 44 of the 47 PyPI releases warn on the day; mrmustard 0.7.4 is a third miss (GRN-C003 doesn't follow a nested function handed to `threading.Thread`). Nine packages link no repository in their metadata, so `source_repo` is absent and GRN-T004 can't run for them. With the four npm takeovers, 48 of 51 warn.
+  - 2026-10-30, after #32–#36, #38 and #41 (GRN-C007) merged: all 51 warn on the day's facts. ultralytics 8.3.42 is reported by GRN-C007 (two files differ from the `v8.3.42` tree), embiggen 0.11.97 by GRN-C001, mrmustard 0.7.4, num2words and memoryos by GRN-C003. `python -m backtest` exits 0 again.
   - Replays the deleted malicious files by URL and hash from files.pythonhosted.org.
   - The 20 clean updates in `backtest/clean.toml` produce no warnings from detection rules.
 - Known-bad lookups are off in the backtest on purpose, to show what Garnet Guard catches before any feed lists a release.

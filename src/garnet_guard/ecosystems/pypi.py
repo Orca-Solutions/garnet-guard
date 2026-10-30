@@ -11,7 +11,14 @@ from packaging.tags import sys_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from ..facts.inventory import file_reader, inspect_artifact
-from ..models import ArtifactFacts, FactError, FileProvenance, Limits, ReleaseFacts
+from ..models import (
+    ArtifactFacts,
+    DependencyProfile,
+    FactError,
+    FileProvenance,
+    Limits,
+    ReleaseFacts,
+)
 from ..net import Http, NetError
 from ..safe_archive import ArchiveError
 from . import github, gittree, osv, source
@@ -89,6 +96,23 @@ def _source_repo_from_urls(info: dict[str, Any]) -> str | None:
     return github.parse_repo(home) if isinstance(home, str) else None
 
 
+def owners(data: Any) -> tuple[str, ...]:
+    """The PyPI accounts with a role on the project, and its organization, from
+    the JSON API's ``ownership`` (as they are today, not on the release day)."""
+    own = data.get("ownership") if isinstance(data, dict) else None
+    if not isinstance(own, dict):
+        return ()
+    out = {
+        str(r["user"])
+        for r in own.get("roles") or []
+        if isinstance(r, dict) and isinstance(r.get("user"), str)
+    }
+    org = own.get("organization")
+    if isinstance(org, str) and org:
+        out.add(f"org:{org}")
+    return tuple(sorted(out))
+
+
 def select_wheel(filenames: list[str]) -> str | None:
     """SPEC §4.2: pure-Python wheel, else one for this platform, else first sorted."""
     wheels = sorted(f for f in filenames if f.endswith(".whl"))
@@ -143,6 +167,7 @@ def release_facts(
     errors: list[FactError] = []
     notes: list[str] = []
     yanked = False
+    owned_by: tuple[str, ...] = ()
 
     if replay is None:
         try:
@@ -156,6 +181,7 @@ def release_facts(
         data = resp.json()
         info = data.get("info", {})
         yanked = bool(info.get("yanked"))
+        owned_by = owners(data)
         files = tuple(
             RegistryFile(
                 filename=u["filename"],
@@ -300,6 +326,7 @@ def release_facts(
         advisories_checked=advisories_checked,
         errors=tuple(errors),
         notes=tuple(notes),
+        owners=owned_by,
     )
 
 
@@ -343,9 +370,51 @@ def _inspect(
             entry_points=tuple(sorted(ins.entry_points)),
             unparsed=tuple(ins.unparsed),
             wheel_tag=wheel_tag,
+            requirements=ins.requirements,
+            requirements_read=ins.requirements_read,
         ),
         ins.errors,
         resp.content,
+    )
+
+
+PROFILE_MAX_BYTES = 64 * 1024 * 1024  # a project with thousands of files lists them all
+
+
+def package_profile(ctx: FetchContext, package: str) -> DependencyProfile:
+    """What PyPI says about a package (GRN-C008): when its first file was
+    uploaded, how many releases have files, and its repository. Raises
+    ``NetError``; a project PyPI doesn't know is ``on_registry=False``.
+    """
+    name = normalize(package)
+    resp = ctx.http.get(f"https://pypi.org/pypi/{name}/json", max_bytes=PROFILE_MAX_BYTES)
+    if resp.status == 404:
+        return DependencyProfile(name, on_registry=False)
+    if resp.status != 200:
+        raise NetError(f"PyPI JSON API returned HTTP {resp.status} for {name}")
+    data = resp.json()
+    info = data.get("info") if isinstance(data, dict) else None
+    releases = data.get("releases") if isinstance(data, dict) else None
+    if not isinstance(info, dict):
+        info = {}
+    if not isinstance(releases, dict):
+        releases = {}
+    times = [
+        t
+        for files in releases.values()
+        if isinstance(files, list)
+        for f in files
+        if isinstance(f, dict) and (t := _parse_time(f.get("upload_time_iso_8601")))
+    ]
+    latest = info.get("version")
+    return DependencyProfile(
+        name,
+        on_registry=True,
+        first_release_at=min(times) if times else None,
+        releases=sum(1 for files in releases.values() if isinstance(files, list) and files),
+        source_repo=_source_repo_from_urls(info),
+        latest_version=latest if isinstance(latest, str) else None,
+        owners=owners(data),
     )
 
 

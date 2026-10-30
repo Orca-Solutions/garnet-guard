@@ -153,6 +153,26 @@ _DOCS: tuple[RuleDoc, ...] = (
         "merge, and tell the maintainers: their build, not their repository, produced the release.",
     ),
     RuleDoc(
+        "GRN-C008",
+        "new-dependency",
+        "diff",
+        W,
+        "The new version depends on a package the trusted version didn't, or a dependency it "
+        "had now installs from somewhere else. It is a warning when the registry has no such "
+        "package, when it installs from git, a URL or a path, or when its first release came "
+        "less than 90 days before this one (or after it), whoever owns it. An established "
+        "dependency is info.",
+        "A dependency installs with the package, and a new one gets no comparison of its own: "
+        "Garnet has no trusted version of it to diff against. Adding a package the attacker "
+        "controls is a quiet way to carry a payload into a trusted one. event-stream 3.3.6 "
+        "(npm, 2018) added flatmap-stream, first published five weeks earlier; its next "
+        "release carried code that stole bitcoin from users of one wallet app.",
+        "Open the new dependency's registry page and repository. Check who publishes it, how "
+        "long it has existed, and why this release needs it; the release notes or the commit "
+        "that added it should say. A package a few weeks old, with no repository and one "
+        "release, needs a look before the update merges.",
+    ),
+    RuleDoc(
         "GRN-K001",
         "known-malicious",
         "absolute",

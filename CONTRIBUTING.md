@@ -7,7 +7,7 @@ Thanks for helping. Garnet is young, so the most useful contributions right now 
 3. **Rule ideas** backed by a real incident.
 4. Code, docs and lockfile-format support.
 
-Questions, ideas and show-and-tell go in GitHub Discussions. Bugs, false positives and missed detections go in issues.
+Questions, ideas, bugs, false positives and missed detections go in [GitHub issues](https://github.com/orca-solutions/garnet-guard/issues). GitHub Discussions isn't turned on yet.
 
 ## Development setup
 

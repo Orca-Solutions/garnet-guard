@@ -6,18 +6,43 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 
 ### Added
 
+- GRN-C008 new-dependency, on PyPI and npm: the new version declares a dependency the trusted version didn't, or a dependency it had now installs from somewhere else. Garnet asks the registry when each new dependency was first released, how many releases it has, which repository it names and which accounts own it. It warns when the dependency isn't on the registry, installs from git, a URL or a path, or was first released less than 90 days before the new version, even when the trusted package's owner owns it too (the evidence says so); any other new dependency is reported at `info`. Dependencies are read from the wheel's `METADATA`, or from an sdist's `PKG-INFO` when it is metadata 2.2 or later and doesn't mark them dynamic, and from `package.json` on npm, with `npm:` aliases resolved to the package they install. A failed registry lookup is GRN-E001. The npm backtest replays event-stream 3.3.6 (2018), which added `flatmap-stream`; 52 of 52 malicious releases replayed now get a warning. On the 974-update PyPI corpus it adds no warning and 18 `info` findings; on the 1,809-update npm corpus it adds 19 warnings, each a young dependency, 14 of them published by the trusted package's own maintainer.
+
+### Changed
+
+- GRN-C007 reads a published file back and indexes its calls only when the file isn't in the source tree, after the tag lookup, instead of indexing every file at inspection. A release from a large repository (transformers ships 5,600 Python files) costs one hash per file and one tree fetch, not a second parse of everything.
+
+## 0.1.0a1 (2026-10-30)
+
+The first pre-release. It claims the `garnet-guard` name on PyPI and lets people try the command line before the first full release. Expect changes before 0.2.0.
+
+### Added
+
+- `garnet diff <package> <old> <new>` compares two PyPI releases (npm below). It reads PEP 740 provenance (verified with Sigstore), git tags, OSV malicious-package advisories, and the contents of the sdist and one wheel.
+- `garnet check` compares two lockfiles (`--base` and `--head`, or `--git-base <ref>` for every lockfile against the same files at that commit) and checks every package that changed. It reads uv.lock, poetry.lock, pylock.toml and requirements files.
+- Rules:
+  - trust: GRN-T001 to T005, T007 and T008
+  - content: GRN-C001 to C003 and C007
+  - known-bad: GRN-K001
+  - couldn't-check: GRN-E001 to E005
+- `garnet explain <RULE-ID>`, text and JSON reports, and exit codes per SPEC §8. The command is `garnet`; `garnet-guard` is the same command, so `uvx garnet-guard` works (ADR-0007).
+- `python -m backtest` replays real incidents and a clean corpus. The incidents are 47 malicious releases of 36 compromised PyPI packages (Dec 2024 to Sep 2026) and four npm account takeovers. All 51 get a warning. Each is checked against the git tags as they stood when it was uploaded, and against attestations where public sources confirm a release had none.
+- A docs page for every rule ID in `docs/rules/`, with an example finding and how to resolve or allowlist it. Findings, `garnet explain` and the PR comment link to these pages on https://garnetguard.dev/rules/.
+- CI on every pull request (ruff, mypy, import contracts, tests on Python 3.11 to 3.14, build), the OpenSSF Scorecard workflow, Dependabot for the repository itself, and a tag-triggered release that publishes to PyPI with Trusted Publishing and PEP 740 attestations. See docs/RELEASING.md.
+- The GitHub Action (`action.yml`) checks a pull request's lockfile changes and posts or updates one comment. It includes a `workflow_run` comment job for forks (`action/comment`) and example workflows in `action/examples/`. See docs/action.md.
+- `garnet check --format markdown` and `python -m garnet_guard.markdown` render the PR comment (SPEC §9.4) from a report.
+- The policy file (SPEC §7): `garnet.toml`, or `[tool.garnet]` in `pyproject.toml`, sets rule severities and `fail_on`, lowers the input limits, and holds expiring ignores for findings someone has reviewed. `garnet check` and `garnet diff` read it (`--policy PATH`, `--no-policy`), `garnet policy check` validates it, and the Action's `policy` input reads it from the pull request's base commit. Ignored findings stay in the reports with `suppressed_by`; expired ignores are reported. See docs/policy.md.
+- `garnet check --format sarif` and `python -m garnet_guard.sarif` render a SARIF 2.1.0 report (SPEC §9.3) for GitHub code scanning, with one alert per finding on the lockfile line that pins the new version. The Action's `sarif: true` input uploads it, so findings show in the pull request's changed lines and the Security tab.
 - GRN-C007 code-not-in-source: a Python file in the new version's wheel (the sdist when there is no wheel) is not the file at the release's git tag, and it has calls that run processes, load code or use the network which the source file doesn't. The source tree is read over GitHub's git protocol on plain HTTPS (`ecosystems/gittree.py`): one request per tagged release, no token, no REST rate limit, and submodules hosted on GitHub are followed one level. It reports ultralytics 8.3.42 (Dec 2024), whose payload was injected by a poisoned CI cache and never committed, with 0 warnings on the 974-update clean corpus. `net.Http.post` sends raw bytes for it.
 - npm: `garnet diff npm:<name> <old> <new>` compares two npm releases. It reads the registry's package document, npm provenance (verified with Sigstore, including the older `intoto` log-entry format that sigstore-python no longer accepts), git tags, OSV advisories and the tarball's `package.json`. The trust rules, GRN-K001 and GRN-T008 (Subresource Integrity) apply to npm; GRN-C002 reports an added or changed `preinstall`, `install` or `postinstall` script (not `prepare`, which npm doesn't run for a published tarball); GRN-T004 also accepts `<name>@X` tags. The backtest replays chalk 5.6.1, debug 4.4.2, nx 21.5.0 and @ctrl/tinycolor 4.1.1 from recorded registry facts, and `python -m backtest corpus npm` runs the top-200 npm clean corpus. npm lockfiles are not read yet.
 - `python -m backtest select|corpus [pypi|npm] [SIZE]` runs a clean corpus of up to the top 1,000 packages, in worker processes (`GARNET_BACKTEST_WORKERS`). The top-1,000 PyPI and npm runs and their reports are in `backtest/corpus-results-pypi-1000/` and `backtest/corpus-results-npm-1000/`.
 
 ### Changed
 
-- GRN-C007 reads a published file back and indexes its calls only when the file isn't in the source tree, after the tag lookup, instead of indexing every file at inspection. A release from a large repository (transformers ships 5,600 Python files) costs one hash per file and one tree fetch, not a second parse of everything.
+These changed while the replays and the clean corpora ran, before the tag.
+
 - GRN-T004 reads more tag forms: `X` or `vX` after a prefix that names the package or is `release`, joined by `-`, `_`, `==` or `/` (and `@` for npm), as in `release-v1.0.0`, `azure-mgmt-core_1.1.0` and `prebuilt==1.0.11`. A monorepo's folder or `==` prefix may use the end of the name (`api/v1.4.1`, `utils/v2.8.1`) when the repository never tags the package by its full name. The top-1,000 corpora found 16 releases that it wrongly said had no tag.
 - GRN-T001 on npm says "no attestation served", with the HTTP status, when a version document lists an attestation that the registry's attestations endpoint doesn't serve (whatwg-url 17.1.1).
-
-### Changed
-
 - GRN-C003 follows more of what runs at import: lambdas that are called or passed to a call, classes that are instantiated (their `__init__`) and methods called on them, names pulled in by `from os import *`, and `getattr(os, "system")`, `__import__("os")` or `importlib.import_module("os")` with a literal name. A `base64` decode whose result reaches `exec` or another sensitive call is reported as a call of its own, so a release that starts decoding what it executes is flagged even where `exec` was already used. Sensitive set version `2026-10-b`.
 - GRN-C002 reads the whole of `setup.py`, not only what runs at import, so a `cmdclass` install hook that runs a command is reported (with the function it sits in). When the trusted version shipped no sdist, every build-time call in the new sdist is new; when the trusted sdist exists but couldn't be read, GRN-E001 reports that instead.
 - GRN-C001 compares `.pth` files by where they land in `site-packages`: a file under `<name>-<version>.data/purelib/` is the same file release after release, a `.pth` deeper in the package (which Python never reads) is ignored, and a renamed `.pth` with the same `import` lines is not new. Modules under `.data/purelib/` keep their names across versions for GRN-C003.
@@ -26,25 +51,3 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 - GRN-C003 follows a function defined inside another function when it is called or handed to a call there, the mrmustard 0.7.4 shape: a checker run at import that started a thread on a `_run` nested inside it.
 - GRN-C003 no longer makes four claims the top-1,000 PyPI corpus showed to be false: a dotted name whose first part is not an imported module (a local list called `requests`), a builtin shadowed by the module's own function or class (`def compile`), a module renamed with a leading underscore reported as new, and a module the trusted version had but couldn't parse reported as new (it now says the calls may not be new).
 - GRN-C003 reports three more kinds of call at `info`, each in its own finding, instead of `warn`: a function that import-time code only handed to a call not known to run it (`functools.partial(f)`, a wrapper factory; the evidence now reads "handed to X() at import"), a call reached only from a test file that nothing imports, and a call in or reached only from an sdist file outside the package (`docs/conf.py`, `examples/`). Handing to `threading.Thread`, `atexit.register` or `executor.submit` still counts as running. A call that a package module reaches at import is reported once, at `warn`, whichever chain is followed first, and a module whose trusted copy couldn't be parsed is titled as such instead of "adds". A top-level `test/` folder counts as test files, like `tests/` (ply 3.6's `test/calclex.py`); one inside the package does not, because it is installed (`django.test`).
-
-## 0.1.0a1
-
-The first pre-release. It claims the `garnet-guard` name on PyPI and lets people try the command line before the first full release. Expect changes before 0.2.0.
-
-### Added
-
-- `garnet diff <package> <old> <new>` compares two PyPI releases. It reads PEP 740 provenance (verified with Sigstore), git tags, OSV malicious-package advisories, and the contents of the sdist and one wheel.
-- `garnet check` compares two lockfiles (`--base` and `--head`, or `--git-base <ref>` for every lockfile against the same files at that commit) and checks every package that changed. It reads uv.lock, poetry.lock, pylock.toml and requirements files.
-- Rules:
-  - trust: GRN-T001 to T005, T007 and T008
-  - content: GRN-C001 to C003
-  - known-bad: GRN-K001
-  - couldn't-check: GRN-E001 to E005
-- `garnet explain <RULE-ID>`, text and JSON reports, and exit codes per SPEC §8. The command is `garnet`; `garnet-guard` is the same command, so `uvx garnet-guard` works (ADR-0007).
-- `python -m backtest` replays real incidents and a clean corpus. The incidents are 47 malicious releases of 36 compromised PyPI packages (Dec 2024 to Sep 2026) and four npm account takeovers, checked against the git tags as they stood when each release was uploaded, and against attestations where public sources confirm a release had none.
-- A docs page for every rule ID in `docs/rules/`, with an example finding and how to resolve or allowlist it. Findings, `garnet explain` and the PR comment link to these pages on https://garnetguard.dev/rules/.
-- CI on every pull request (ruff, mypy, import contracts, tests on Python 3.11 to 3.14, build), the OpenSSF Scorecard workflow, Dependabot for the repository itself, and a tag-triggered release that publishes to PyPI with Trusted Publishing and PEP 740 attestations. See docs/RELEASING.md.
-- The GitHub Action (`action.yml`) checks a pull request's lockfile changes and posts or updates one comment. It includes a `workflow_run` comment job for forks (`action/comment`) and example workflows in `action/examples/`. See docs/action.md.
-- `garnet check --format markdown` and `python -m garnet_guard.markdown` render the PR comment (SPEC §9.4) from a report.
-- The policy file (SPEC §7): `garnet.toml`, or `[tool.garnet]` in `pyproject.toml`, sets rule severities and `fail_on`, lowers the input limits, and holds expiring ignores for findings someone has reviewed. `garnet check` and `garnet diff` read it (`--policy PATH`, `--no-policy`), `garnet policy check` validates it, and the Action's `policy` input reads it from the pull request's base commit. Ignored findings stay in the reports with `suppressed_by`; expired ignores are reported. See docs/policy.md.
-- `garnet check --format sarif` and `python -m garnet_guard.sarif` render a SARIF 2.1.0 report (SPEC §9.3) for GitHub code scanning, with one alert per finding on the lockfile line that pins the new version. The Action's `sarif: true` input uploads it, so findings show in the pull request's changed lines and the Security tab.

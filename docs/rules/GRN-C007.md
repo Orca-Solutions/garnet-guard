@@ -12,7 +12,7 @@ status: implemented
 |---|---|
 | Default severity | `warn` |
 | Kind | diff rule: fires only when the trusted version had the property and the new version lost it, or the new version gained a risky property the trusted version lacked. |
-| Status | Implemented in 0.2 |
+| Status | Implemented in 0.1 |
 
 ## What it checks
 

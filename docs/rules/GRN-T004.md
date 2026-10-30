@@ -70,7 +70,8 @@ Some replays show what this rule can and can't see:
   no finding on the day. A poisoned build cache made the project's own release workflow ship a
   miner, and the same workflow tagged `v8.3.42` as usual
   ([GitHub release archived on Zenodo](https://zenodo.org/records/14285281)). The tag has since
-  been deleted. No other rule reported this release.
+  been deleted. [GRN-C007](GRN-C007.md) reports this release: two of its Python files differ
+  from the files at that tag.
 - **telnyx 4.87.1, gpsea 0.9.14 and uprobe 0.1.3**: reported on the day, not today. All three
   were uploaded with no tag. Each project later tagged its own real release with that version
   number, so checking today's tags would miss them.

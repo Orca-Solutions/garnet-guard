@@ -68,8 +68,11 @@ Removed packages produce no findings. Added packages (no base version) get only 
 | Release metadata and file hashes | JSON API (`/pypi/<name>/<version>/json`) | Registry packument |
 | Provenance | Integrity API (`/integrity/<name>/<version>/<file>/provenance`), verified with Sigstore | Registry attestations endpoint, verified with Sigstore |
 | Artifacts | Files listed by the JSON API | Tarball |
-| Tags | GitHub REST API for the repository named in provenance, else in project URLs | Same |
+| Tags | GitHub's public git ref advertisement (`/<repo>.git/info/refs`) for the repository named in provenance, else in project URLs | Same |
+| Source files at the tag (GRN-C007) | GitHub's git protocol v2 endpoint (`/<repo>.git/git-upload-pack`), one request per tagged release | Not read |
 | Known bad | OSV API (`MAL-` advisories) | OSV API |
+| Owners | `ownership` in the JSON API (roles and organization, as they are today) | `maintainers` of the version document |
+| New dependencies (GRN-C008) | JSON API (`/pypi/<name>/json`): first upload, releases with files, project URLs, ownership | Packument: `time.created`, versions, repository of the latest version, maintainers |
 
 ### 4.2 Artifact selection
 
@@ -79,9 +82,9 @@ Removed packages produce no findings. Added packages (no base version) get only 
 
 ### 4.3 Facts
 
-For each release Garnet extracts: upload time per file; uploader where the registry exposes it; yanked/deprecated status; per-file provenance (present, verified, Sigstore identity, source repository, workflow path, ref, environment, Trusted Publishing or not); the matching tag and its commit if any; file inventory (path, size, SHA-256, kind); `.pth` files; entry points and console scripts; build backend and build requirements; for npm, `scripts` and `bin`; and a static index of each Python module's top-level statements, imports and sensitive calls.
+For each release Garnet extracts: upload time per file; uploader where the registry exposes it; yanked/deprecated status; per-file provenance (present, verified, Sigstore identity, source repository, workflow path, ref, environment, Trusted Publishing or not); the matching tag and its commit if any; file inventory (path, size, SHA-256, kind); declared dependencies that install without an extra (`Requires-Dist` from the wheel's `METADATA`, or from an sdist's `PKG-INFO` at metadata version 2.2 or later when `Requires-Dist` isn't `Dynamic`; for npm, `dependencies`, `optionalDependencies` and non-optional `peerDependencies`), with any npm alias or source outside the registry; `.pth` files; entry points and console scripts; build backend and build requirements; for npm, `scripts` and `bin`; and a static index of each Python module's top-level statements, imports and sensitive calls.
 
-Facts are a pure function of the release's published data and MUST be cacheable by `(ecosystem, name, version, file hashes)`.
+Facts are a pure function of the release's published data and MUST be cacheable by `(ecosystem, name, version, file hashes)`. Owners on PyPI and the registry profiles of new dependencies describe the registry on the day Garnet runs; they are fetched per run and are not part of that cache key.
 
 ### 4.4 Safety requirements
 
@@ -127,11 +130,12 @@ Default severities are what applies with no policy file.
 | GRN-T008 | hash-mismatch | absolute | A downloaded artifact doesn't match its published hash. | block |
 | GRN-C001 | new-pth-file | diff | The candidate contains a `.pth` file at a path the baseline did not have, or an existing `.pth` file gained executable lines (lines starting with `import`). | warn |
 | GRN-C002 | new-build-hook | diff | A new or changed `setup.py` adds calls in the §6.3 sensitive set; the build backend changed to a non-allowlisted backend or an in-tree backend; or an npm `preinstall`/`install`/`postinstall` script was added or changed. (`prepare` was dropped on 2026-10-29: npm doesn't run it for a published tarball, and every `prepare` change in the top-200 backtest was a build-tool switch.) | warn |
-| GRN-C003 | new-import-time-exec | diff | A module's top level (including code reached from `__init__.py` at import) gains a call in the §6.3 sensitive set. In test files (`tests/`, `test_*.py`, `conftest.py`) it reports at info, unless a non-test module imports the file (directly or through other test modules) or an entry point names it. | warn (info in test files) |
+| GRN-C003 | new-import-time-exec | diff | A module's top level (including code reached from `__init__.py` at import) gains a call in the §6.3 sensitive set. It reports at info, as a separate finding, in three cases: in test files (`tests/`, a top-level `test/`, `test_*.py`, `conftest.py`) or reached only from one, unless a non-test module imports the file (directly or through other test modules) or an entry point names it; in sdist files outside the package (`docs/conf.py`, `examples/`) or reached only from one; and for a function import-time code only hands to a call not known to run it (`functools.partial(f)`). A call a package module reaches at import is reported once, at warn. | warn (info in test files and the other two cases) |
 | GRN-C004 | new-binary | diff | The candidate adds a native executable or shared library that is not a compiled extension module of a package path present in the baseline, or the release changes from pure-Python to containing binaries. | warn |
 | GRN-C005 | obfuscated-blob | diff | A changed file gains a string or bytes literal over 2,048 characters with Shannon entropy over 4.5 bits per character, or any such literal passed to `exec`, `eval`, `compile`, `base64.*decode`, `zlib.decompress` or `marshal.loads`. | warn |
 | GRN-C006 | sdist-wheel-mismatch | diff | The selected wheel contains a `.py` or `.pth` file with no counterpart in the sdist, when the baseline had none. | warn |
 | GRN-C007 | code-not-in-source | diff | A Python file in the candidate's wheel (the sdist when there is no wheel) is not byte-identical to any file in the repository at the candidate's matched git tag (submodules hosted on GitHub included), and it has a §6.3 sensitive call that the file at the same path lacks (every sensitive call counts when there is no file at that path). Calls the baseline already carried outside its source at the same path don't count. Files under a submodule Garnet can't read are reported as GRN-E001. | warn |
+| GRN-C008 | new-dependency | diff | The candidate declares a dependency the baseline didn't, or a dependency the baseline had now installs from outside the registry or (npm) installs a different package under the same name. It keeps the default severity when the dependency is not on the registry, installs from outside it, or was first released less than 90 days before the candidate's first upload (or after it), whoever owns it; otherwise it reports at info. An owner it shares with the baseline is listed in the evidence. A failed registry lookup is GRN-E001 naming GRN-C008. | warn (info for an established dependency) |
 | GRN-K001 | known-malicious | absolute | OSV lists a `MAL-` advisory affecting the candidate version. | block |
 | GRN-E001 | fetch-failed | absolute | Data needed for a rule couldn't be fetched. The finding names which rules were not evaluated. | warn |
 | GRN-E002 | parse-failed | absolute | An artifact or file couldn't be parsed. | warn |
@@ -264,10 +268,11 @@ garnet version
     policy: garnet.toml        # optional
     comment: true              # post or update the PR comment
     sarif: false               # upload SARIF to code scanning
+    footer: true               # end the comment with one line of docs links (§9.4)
     fail-on: block
 ```
 
-Outputs: `verdict`, `report-path` (JSON), `sarif-path`.
+Outputs: `verdict`, `report-path` (JSON), `comment-path` (the rendered comment), `sarif-path`.
 
 The Action MUST run on `pull_request`, MUST NOT check out or execute PR code under `pull_request_target`, and MUST document the minimal permissions (`contents: read`, plus `pull-requests: write` for comments and `security-events: write` for SARIF). Where the PR's token can't comment (Dependabot's restricted token, forks), the Action MUST support the two-workflow pattern: the analysis job uploads the report artifact, and a separate `workflow_run` job posts it without checking out PR code. The repository ships both workflows as examples.
 

@@ -7,8 +7,24 @@ import re
 import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from email.message import Message
+from email.parser import BytesHeaderParser
 
-from ..models import CallSite, FactError, FileEntry, FileKind, Limits, ModuleIndex, PthFile
+from packaging.requirements import InvalidRequirement
+from packaging.requirements import Requirement as _Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
+
+from ..models import (
+    CallSite,
+    FactError,
+    FileEntry,
+    FileKind,
+    Limits,
+    ModuleIndex,
+    PthFile,
+    Requirement,
+)
 from ..safe_archive import ArchiveError, ArchiveReader, LimitExceeded, open_archive
 from .pyindex import ModuleScan, index_build_script, module_name, scan_module
 
@@ -29,6 +45,8 @@ class Inspection:
     setup_py_calls: tuple[CallSite, ...] = ()
     unparsed: list[str] = field(default_factory=list)
     entry_points: set[str] = field(default_factory=set)
+    requirements: tuple[Requirement, ...] = ()
+    requirements_read: bool = False
     errors: list[FactError] = field(default_factory=list)
 
 
@@ -154,6 +172,13 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                 result.entry_points |= _pyproject_entry_points(body)
             elif not sdist and rel.endswith(".dist-info/entry_points.txt") and rel.count("/") == 1:
                 result.entry_points |= entry_point_modules(body)
+            elif (sdist and rel == "PKG-INFO") or (
+                not sdist and rel.endswith(".dist-info/METADATA") and rel.count("/") == 1
+            ):
+                reqs = declared_requirements(body, sdist=sdist)
+                if reqs is not None:
+                    result.requirements = reqs
+                    result.requirements_read = True
         _follow_calls_out(result, sources, calls_out, handed_out, own)
     except LimitExceeded as err:
         result.errors.append(FactError("GRN-E003", f"{filename}: {err}", ("GRN-C001", "GRN-C003")))
@@ -288,6 +313,64 @@ def entry_point_modules(text: bytes) -> set[str]:
         target = line.split("=", 1)[1].strip()
         out.add(target.split(":", 1)[0].split("[", 1)[0].strip())
     return {m for m in out if m}
+
+
+_REQ_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?")
+
+
+def _sdist_fixes_requirements(msg: Message) -> bool:
+    """Whether an sdist's PKG-INFO states the dependencies its wheels will have.
+
+    PEP 643: from metadata version 2.2 a field not listed as ``Dynamic`` is
+    the same in every wheel built from the sdist. Older PKG-INFO files often
+    leave ``Requires-Dist`` out even when ``setup.py`` declares dependencies.
+    """
+    try:
+        version = Version(str(msg.get("Metadata-Version", "")).strip())
+    except InvalidVersion:
+        return False
+    dynamic = {str(d).strip().lower() for d in msg.get_all("Dynamic") or []}
+    return version >= Version("2.2") and "requires-dist" not in dynamic
+
+
+def declared_requirements(
+    metadata: bytes, *, sdist: bool = False
+) -> tuple[Requirement, ...] | None:
+    """The ``Requires-Dist`` entries of a METADATA or PKG-INFO file that install
+    without an extra, one per name, in the order they are declared.
+
+    A requirement whose marker mentions ``extra`` is installed only when
+    someone asks for that extra, so it is left out. A line ``packaging`` can't
+    parse is kept under the name it starts with, so an odd line is still seen.
+    For an sdist, None means its PKG-INFO doesn't fix the dependencies.
+    """
+    msg = BytesHeaderParser().parsebytes(metadata)
+    if sdist and not _sdist_fixes_requirements(msg):
+        return None
+    out: list[Requirement] = []
+    seen: set[str] = set()
+    for raw in msg.get_all("Requires-Dist") or []:
+        line = " ".join(str(raw).split())
+        if not line:
+            continue
+        url: str | None = None
+        try:
+            req = _Requirement(line)
+        except InvalidRequirement:
+            m = _REQ_NAME.match(line)
+            if m is None:
+                continue
+            name = canonicalize_name(m.group(0))
+        else:
+            if req.marker is not None and "extra" in str(req.marker):
+                continue
+            name = canonicalize_name(req.name)
+            url = req.url
+        if name in seen:
+            continue
+        seen.add(name)
+        out.append(Requirement(name, line, source=url))
+    return tuple(out)
 
 
 def _pyproject_entry_points(pyproject: bytes) -> set[str]:

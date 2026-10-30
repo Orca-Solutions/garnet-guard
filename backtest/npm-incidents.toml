@@ -11,7 +11,11 @@
 # (`attestation`), whether it was published through a trusted publisher
 # (`trusted_publisher`), the install-time scripts in its package.json
 # (`scripts`), and the source. What a write-up didn't report is recorded as
-# unchanged from the baseline, so nothing is caught on guesswork.
+# unchanged from the baseline, so nothing is caught on guesswork. An entry
+# that records `dependencies` (package.json's, as [name, range]) also records
+# what the registry showed on the day about each new one
+# (`dependency_profiles`), for GRN-C008. A profile's `owners` are left out
+# when no source names the npm account, so the evidence claims none.
 
 [[incident]]
 id = "chalk-5.6.1"
@@ -86,3 +90,35 @@ sources = [
   "https://www.stepsecurity.io/blog/ctrl-tinycolor-and-40-npm-packages-compromised",
 ]
 note = "replayed: version removed from npm; registry facts recorded from write-ups, tarball not inspected"
+
+[[incident]]
+id = "event-stream-3.3.6"
+ecosystem = "npm"
+package = "event-stream"
+baseline = "3.3.5"
+candidate = "3.3.6"
+source_repo = "dominictarr/event-stream"
+osv = "GHSA-mh6f-8j2x-4483"
+uploaded_at = "2018-09-09T08:28:59.503Z"
+attestation = false
+scripts = []
+dependencies = [
+  ["duplexer", "^0.1.1"],
+  ["flatmap-stream", "^0.1.0"],
+  ["from", "^0.1.7"],
+  ["map-stream", "0.0.7"],
+  ["pause-stream", "^0.0.11"],
+  ["split", "^1.0.1"],
+  ["stream-combiner", "^0.2.2"],
+  ["through", "^2.3.8"],
+]
+dependency_profiles = [
+  { name = "flatmap-stream", first_release_at = "2018-08-05T00:00:00+00:00", releases = 1, source_repo = "hugeglass/flatmap-stream" },
+]
+summary = "Published by a newcomer the original author had handed the package to; it added a dependency on flatmap-stream, a package first published five weeks earlier, whose 0.1.1 (October 5, 2018) carried an encrypted payload aimed at one bitcoin wallet app. event-stream itself never tagged its 3.3.x releases or used provenance."
+sources = [
+  "https://snyk.io/blog/a-post-mortem-of-the-malicious-event-stream-backdoor/",
+  "https://github.com/dominictarr/event-stream/commit/e316336",
+  "https://osv.dev/vulnerability/GHSA-mh6f-8j2x-4483",
+]
+note = "replayed: version removed from npm; package.json dependencies recorded from the commit that added flatmap-stream (e316336), tarball not inspected"

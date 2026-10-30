@@ -2,7 +2,7 @@
 
 The Action runs `garnet check` on every pull request that changes a lockfile and posts one comment with the result. The comment is designed for Dependabot and Renovate pull requests, but it works on any pull request. It follows SPEC §10.2 and §9.4.
 
-> Status: preview. Until a release is tagged, the examples below carry a `<release-commit-sha>` placeholder.
+> Status: preview. Until the Action's first full release (0.2.0), the examples below carry a `<release-commit-sha>` placeholder.
 
 ## Quick start
 

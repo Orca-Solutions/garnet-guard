@@ -50,9 +50,10 @@ June 2026 Hades campaign (gpsea, pyphetools, ppkt2synergy, bramin, cmd2func, coo
 ensmallen, executor-engine, executor-http, funcdesc, magique, magique-ai, mem8, mrbios, napari-ufish,
 nucbox, okite, pantheon-agents, pantheon-toolsets, phenopacket-store-toolkit, synago and uprobe) for
 a new `<name>-setup.pth` that downloads and runs Bun. For twelve of those packages it was the only
-rule that fired. It missed embiggen 0.11.97 from the same campaign: the trusted 0.11.96 shipped only
-an sdist and 0.11.97 only a wheel, so there was no pair of artifacts to compare, and the content
-rules passed without saying so. That's a bug, and a fix is planned.
+rule that fired. embiggen 0.11.97 from the same campaign was missed at first: the trusted 0.11.96
+shipped only an sdist and 0.11.97 only a wheel, so there was no pair of artifacts to compare, and
+the content rules passed without saying so. The rule now compares a wheel with an sdist when that
+is the only pair, says so in the finding, and reports `embiggen-setup.pth`.
 
 ## How to resolve it
 
