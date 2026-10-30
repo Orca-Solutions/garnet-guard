@@ -2,6 +2,22 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-30: The Action on Renovate and fork pull requests; examples pin v0.1.0a1
+
+**State.** The Action at the `v0.1.0a1` commit (`42547f6`) was run on real pull requests in a throwaway public test repository, `orca-solutions/garnet-guard-action-test`, with the examples from `action/examples/` copied unchanged apart from the pin:
+
+- Single workflow, SARIF on. Renovate's pluggy 1.6.0 → 1.7.0 pull request (`requirements.txt`) got "1 of 1 update needs a look" with GRN-T003 (publishing workflow `main.yml` → `deploy.yml`) and an inline code scanning alert on the changed line. Renovate's requests 2.32.3 → 2.34.2 pull request (`pyproject.toml` and `uv.lock`, with Renovate's lockfile `revision = 5`) got "1 update, nothing worth a look". The setup pull request, where every package was new, got a table of six "new at" rows. Each run took about 20 to 50 seconds and passed.
+- Single workflow, pull request from a fork (`jfricano/garnet-guard-action-test-fork`). The read-only token's comment POST got HTTP 403, which the comment step reported as a warning; the SARIF upload was skipped with its fork notice; the report went to the job summary; the step passed on the verdict. This is what docs/action.md describes.
+- Two-workflow pattern, the same fork pull request after main switched to `garnet-guard-fork.yml` and `garnet-guard-comment.yml`. The `workflow_run` job found the pull request, rendered the uploaded report and posted the comment, ending with the line that the report came from the fork's own workflow run.
+
+No bug turned up, so nothing in the Action changed. The README, docs/action.md and the three examples now pin the `v0.1.0a1` commit instead of the `<release-commit-sha>` placeholder (the maintainer's decision, 2026-10-30).
+
+**Open tasks.** A Dependabot-opened run is still to be seen; the dogfood workflow on this repository gets Dependabot's first weekly pull request around 2026-11-03. The "checked by" badge stays hidden until then. Delete the test repository and its fork once the maintainer has looked at them. Move the example pins forward with each release (docs/marketplace.md, step 6).
+
+**Verification.** Documentation and example pins only. `uv run pytest`, ruff, mypy (strict) and `lint-imports` pass.
+
+**Review dispositions.** None yet.
+
 ## 2026-10-30: 0.1.0a1 published; documentation refreshed
 
 **State.** 0.1.0a1 is on PyPI (wheel and sdist uploaded 10:59 UTC, with PEP 740 attestations from `release.yml`) and tagged `v0.1.0a1` at `42547f6`, the merge of #41. It claims the `garnet-guard` name. It includes everything merged through #41: GRN-C007, npm `garnet diff`, the policy file, SARIF, the Action preview and the rule fixes from the replays and the top-1,000 corpora. The replay on that commit warns on all 51 malicious releases (47 PyPI, 4 npm) with the tags of the day; the clean corpora flag 366 of 18,181 updates for a look (2.0%), none a false claim. #42 refreshed the README, its Limits list, the rule pages and the expert brief for those numbers, and #43 fixed the badges PyPI shows.
