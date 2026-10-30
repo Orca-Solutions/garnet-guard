@@ -49,7 +49,7 @@ Every run goes through the same five stages, whichever command started it.
 2. **Gather the facts.** `engine.py` asks `ecosystems/pypi.py` or `ecosystems/npm.py` for a
    `ReleaseFacts` record for each version. The PyPI module fetches PyPI's metadata, the
    attestation for every file, the sdist and one wheel (and, for GRN-C012, one wheel per other
-   platform and any late ones); the npm module fetches the registry's package document, the
+   platform and up to 10 late ones); the npm module fetches the registry's package document, the
    release's attestations and the tarball. Both look up
    the project's git tags (`ecosystems/github.py`) and malware advisories
    (`ecosystems/osv.py`), and verify attestations (`ecosystems/provenance.py` for PEP 740,

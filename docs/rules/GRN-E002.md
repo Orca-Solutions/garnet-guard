@@ -17,7 +17,12 @@ status: implemented
 ## What it checks
 
 An artifact, or a new or changed file inside one, couldn't be parsed: for example a `.py`
-file that isn't valid Python 3 syntax, or metadata that doesn't follow its format.
+file that isn't valid Python 3 syntax, or metadata that doesn't follow its format. For
+[GRN-C012](GRN-C012.md) it also reports a `.py` file in another wheel of the release that
+differs from the read wheel's copy and couldn't be parsed, which includes syntax newer than
+the Python Garnet runs on. Such a file is left out when a wheel of the trusted version for
+the same platform family had the same bytes at that path, since it makes the calls that
+wheel made; when Garnet has no trusted copy to compare with, the evidence says so.
 
 ## Why it matters
 

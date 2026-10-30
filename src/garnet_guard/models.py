@@ -253,6 +253,9 @@ class ModuleIndex:
     top_level_calls: tuple[CallSite, ...]
     imports: tuple[str, ...]
     blob_sha1: str = ""  # the id git gives these bytes, to compare with the source tree
+    # The sensitive calls anywhere in the file, by name (GRN-C012). Wheels only;
+    # None in an sdist, and when Garnet couldn't walk the file.
+    sensitive: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -276,6 +279,32 @@ class WheelDifference:
     calls: tuple[CallSite, ...]
     # False when the read wheel's copy couldn't be parsed, so every call counts
     read_copy_parsed: bool = True
+
+
+@dataclass(frozen=True)
+class WheelCalls:
+    """The sensitive calls one Python file of a wheel makes anywhere in it, by
+    name, in the wheel the content rules read or a wheel compared with it
+    (GRN-C012). Recorded for a file with such a call, and for one Garnet
+    couldn't parse or that is over the parse limit (``names`` is None), so the
+    next version can ask what the same platform's wheel already did."""
+
+    family: str  # the wheel's platform family, as in WheelDifference
+    path: str  # where it installs, relative to site-packages
+    names: tuple[str, ...] | None
+    sha256: str = ""  # the file's bytes, so the next version can tell an unchanged copy
+
+
+@dataclass(frozen=True)
+class UnparsedWheelFile:
+    """A Python file in a wheel GRN-C012 compared that differs from the read
+    wheel's copy and that Garnet couldn't parse. GRN-E002 reports it unless a
+    trusted wheel of the same platform family had the same bytes there."""
+
+    wheel: str  # the compared wheel's filename
+    family: str  # its platform family, as in WheelDifference
+    path: str  # in the wheel
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -441,11 +470,19 @@ class ReleaseFacts:
     # family, and each late wheel) that differ from the wheel Garnet read and
     # have sensitive calls its copy lacks. ``wheels_compared`` lists the other
     # wheels read, as (filename, family); ``wheels_not_compared`` those left
-    # out (more late wheels than the cap).
+    # out (more late wheels than the cap, GRN-E003). ``wheel_unparsed`` lists
+    # the differing files of compared wheels that Garnet couldn't parse
+    # (GRN-E002). ``wheel_calls`` holds the calls each file of the read wheel
+    # and of the compared wheels makes, and ``read_wheel_family`` the read
+    # wheel's family, when all its files were read; the next version's
+    # GRN-C012 compares with them.
     wheel_differences: tuple[WheelDifference, ...] = ()
     wheels_compared: tuple[tuple[str, str], ...] = ()
     wheels_not_compared: tuple[str, ...] = ()
     wheel_families: tuple[str, ...] = ()  # the platform families of all its wheels
+    wheel_calls: tuple[WheelCalls, ...] = ()
+    read_wheel_family: str | None = None
+    wheel_unparsed: tuple[UnparsedWheelFile, ...] = ()
 
     @property
     def content(self) -> tuple[ArtifactFacts, ...]:

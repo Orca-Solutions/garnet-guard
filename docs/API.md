@@ -214,6 +214,8 @@ class ReleaseFacts:
     tag: TagInfo | None
     advisories: tuple[str, ...]               # OSV MAL- ids
     wheel_differences: tuple[WheelDifference, ...]  # other wheels' extra calls (GRN-C012)
+    wheel_calls: tuple[WheelCalls, ...]       # each wheel file's calls, for the next version
+    wheel_unparsed: tuple[UnparsedWheelFile, ...]  # other wheels' files that didn't parse
     errors: tuple[FactError, ...]             # become GRN-E findings
 ```
 

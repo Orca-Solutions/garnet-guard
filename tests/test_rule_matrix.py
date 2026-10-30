@@ -28,8 +28,10 @@ from garnet_guard.models import (
     Requirement,
     Severity,
     SourceMatch,
+    UnparsedWheelFile,
     UnsourcedFile,
     Verdict,
+    WheelCalls,
     WheelDifference,
 )
 from tests.builders import prov, release
@@ -105,10 +107,17 @@ def _other_wheels(rel: ReleaseFacts, *calls: str) -> ReleaseFacts:
     """``rel`` with its Windows wheel compared, and ``calls`` in a file of it
     that the wheel Garnet read lacks (GRN-C012 facts)."""
     win = f"demo-{rel.version}-cp313-cp313-win_amd64.whl"
-    diffs = tuple(
-        WheelDifference(win, "Windows", "demo/__init__.py", True, (CallSite(c, 3),)) for c in calls
+    path = "demo/__init__.py"
+    diffs = tuple(WheelDifference(win, "Windows", path, True, (CallSite(c, 3),)) for c in calls)
+    seen = (WheelCalls("Windows", path, tuple(sorted(calls))),) if calls else ()
+    return replace(
+        rel,
+        wheels_compared=((win, "Windows"),),
+        wheel_differences=diffs,
+        wheel_families=("Windows", "any"),
+        wheel_calls=seen,
+        read_wheel_family="any",
     )
-    return replace(rel, wheels_compared=((win, "Windows"),), wheel_differences=diffs)
 
 
 def _downloaded(rel: ReleaseFacts, sha256: str) -> ReleaseFacts:
@@ -781,6 +790,43 @@ def _rows() -> list[Row]:
         _other_wheels(release("1.1", PKG)),
         eco=PYPI,
     )
+    # The trusted version had only a Windows wheel, the one it read.
+    read_windows = replace(
+        release("1.0", PKG),
+        wheel_families=("Windows",),
+        wheel_calls=(WheelCalls("Windows", "demo/__init__.py", ("ctypes.WinDLL",)),),
+        read_wheel_family="Windows",
+    )
+    quiet(
+        "GRN-C012",
+        "the trusted version read its Windows wheel, which made the same call",
+        read_windows,
+        _other_wheels(release("1.1", PKG), "ctypes.WinDLL"),
+        eco=PYPI,
+    )
+    # A Python 2 copy in the wheel Garnet reads, the same in both versions.
+    py2 = {"demo/__init__.py": "print 'py2'\n"}
+    unread = (WheelCalls("any", "demo/__init__.py", None),)
+    fires(
+        "GRN-C012",
+        "the read copy doesn't parse and the trusted Windows wheel didn't make the call",
+        replace(_other_wheels(release("1.0", py2)), wheel_calls=unread),
+        replace(
+            _other_wheels(release("1.1", py2), "subprocess.run"),
+            wheel_differences=(
+                WheelDifference(
+                    "demo-1.1-cp313-cp313-win_amd64.whl",
+                    "Windows",
+                    "demo/__init__.py",
+                    True,
+                    (CallSite("subprocess.run", 3),),
+                    read_copy_parsed=False,
+                ),
+            ),
+        ),
+        Verdict.WARN,
+        eco=PYPI,
+    )
 
     # GRN-K001 known-malicious
     listed = replace(release("1.1"), advisories=("MAL-2026-1",), advisories_checked=True)
@@ -817,11 +863,37 @@ def _rows() -> list[Row]:
         release("1.0", PKG),
         release("1.1", {**PKG, "demo/legacy.py": "print 'py2'\n"}),
     )
+    # A differing copy in the Windows wheel GRN-C012 compares that doesn't
+    # parse; the trusted version read its Windows wheel.
+    legacy, legacy_sha = "demo/__init__.py", "e" * 64
+    win1 = "demo-1.1-cp313-cp313-win_amd64.whl"
+    fires(
+        "GRN-E002",
+        "a file of another wheel GRN-C012 compares isn't Python 3",
+        _other_wheels(release("1.0", PKG)),
+        replace(
+            release("1.1", PKG),
+            wheel_unparsed=(UnparsedWheelFile(win1, "Windows", legacy, legacy_sha),),
+        ),
+        Verdict.WARN,
+    )
     quiet(
         "GRN-E002",
         "unparsable file unchanged since the trusted version",
         release("1.0", {**PKG, "demo/legacy.py": "print 'py2'\n"}),
         release("1.1", {**PKG, "demo/legacy.py": "print 'py2'\n"}),
+    )
+    quiet(
+        "GRN-E002",
+        "another wheel's unparsable copy unchanged since the trusted Windows wheel",
+        replace(
+            _other_wheels(release("1.0", PKG)),
+            wheel_calls=(WheelCalls("Windows", legacy, None, legacy_sha),),
+        ),
+        replace(
+            release("1.1", PKG),
+            wheel_unparsed=(UnparsedWheelFile(win1, "Windows", legacy, legacy_sha),),
+        ),
     )
 
     # GRN-E003 budget-exceeded
@@ -836,6 +908,31 @@ def _rows() -> list[Row]:
         "a Python file over the parse limit",
         release("1.0", PKG),
         release("1.1", {**PKG, "demo/big.py": "x = 1\n" * 10}, limits=Limits(max_py_file_bytes=32)),
+    )
+    fires(
+        "GRN-E003",
+        "a file of another wheel GRN-C012 compares is over the parse limit",
+        release("1.0", PKG),
+        replace(
+            release("1.1", PKG),
+            errors=(
+                FactError(
+                    "GRN-E003",
+                    "demo-1.1-cp313-cp313-win_amd64.whl: demo/big.py is larger than the parse "
+                    "limit",
+                    ("GRN-C012",),
+                    "demo/big.py",
+                ),
+            ),
+        ),
+        Verdict.WARN,
+    )
+    fires(
+        "GRN-E003",
+        "late wheels past the 10 GRN-C012 compares",
+        release("1.0", PKG),
+        replace(release("1.1", PKG), wheels_not_compared=("demo-1.1-cp314-cp314-win32.whl",)),
+        Verdict.WARN,
     )
     quiet(
         "GRN-E003",

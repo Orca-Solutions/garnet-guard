@@ -31,10 +31,15 @@ A safety limit was hit while reading the release. The defaults
 Policy can lower these limits but not raise them. In 0.1 the wall-clock budget isn't
 enforced yet, and limits can't be changed; each network request has its own timeout.
 
+[GRN-C012](GRN-C012.md) compares up to 10 wheels uploaded late. When a release has more,
+the rest aren't read, and this rule lists them in file-name order, naming GRN-C012.
+
 ## Why it matters
 
-The limits protect your CI from archive bombs and runaway parsing. Content past the limit
-was not checked, and this finding says so instead of passing it.
+The limits protect your CI from archive bombs and runaway parsing. A late wheel past the 10
+that GRN-C012 compares can carry Python code the wheel Garnet read doesn't. Content past a
+limit, and a late wheel past the cap, was not checked, and this finding says so instead of
+passing it.
 
 ## Example finding
 
@@ -51,8 +56,10 @@ examplelib 2.6.1 → 2.6.2: WARN
 ## How to resolve it
 
 1. Look at what hit the limit. Large data packages and machine learning models are the
-   usual reasons; an extreme compression ratio on a small file is not.
-2. Review that part of the release by hand.
+   usual reasons; an extreme compression ratio on a small file is not. Late wheels past
+   GRN-C012's 10 are listed by file name, and GRN-T006 reports them as late files too.
+2. Review that part of the release by hand. For late wheels, compare each one's Python files
+   with the wheel Garnet read; the cap of 10 isn't a policy setting.
 3. If it is expected, add an ignore for this version.
 
 ## Allowlisting

@@ -20,6 +20,7 @@ from ..models import (
     ReleaseFacts,
     Requirement,
     Severity,
+    UnparsedWheelFile,
 )
 
 MAX_EVIDENCE = 25  # evidence lines per finding; the rest are counted, not listed
@@ -535,20 +536,29 @@ def new_import_time_exec(
         )
 
 
-def unparsed_changed(
-    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
-) -> Iterator[RawFinding]:
-    """GRN-E002 for new or changed .py files ast couldn't parse."""
+def _unparsed_new(
+    base: ReleaseFacts | None, cand: ReleaseFacts
+) -> tuple[ArtifactFacts | None, list[str]]:
+    """The artifact GRN-E002 reads, and its new or changed .py files ast
+    couldn't parse."""
     b, c = (
         _pair(base, cand)
         if base is not None
         else (None, _pick(cand, "wheel") or _pick(cand, "sdist"))
     )
     if c is None:
-        return
+        return None, []
     old_hashes = {f.path: f.sha256 for f in b.files} if b is not None else {}
     new_hashes = {f.path: f.sha256 for f in c.files}
-    bad = [p for p in c.unparsed if old_hashes.get(p) != new_hashes.get(p)]
+    return c, [p for p in c.unparsed if old_hashes.get(p) != new_hashes.get(p)]
+
+
+def unparsed_changed(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-E002 for new or changed .py files ast couldn't parse, in the
+    artifact the content rules read and in each wheel GRN-C012 compared."""
+    _, bad = _unparsed_new(base, cand)
     if bad:
         yield RawFinding(
             "GRN-E002",
@@ -557,6 +567,61 @@ def unparsed_changed(
                 Evidence("file", f"{p}: not valid Python 3 syntax", path=p)
                 for p in bad[:MAX_EVIDENCE]
             ),
+        )
+    yield from _compared_unparsed(base, cand)
+
+
+def _families_read(base: ReleaseFacts) -> set[str]:
+    """The platform families of the trusted version's wheels Garnet read."""
+    looked = {fam for _, fam in base.wheels_compared}
+    if base.read_wheel_family is not None:
+        looked.add(base.read_wheel_family)
+    return looked
+
+
+def _compared_unparsed(base: ReleaseFacts | None, cand: ReleaseFacts) -> Iterator[RawFinding]:
+    """GRN-E002 naming GRN-C012, one per compared wheel, for its differing
+    files Garnet couldn't parse. A file a trusted wheel of the same platform
+    family had with the same bytes at the same path is left out: it makes the
+    calls that wheel made, so none is new."""
+    if not cand.wheel_unparsed:
+        return
+    read = _pick(cand, "wheel")
+    against = read.filename if read is not None else "the wheel Garnet read"
+    trusted = base.wheel_calls if base is not None else ()
+    same = {(w.family, w.path, w.sha256) for w in trusted if w.sha256}
+    looked = _families_read(base) if base is not None else set()
+    by_wheel: dict[str, list[UnparsedWheelFile]] = {}
+    for u in cand.wheel_unparsed:
+        if (u.family, _site_name(u.path), u.sha256) not in same:
+            by_wheel.setdefault(u.wheel, []).append(u)
+    for wheel, files in sorted(by_wheel.items()):
+        evidence = []
+        for u in sorted(files, key=lambda u: u.path)[:MAX_EVIDENCE]:
+            if base is None:
+                why = "no trusted version to compare with"
+            elif u.family in looked:
+                why = f"new or changed since {base.version}'s {u.family} wheel"
+            elif not base.artifacts:
+                why = (
+                    f"Garnet couldn't read {base.version}'s files, so it can't tell whether "
+                    "this copy changed"
+                )
+            elif u.family not in base.wheel_families:
+                why = f"{base.version} had no {u.family} wheel to compare with"
+            else:
+                why = (
+                    f"Garnet didn't read {base.version}'s {u.family} wheel, so it can't tell "
+                    "whether this copy changed"
+                )
+            evidence.append(Evidence("file", f"{u.path}: {why}", path=u.path))
+        if len(files) > MAX_EVIDENCE:
+            evidence.append(Evidence("note", f"and {len(files) - MAX_EVIDENCE} more"))
+        evidence.append(Evidence("note", "not evaluated: GRN-C012"))
+        yield RawFinding(
+            "GRN-E002",
+            f"{len(files)} Python file(s) in {wheel} couldn't be parsed to compare with {against}",
+            tuple(evidence),
         )
 
 
@@ -1032,21 +1097,40 @@ def wheels_differ(
     copy doesn't.
 
     A platform's wheel may differ for good reasons (delvewheel adds DLL loading
-    to Windows wheels), so a call the trusted version's wheel for the same
-    platform family already made at the same path is not new.
+    to Windows wheels), so a call any of the trusted version's wheels for the
+    same platform family made at the same path, the one it read included, is
+    not new.
+
+    When the read copy didn't parse, the trusted version's wheel for that
+    family is what the call is compared with. Only when that comparison isn't
+    possible either, and GRN-E002 already warns for the read copy as new or
+    changed, is the line listed at info.
     """
     if base is None or not cand.wheel_differences:
         return
     read = _pick(cand, "wheel")
     if read is None:
         return
-    before = {(d.family, d.path): {c.name for c in d.calls} for d in base.wheel_differences}
+    before: dict[tuple[str, str], set[str]] = {}
+    unread: set[tuple[str, str]] = set()  # the trusted copy couldn't be parsed
+    for w in base.wheel_calls:
+        if w.names is None:
+            unread.add((w.family, w.path))
+        else:
+            before.setdefault((w.family, w.path), set()).update(w.names)
+    looked = _families_read(base)
+    reported, bad = _unparsed_new(base, cand)
+    warned = (
+        {_site_name(p) for p in bad} if reported and reported.filename == read.filename else set()
+    )
     base_families = set(base.wheel_families)
     evidence: list[Evidence] = []
-    wheels: set[str] = set()
-    compared = False  # a line where the read copy was there and parsed
+    wheels: list[str] = []  # the wheel each evidence line is from
+    compared = False  # a line where the read copy was there and parsed, or absent
+    warn = False  # a line that GRN-E002 doesn't already warn for
     for d in cand.wheel_differences:
         known = before.get((d.family, d.path), set())
+        trusted = d.family in looked and (d.family, d.path) not in unread
         for c in d.calls:
             if c.name in known:
                 continue
@@ -1057,40 +1141,74 @@ def wheels_differ(
                 where = f"the same file in {read.filename} doesn't"
             else:
                 where = f"the same file in {read.filename} couldn't be parsed to compare"
+                if trusted:
+                    where += f", and {base.version}'s {d.family} wheel didn't make this call there"
             text = f"{d.wheel}: {d.path}:{c.line} calls {c.name}{via}; {where}"
-            if d.family not in base_families:
+            if not base.artifacts:  # Garnet saw none of its files; GRN-E001 says why
+                text += f" (Garnet couldn't read {base.version}'s files to compare with)"
+            elif d.family not in base_families:
                 text += f" ({base.version} had no {d.family} wheel to compare with)"
+            elif (d.family, d.path) in unread:
+                text += (
+                    f" ({base.version}'s {d.family} copy couldn't be parsed, so this call may "
+                    "not be new)"
+                )
             evidence.append(Evidence("file", text, path=d.path, line=c.line))
-            wheels.add(d.wheel)
-            compared = compared or not d.in_inspected or d.read_copy_parsed
+            wheels.append(d.wheel)
+            parsed = not d.in_inspected or d.read_copy_parsed
+            compared = compared or parsed
+            warn = warn or parsed or trusted or d.path not in warned
     if not evidence:
         return
+    n = len(set(wheels))
     if compared:
-        title = f"{len(wheels)} other wheel(s) of {cand.version} have code the wheel Garnet read doesn't"
+        title = f"{n} other wheel(s) of {cand.version} have code the wheel Garnet read doesn't"
     else:
-        # Old releases read through a Python 2 wheel: the read copies don't
-        # parse (GRN-E002 reports a new or changed one), so nothing shows the
-        # other wheels differ. Listed, not warned.
         title = (
-            f"{len(wheels)} other wheel(s) of {cand.version} have code Garnet couldn't compare "
+            f"{n} other wheel(s) of {cand.version} have code Garnet couldn't compare "
             "with the wheel it read"
+        )
+    more = len(evidence) - MAX_EVIDENCE
+    tail: tuple[Evidence, ...] = ()
+    if more > 0:
+        rest = ", ".join(sorted(set(wheels[MAX_EVIDENCE:])))
+        tail = (Evidence("note", f"and {more} more call site(s), in {rest}"),)
+    note: tuple[Evidence, ...] = ()
+    if not warn:
+        # Old releases read through a Python 2 wheel: the read copies don't
+        # parse, and GRN-E002 warns for the ones that are new or changed.
+        note = (
+            Evidence(
+                "note",
+                f"the copies in {read.filename} are new or changed and couldn't be parsed, "
+                "which GRN-E002 reports, so this is reported at info",
+            ),
         )
     yield RawFinding(
         "GRN-C012",
         title,
-        tuple(evidence[:MAX_EVIDENCE]),
-        lowered_to=None if compared else Severity.INFO,
+        tuple(evidence[:MAX_EVIDENCE]) + tail + note,
+        lowered_to=None if warn else Severity.INFO,
     )
 
 
-def comparison_notes(cand: ReleaseFacts) -> tuple[str, ...]:
-    """What GRN-C012 left out: late wheels past the cap aren't compared."""
+def late_wheels_not_compared(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-E003 naming GRN-C012 for the late wheels past its cap: their files
+    weren't compared, and a check Garnet couldn't run is never a pass."""
     if not cand.wheels_not_compared:
-        return ()
-    n = len(cand.wheels_not_compared)
-    return (
-        f"{n} more late wheel(s) of {cand.version} weren't compared with the wheel Garnet read "
-        f"(GRN-C012 compares up to 10), starting with {cand.wheels_not_compared[0]}",
+        return
+    left = sorted(cand.wheels_not_compared)
+    evidence = [Evidence("file", w) for w in left[:MAX_EVIDENCE]]
+    if len(left) > MAX_EVIDENCE:
+        evidence.append(Evidence("note", f"and {len(left) - MAX_EVIDENCE} more"))
+    evidence.append(Evidence("note", "not evaluated: GRN-C012"))
+    yield RawFinding(
+        "GRN-E003",
+        f"Couldn't fully check {cand.version}: {len(left)} late wheel(s) weren't compared with "
+        "the wheel Garnet read; GRN-C012 compares up to 10",
+        tuple(evidence),
     )
 
 

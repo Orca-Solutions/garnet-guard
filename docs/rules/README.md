@@ -46,7 +46,7 @@ What the release contains that the trusted version didn't.
 | [GRN-C008](GRN-C008.md) | new-dependency | diff | `warn` (`info` for an established dependency) | 0.2 |
 | [GRN-C010](GRN-C010.md) | new-startup-file | diff | `warn` (`info` for other scripts and data files) | 0.2 |
 | [GRN-C011](GRN-C011.md) | new-js-capability | diff | `info` | 0.2 |
-| [GRN-C012](GRN-C012.md) | wheels-differ | diff | `warn` (`info` when the read copy doesn't parse) | 0.2 |
+| [GRN-C012](GRN-C012.md) | wheels-differ | diff | `warn` (`info` beside a GRN-E002 warning for a read copy that doesn't parse) | 0.2 |
 
 ## Known bad
 

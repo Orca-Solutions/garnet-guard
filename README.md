@@ -47,7 +47,7 @@ Malware feeds caught these only after the fact. Cooldowns only buy time. pip and
 | **Risky content change** | A new `.pth` or `sitecustomize.py` file, new build hooks, new import-time `exec`/`subprocess`/network code, code that isn't at the release's git tag, a new native binary or one named like a `.py` file, code in another platform's wheel that the checked wheel lacks, a new dependency that is new to the registry. |
 | **Known bad** | The release matches an OSV / OpenSSF malicious-package advisory. |
 
-Garnet never runs the code it inspects. It downloads both releases and reads them statically: the sdist and the wheel pip would install, plus one wheel for each other platform and any wheel uploaded late, to compare with it.
+Garnet never runs the code it inspects. It downloads both releases and reads them statically: the sdist and the wheel pip would install, plus one wheel for each other platform and up to 10 wheels uploaded late, to compare with it.
 
 ## How you'll use it
 
