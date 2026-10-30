@@ -9,6 +9,7 @@ from garnet_guard.models import (
     Severity,
     SourceMatch,
     TagInfo,
+    UnparsedWheelFile,
     UnsourcedFile,
     Verdict,
 )
@@ -316,6 +317,63 @@ def test_sdist_only_release_after_wheel_only_is_still_compared() -> None:
     assert {"GRN-C002", "GRN-C003"} <= ids
     [c003] = [f for f in result.findings if f.rule_id == "GRN-C003"]
     assert "different kinds of files" in c003.evidence[-1].summary
+
+
+def test_a_first_wheel_is_compared_with_the_trusted_sdist() -> None:
+    # pip installs the new wheel, so what it adds counts even when the sdist
+    # uploaded beside it is as clean as the trusted one.
+    base = _sdist("1.0", SRC)
+    wheel = {"demo/__init__.py": INIT + "import os\nos.system('id')\n", "demo.pth": "import os\n"}
+    result = run_checks(CHANGE, base, release("1.1", wheel, sdist_files=SRC))
+    c001, c003 = (
+        next(f for f in result.findings if f.rule_id == rule) for rule in ("GRN-C001", "GRN-C003")
+    )
+    assert "different kinds of files" in c001.evidence[-1].summary
+    assert "different kinds of files" in c003.evidence[-1].summary
+    # Releases that both ship a wheel still compare wheels, and sdists only when neither does.
+    assert rules(base, _sdist("1.1", SRC)) == set()
+
+
+def test_a_first_wheel_and_its_sdist_are_both_read() -> None:
+    # pip builds the sdist where no wheel fits, so what only the sdist adds
+    # still counts; what both add is reported once.
+    base = _sdist("1.0", SRC)
+    payload = INIT + "import os\nos.system('id')\n"
+    in_sdist = release(
+        "1.1", {"demo/__init__.py": INIT}, sdist_files={**SRC, "demo/__init__.py": payload}
+    )
+    assert "GRN-C003" in rules(base, in_sdist)
+    in_both = release(
+        "1.1", {"demo/__init__.py": payload}, sdist_files={**SRC, "demo/__init__.py": payload}
+    )
+    c003 = [f for f in run_checks(CHANGE, base, in_both).findings if f.rule_id == "GRN-C003"]
+    assert len(c003) == 1
+
+
+def test_a_first_wheel_of_an_src_layout_matches_the_trusted_sdist() -> None:
+    # The sdist's src/ folder isn't part of the installed name: an unchanged
+    # .pth, unparsable template and sourceless .pyc are the same files.
+    files = {
+        "demo/__init__.py": INIT,
+        "demo/template.py": "def {{ name }}():\n    return 1\n",
+        "demo/_compat.pyc": b"\0" * 16,
+        "demo.pth": "/some/path\n",
+    }
+    sdist = {"setup.py": SETUP, **{f"src/{k}": v for k, v in files.items()}}
+    assert rules(_sdist("1.0", sdist), release("1.1", files, sdist_files=sdist)) == set()
+
+
+def test_the_other_wheels_of_a_first_wheel_are_read_once() -> None:
+    # GRN-C012's wheels are compared with the wheel Garnet read, not once for
+    # each way the content rules read a first wheel and its sdist.
+    win = "demo-1.1-cp312-cp312-win_amd64.whl"
+    cand = replace(
+        release("1.1", {"demo/__init__.py": INIT}, sdist_files=SRC),
+        wheel_unparsed=(UnparsedWheelFile(win, "Windows", "demo/x.py", "a" * 64),),
+    )
+    result = run_checks(CHANGE, _sdist("1.0", SRC), cand)
+    (e002,) = [f for f in result.findings if f.rule_id == "GRN-E002"]
+    assert e002.title.endswith("compare with demo-1.1-py3-none-any.whl")
 
 
 def test_setup_py_in_a_release_that_adds_an_sdist_counts_as_new() -> None:

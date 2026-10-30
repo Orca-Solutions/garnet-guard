@@ -84,6 +84,7 @@ read line by line with none false, and 46 GRN-C003 findings at `info`.
 |---|---|---|---|
 | `cmdclass={'install': PostInstall}` whose `run()` calls `os.system` (the classic PyPI install hook) | C002 | invisible: only import-time calls in `setup.py` were indexed | `setup.py` is read whole; the evidence names the function |
 | A release that drops its wheel and ships only an sdist, after a wheel-only trusted version | C001, C002, C003 | nothing compared, nothing said | the two kinds are compared with each other, with a note |
+| A first wheel uploaded beside an sdist, after an sdist-only trusted version (found in review, 2026-10-30) | C001, C003, C004, C008, E002 | the two sdists were compared and the wheel pip installs was never read | the new wheel and the new sdist are each compared with the trusted sdist, the `src/` folder ignored; on the 974-update corpus 4 updates are read both ways and no finding changes |
 | A release that adds an sdist with a hooked `setup.py` to a wheel-only package | C002 | silent: no trusted sdist to compare with | a trusted version without an sdist had no build code, so every call is new |
 | `(lambda: os.system(...))()`, `atexit.register(lambda: ...)` | C003 | lambda bodies were never followed | followed when the lambda is called or passed |
 | `class Boot: def __init__(self): os.system(...)` then `Boot()` at import | C003 | only module-level functions were followed | instantiation runs `__init__`/`__new__`; `Boot.method()` is followed too |

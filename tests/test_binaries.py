@@ -69,6 +69,15 @@ def test_evidence_names_the_format_and_the_disguise() -> None:
     assert "GRN-E002" in {x.rule_id for x in result.findings}
 
 
+def test_a_disguise_in_a_first_wheel_beside_an_sdist_is_reported() -> None:
+    # The trusted release shipped only an sdist; pip installs the new wheel,
+    # not the clean sdist uploaded beside it.
+    base = release("1.0", None, sdist_files=PKG, sdist_only=True)
+    cand = release("1.1", {**PKG, "demo/_build.py": PE}, sdist_files=PKG)
+    (f,) = _c004(base, cand)
+    assert f.evidence[0].summary.startswith("demo/_build.py: PE native code")
+
+
 def test_a_changed_disguise_is_reported_as_changed() -> None:
     base = release("1.0", {**PKG, "demo/_build.py": PE})
     (f,) = _c004(base, release("1.1", {**PKG, "demo/_build.py": PE + b"\1"}))
