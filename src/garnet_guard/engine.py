@@ -12,12 +12,15 @@ from pathlib import Path
 from . import __version__
 from . import policy as pol
 from .checks import ALL_CHECKS, DOCS
+from .checks.content import new_requirement_names
 from .checks.docs import rule_url
 from .ecosystems import github, gittree, npm, pypi
 from .models import (
     Change,
     ChangeResult,
+    DependencyProfile,
     Evidence,
+    FactError,
     Finding,
     Ignore,
     Limits,
@@ -27,7 +30,7 @@ from .models import (
     Severity,
     Verdict,
 )
-from .net import Http
+from .net import Http, NetError
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,8 @@ class Fetcher:
             http=self.http, limits=options.limits, tags=tags, trees=trees
         )
         self._npm = npm.FetchContext(http=self.http, limits=options.limits, tags=tags)
+        self._profiles: dict[tuple[str, str], DependencyProfile] = {}
+        self._profiles_lock = threading.Lock()
 
     def __enter__(self) -> Fetcher:
         return self
@@ -91,6 +96,50 @@ class Fetcher:
             replay=self.options.replay.get(version),
             advisories=advisories,
         )
+
+    def dependency_profile(self, ecosystem: str, name: str) -> DependencyProfile:
+        """What the registry says about a package, fetched once per run. Raises ``NetError``."""
+        key = (ecosystem, name)
+        with self._profiles_lock:
+            hit = self._profiles.get(key)
+        if hit is None:
+            if ecosystem == "npm":
+                hit = npm.package_profile(self._npm, name)
+            else:
+                hit = pypi.package_profile(self._pypi, name)
+            with self._profiles_lock:
+                self._profiles[key] = hit
+        return hit
+
+
+def with_dependency_profiles(
+    fetcher: Fetcher, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> ReleaseFacts:
+    """The candidate with a registry profile for each dependency the baseline
+    didn't declare (GRN-C008). A lookup that fails is a GRN-E001 on the
+    candidate naming GRN-C008, so the rule never passes a name it couldn't see.
+    Profiles the facts already carry (an incident replay) are kept.
+    """
+    known = {p.name for p in cand.dependencies}
+    names = [n for n in new_requirement_names(base, cand) if n not in known]
+    if not names:
+        return cand
+    profiles: list[DependencyProfile] = []
+    errors: list[FactError] = []
+    for name in names:
+        try:
+            profiles.append(fetcher.dependency_profile(cand.ecosystem, name))
+        except NetError as err:
+            errors.append(
+                FactError(
+                    "GRN-E001", f"registry lookup for dependency {name}: {err}", ("GRN-C008",)
+                )
+            )
+    return replace(
+        cand,
+        dependencies=cand.dependencies + tuple(profiles),
+        errors=cand.errors + tuple(errors),
+    )
 
 
 def normalize(ecosystem: str, package: str) -> str:
@@ -224,18 +273,24 @@ def fetch_facts(
 ) -> dict[str, ReleaseFacts]:
     """Fetch facts for several versions of one package in parallel."""
     with Fetcher(options) as fetcher:
-        with ThreadPoolExecutor(max_workers=max(1, len(versions))) as pool:
-            futures = {
-                v: pool.submit(
-                    fetcher.release_facts,
-                    ecosystem,
-                    package,
-                    v,
-                    advisories=options.check_known_bad and v == candidate,
-                )
-                for v in versions
-            }
-            return {v: f.result() for v, f in futures.items()}
+        return _fetch_all(fetcher, package, versions, candidate=candidate, ecosystem=ecosystem)
+
+
+def _fetch_all(
+    fetcher: Fetcher, package: str, versions: list[str], *, candidate: str, ecosystem: str
+) -> dict[str, ReleaseFacts]:
+    with ThreadPoolExecutor(max_workers=max(1, len(versions))) as pool:
+        futures = {
+            v: pool.submit(
+                fetcher.release_facts,
+                ecosystem,
+                package,
+                v,
+                advisories=fetcher.options.check_known_bad and v == candidate,
+            )
+            for v in versions
+        }
+        return {v: f.result() for v, f in futures.items()}
 
 
 def compare(
@@ -257,15 +312,12 @@ def compare(
     opts = replace(opts, limits=_lowest(opts.limits, policy.limits))
     name = normalize(ecosystem, package)
     versions = [candidate] + ([baseline] if baseline else [])
-    facts = fetch_facts(name, versions, opts, candidate=candidate, ecosystem=ecosystem)
+    with Fetcher(opts) as fetcher:
+        facts = _fetch_all(fetcher, name, versions, candidate=candidate, ecosystem=ecosystem)
+        base = facts.get(baseline) if baseline else None
+        cand = with_dependency_profiles(fetcher, base, facts[candidate])
     change = Change(ecosystem, name, baseline, candidate)
-    return run_checks(
-        change,
-        facts.get(baseline) if baseline else None,
-        facts[candidate],
-        policy=policy,
-        today=opts.today,
-    )
+    return run_checks(change, base, cand, policy=policy, today=opts.today)
 
 
 def evaluate(
@@ -305,16 +357,19 @@ def evaluate(
                 cand = facts(c.ecosystem, c.package, c.candidate, opts.check_known_bad)
                 base = facts(c.ecosystem, c.package, c.baseline, False) if c.baseline else None
                 pending.append((c, base, cand))
-            return [
-                run_checks(
-                    c,
-                    base.result() if base else None,
-                    cand.result(),
-                    policy=policy,
-                    today=opts.today,
+            results = []
+            for c, base, cand in pending:
+                b = base.result() if base else None
+                results.append(
+                    run_checks(
+                        c,
+                        b,
+                        with_dependency_profiles(fetcher, b, cand.result()),
+                        policy=policy,
+                        today=opts.today,
+                    )
                 )
-                for c, base, cand in pending
-            ]
+            return results
 
 
 def unchecked_result(

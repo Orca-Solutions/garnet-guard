@@ -268,6 +268,45 @@ class SourceMatch:
 
 
 @dataclass(frozen=True)
+class Requirement:
+    """A package an artifact declares it needs, installed without asking for an extra.
+
+    ``spec`` is the requirement as written (``requests>=2.31``, or ``left-pad@^1.3.0``
+    on npm); ``name`` is the ecosystem's normalized name. ``alias_of`` is the
+    registry package an npm alias (``"x": "npm:y@^1"``) installs under the name.
+    ``source`` is set when the dependency doesn't install from the registry at
+    all: a URL, a git repository or a local path.
+    """
+
+    name: str
+    spec: str
+    alias_of: str | None = None
+    source: str | None = None
+
+    @property
+    def package(self) -> str:
+        """The registry package that installs."""
+        return self.alias_of or self.name
+
+
+@dataclass(frozen=True)
+class DependencyProfile:
+    """What the registry says about a package a release depends on (GRN-C008).
+
+    Looked up only for dependencies the trusted version didn't declare.
+    ``on_registry`` False means the registry has no such package.
+    """
+
+    name: str
+    on_registry: bool
+    first_release_at: datetime | None = None
+    releases: int = 0
+    source_repo: str | None = None
+    latest_version: str | None = None
+    owners: tuple[str, ...] = ()  # registry accounts: PyPI roles and organization, npm maintainers
+
+
+@dataclass(frozen=True)
 class ArtifactFacts:
     """One file of a release (a wheel or an sdist).
 
@@ -297,6 +336,13 @@ class ArtifactFacts:
     integrity: str | None = None
     downloaded_integrity: str | None = None
     install_scripts: tuple[tuple[str, str], ...] = ()
+    # The dependencies the artifact's metadata declares (``Requires-Dist`` in a
+    # wheel's METADATA or an sdist's PKG-INFO; ``dependencies``,
+    # ``optionalDependencies`` and ``peerDependencies`` in package.json) that
+    # install without asking for an extra. ``requirements_read`` tells an
+    # artifact with no dependencies from one whose metadata wasn't found.
+    requirements: tuple[Requirement, ...] = ()
+    requirements_read: bool = False
 
 
 @dataclass(frozen=True)
@@ -339,6 +385,14 @@ class ReleaseFacts:
     advisories_checked: bool = False
     errors: tuple[FactError, ...] = ()
     notes: tuple[str, ...] = field(default_factory=tuple)
+    # Registry profiles of the dependencies the trusted version didn't declare,
+    # looked up by the engine for GRN-C008. A name with no profile and no
+    # GRN-E001 naming GRN-C008 wasn't looked up at all (no baseline to diff).
+    dependencies: tuple[DependencyProfile, ...] = ()
+    # The registry accounts that own the package: PyPI's owner and maintainer
+    # roles and organization (as they are today), npm's maintainers of this
+    # version. Empty when the registry didn't say.
+    owners: tuple[str, ...] = ()
 
     @property
     def content(self) -> tuple[ArtifactFacts, ...]:

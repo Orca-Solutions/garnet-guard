@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
+from datetime import datetime
 
 from ..models import (
     ArtifactFacts,
@@ -13,6 +14,7 @@ from ..models import (
     ModuleIndex,
     RawFinding,
     ReleaseFacts,
+    Requirement,
     Severity,
 )
 
@@ -602,4 +604,194 @@ def code_not_in_source(
         f"{cand.version} contains code that is not in github.com/{sm.repo} at tag {sm.tag} "
         f"({files} file(s))",
         (head, *evidence[:MAX_EVIDENCE], *tail),
+    )
+
+
+# GRN-C008: a dependency first published this close to the release that adds
+# it is reported at warn, unless it shares an owner with the trusted package;
+# an established one at info.
+YOUNG_DEPENDENCY_DAYS = 90
+_REGISTRY = {"pypi": "PyPI", "npm": "npm"}
+_REGISTRY_PAGE = {
+    "pypi": "https://pypi.org/project/{}/",
+    "npm": "https://www.npmjs.com/package/{}",
+}
+
+
+def _metadata_pair(
+    base: ReleaseFacts, cand: ReleaseFacts
+) -> tuple[ArtifactFacts | None, ArtifactFacts | None]:
+    """The artifacts whose declared dependencies are compared: the content
+    pair on PyPI, the tarball on npm, and only when both were read."""
+    if cand.ecosystem == "npm":
+        b, c = next(iter(base.content), None), next(iter(cand.content), None)
+    else:
+        b, c = _pair(base, cand)
+    if b is None or c is None or not (b.requirements_read and c.requirements_read):
+        return None, None
+    return b, c
+
+
+def _dependency_changes(
+    base: ReleaseFacts, cand: ReleaseFacts
+) -> tuple[
+    list[Requirement],
+    list[tuple[Requirement, Requirement]],
+    ArtifactFacts | None,
+    ArtifactFacts | None,
+]:
+    """The candidate's new dependencies, and the ones it kept whose source or
+    alias changed (``(old, new)``), with the two artifacts compared."""
+    b, c = _metadata_pair(base, cand)
+    if b is None or c is None:
+        return [], [], None, None
+    old = {r.name: r for r in b.requirements}
+    new = [r for r in c.requirements if r.name not in old]
+    moved = [
+        (old[r.name], r)
+        for r in c.requirements
+        if r.name in old and (r.source, r.alias_of) != (old[r.name].source, old[r.name].alias_of)
+    ]
+    return new, moved, b, c
+
+
+def new_requirement_names(base: ReleaseFacts | None, cand: ReleaseFacts) -> tuple[str, ...]:
+    """The registry packages the engine looks up for GRN-C008: what the
+    candidate's new dependencies, and its kept ones that now install another
+    package, install from the registry. In declaration order."""
+    if base is None:
+        return ()
+    new, moved, _, _ = _dependency_changes(base, cand)
+    wanted = [r for r in new if r.source is None]
+    wanted += [r for _, r in moved if r.source is None and r.alias_of is not None]
+    return tuple(dict.fromkeys(r.package for r in wanted))
+
+
+def _uploaded(rel: ReleaseFacts) -> datetime | None:
+    """When the release's first file was uploaded, if the registry said."""
+    stamps = [a.uploaded_at for a in rel.artifacts if a.uploaded_at is not None]
+    return min(stamps) if stamps else None
+
+
+def _installs(r: Requirement) -> str:
+    """What a requirement installs, for the evidence."""
+    if r.source is not None:
+        return _clip(r.source, 120)
+    return r.package
+
+
+def new_dependency(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-C008: the candidate declares a dependency the baseline didn't, or a
+    dependency it kept now installs from somewhere else.
+
+    Every new dependency is reported, with what the registry says about it.
+    The rule keeps its severity for one that installs from outside the
+    registry, one the registry doesn't have, and one whose first release came
+    within ``YOUNG_DEPENDENCY_DAYS`` of this release (or after it) and that
+    shares no owner with the trusted version. An established dependency, or a
+    young one owned by an account that already owns the trusted package, is
+    reported at info. A new dependency the engine couldn't look up is listed
+    at info, and GRN-E001 says the lookup failed.
+    """
+    if base is None:
+        return
+    new, moved, b, c = _dependency_changes(base, cand)
+    if b is None or c is None or not (new or moved):
+        return
+    registry = _REGISTRY.get(change.ecosystem, "the registry")
+    page = _REGISTRY_PAGE.get(change.ecosystem, "{}")
+    profiles = {p.name: p for p in cand.dependencies}
+    trusted_owners = set(base.owners)
+    uploaded = _uploaded(cand)
+    evidence: list[Evidence] = []
+    flagged: list[str] = []
+
+    for old, r in moved:
+        was = f"{old.spec} in {base.version}"
+        if r.source is not None:
+            flagged.append(f"{r.name} now installs from outside {registry}")
+            evidence.append(Evidence("note", f"{r.spec}: installs from {_installs(r)}; was {was}"))
+            continue
+        url = page.format(r.package)
+        if r.alias_of is None:
+            # Back to the registry package of that name: the usual case.
+            evidence.append(
+                Evidence("url", f"{r.spec}: installs from {registry}; was {was}", url=url)
+            )
+            continue
+        # The same name now installs a different package.
+        flagged.append(f"{r.name} now installs {r.package}")
+        p = profiles.get(r.package)
+        about = ""
+        if p is not None and not p.on_registry:
+            about = f"; {registry} has no package named {r.package}"
+        elif p is not None and p.first_release_at is not None:
+            about = f"; {r.package} first released {p.first_release_at:%Y-%m-%d}"
+        evidence.append(
+            Evidence(
+                "url",
+                f"{r.spec}: installs {r.package} under the name {r.name}{about}; was {was}",
+                url=url,
+            )
+        )
+
+    for r in new:
+        if r.source is not None:
+            flagged.append(f"{r.name} installs from outside {registry}")
+            evidence.append(
+                Evidence("note", f"{r.spec}: new dependency, installed from {_installs(r)}")
+            )
+            continue
+        p = profiles.get(r.package)
+        url = page.format(r.package)
+        alias = f" (installs {r.package})" if r.alias_of else ""
+        if p is None:
+            evidence.append(
+                Evidence("note", f"{r.spec}: new dependency{alias}; {registry} was not consulted")
+            )
+            continue
+        if not p.on_registry:
+            flagged.append(f"{r.package} is not on {registry}")
+            evidence.append(
+                Evidence("url", f"{r.spec}: {registry} has no package named {r.package}", url=url)
+            )
+            continue
+        parts = [alias.strip(" ()")] if alias else []
+        shared = sorted(trusted_owners & set(p.owners))
+        if p.first_release_at is not None:
+            when = f"first released {p.first_release_at:%Y-%m-%d}"
+            if uploaded is not None:
+                days = (uploaded - p.first_release_at).days
+                if days < 0:
+                    when += f", after {cand.version} itself"
+                else:
+                    when += f", {days} day(s) before {cand.version}"
+                if days < YOUNG_DEPENDENCY_DAYS and not shared:
+                    flagged.append(
+                        f"{r.package} was first released {max(days, 0)} day(s) before it"
+                    )
+            parts.append(when)
+        else:
+            parts.append("no upload dates on record")
+        parts.append(f"{p.releases} release(s)")
+        parts.append(f"github.com/{p.source_repo}" if p.source_repo else "no repository link")
+        if shared:
+            parts.append(f"owned by {', '.join(shared[:3])}, who also own(s) {base.package}")
+        evidence.append(Evidence("url", f"{r.spec}: {'; '.join(parts)}", url=url))
+
+    heads = []
+    if new:
+        heads.append(f"{cand.version} depends on {len(new)} package(s) that {base.version} didn't")
+    if moved:
+        heads.append(
+            f"{len(moved)} dependency(ies) install from somewhere else than in {base.version}"
+        )
+    title = "; ".join(heads + flagged[:3])
+    yield RawFinding(
+        "GRN-C008",
+        title,
+        tuple(evidence[:MAX_EVIDENCE]) + _compare_note(b, c),
+        lowered_to=None if flagged else Severity.INFO,
     )

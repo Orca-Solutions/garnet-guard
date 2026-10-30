@@ -27,7 +27,7 @@ from typing import Any
 from garnet_guard.ecosystems import npm
 from garnet_guard.ecosystems.pypi import RegistryFile, ReplayRelease
 from garnet_guard.engine import Options, compare, report
-from garnet_guard.models import ChangeResult, Severity
+from garnet_guard.models import ChangeResult, DependencyProfile, Requirement, Severity
 from garnet_guard.report import to_text
 
 HERE = Path(__file__).parent
@@ -95,6 +95,10 @@ def _npm_options(inc: dict[str, Any]) -> Options:
     scripts = inc.get("scripts", [])
     assert isinstance(scripts, list)
     tp = inc.get("trusted_publisher")
+    deps = inc.get("dependencies")
+    assert deps is None or isinstance(deps, list)
+    profiles = inc.get("dependency_profiles", [])
+    assert isinstance(profiles, list)
     replay = npm.ReplayRelease(
         uploaded_at=datetime.fromisoformat(str(inc["uploaded_at"])),
         attestation=bool(inc.get("attestation", False)),
@@ -102,6 +106,24 @@ def _npm_options(inc: dict[str, Any]) -> Options:
         scripts=tuple((str(k), str(v)) for k, v in scripts),
         source_repo=str(inc["source_repo"]),
         note=str(inc["note"]),
+        # The package.json dependencies the write-ups reported (GRN-C008),
+        # and what the registry showed about the new one on the day.
+        requirements=tuple(Requirement(str(n), f"{n}@{spec}") for n, spec in deps)
+        if deps is not None
+        else None,
+        dependency_profiles=tuple(
+            DependencyProfile(
+                name=str(d["name"]),
+                on_registry=bool(d.get("on_registry", True)),
+                first_release_at=datetime.fromisoformat(str(d["first_release_at"]))
+                if d.get("first_release_at")
+                else None,
+                releases=int(d.get("releases", 0)),
+                source_repo=str(d["source_repo"]) if d.get("source_repo") else None,
+                owners=tuple(str(o) for o in d.get("owners", [])),
+            )
+            for d in profiles
+        ),
     )
     return Options(
         npm_replay={str(inc["candidate"]): replay},

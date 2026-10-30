@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 
-from ..models import FactError, FileEntry, Limits
+from ..models import FactError, FileEntry, Limits, Requirement
 from ..safe_archive import ArchiveError, LimitExceeded, open_archive
 from .inventory import _kind, _strip_prefix
 
@@ -24,6 +25,8 @@ class NpmInspection:
 
     files: list[FileEntry] = field(default_factory=list)
     scripts: tuple[tuple[str, str], ...] = ()
+    requirements: tuple[Requirement, ...] = ()
+    requirements_read: bool = False
     errors: list[FactError] = field(default_factory=list)
 
 
@@ -48,6 +51,68 @@ def install_scripts(package_json: bytes) -> tuple[tuple[str, str], ...]:
     return tuple(out)
 
 
+# The package.json tables npm installs from the registry, with the label the
+# finding shows. ``bundleDependencies`` ship inside the tarball and
+# ``devDependencies`` are never installed for a dependency.
+_DEPENDENCY_TABLES = (
+    ("dependencies", ""),
+    ("optionalDependencies", "optional"),
+    ("peerDependencies", "peer"),
+)
+
+
+# A version range or dist-tag, which npm resolves on the registry. Anything
+# else (``git+https://…``, ``github:user/repo``, ``user/repo``, ``file:…``, a
+# tarball URL) installs from somewhere the registry doesn't describe.
+_REGISTRY_RANGE = re.compile(r"^[\w.+\-*^~<>=|\s]*$")
+
+
+def _dependency(name: str, rng: str, label: str) -> Requirement:
+    spec = f"{name}@{rng}" + (f" ({label})" if label else "")
+    if rng.startswith("npm:"):
+        target = rng[4:]
+        at = target.rfind("@")
+        return Requirement(name, spec, alias_of=target[:at] if at > 0 else target)
+    if _REGISTRY_RANGE.match(rng):
+        return Requirement(name, spec)
+    return Requirement(name, spec, source=rng)
+
+
+def declared_dependencies(package_json: bytes) -> tuple[Requirement, ...]:
+    """The packages a package.json makes npm install, one per name.
+
+    ``peerDependencies`` count because npm 7 and later install them; a peer
+    marked optional in ``peerDependenciesMeta`` doesn't.
+    """
+    try:
+        doc = json.loads(package_json.decode("utf-8", "replace"))
+    except ValueError:
+        return ()
+    if not isinstance(doc, dict):
+        return ()
+    meta = doc.get("peerDependenciesMeta")
+    optional_peers = (
+        {k for k, v in meta.items() if isinstance(v, dict) and v.get("optional")}
+        if isinstance(meta, dict)
+        else set()
+    )
+    out: list[Requirement] = []
+    seen: set[str] = set()
+    for table, label in _DEPENDENCY_TABLES:
+        deps = doc.get(table)
+        if not isinstance(deps, dict):
+            continue
+        for name, spec in deps.items():
+            if not isinstance(name, str) or name in seen:
+                continue
+            if table == "peerDependencies" and name in optional_peers:
+                continue
+            seen.add(name)
+            rng = spec if isinstance(spec, str) else json.dumps(spec, sort_keys=True)
+            out.append(_dependency(name, rng.strip(), label))
+    return tuple(out)
+
+
 def inspect_tarball(filename: str, data: bytes, limits: Limits) -> NpmInspection:
     """Read every file in an npm tarball and record what it contains.
 
@@ -67,6 +132,8 @@ def inspect_tarball(filename: str, data: bytes, limits: Limits) -> NpmInspection
             result.files.append(FileEntry(rel, len(body), hashlib.sha256(body).hexdigest(), kind))
             if rel == "package.json":
                 result.scripts = install_scripts(body)
+                result.requirements = declared_dependencies(body)
+                result.requirements_read = True
     except LimitExceeded as err:
         result.errors.append(FactError("GRN-E003", f"{filename}: {err}", ("GRN-C002",)))
     except ArchiveError as err:

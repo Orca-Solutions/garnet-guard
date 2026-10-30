@@ -109,6 +109,8 @@ def artifact(
         setup_py_calls=ins.setup_py_calls,
         unparsed=tuple(ins.unparsed),
         entry_points=tuple(sorted(ins.entry_points)),
+        requirements=ins.requirements,
+        requirements_read=ins.requirements_read,
         wheel_tag="py3-none-any" if kind == "wheel" else None,
     )
     return art, tuple(ins.errors)

@@ -4,7 +4,9 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- GRN-C008 new-dependency, on PyPI and npm: the new version declares a dependency the trusted version didn't, or a dependency it had now installs from somewhere else. Garnet asks the registry when each new dependency was first released, how many releases it has, which repository it names and which accounts own it. It warns when the dependency isn't on the registry, installs from git, a URL or a path, or was first released less than 90 days before the new version and shares no owner with the trusted package; any other new dependency is reported at `info`. Dependencies are read from the wheel's `METADATA`, or from an sdist's `PKG-INFO` when it is metadata 2.2 or later and doesn't mark them dynamic, and from `package.json` on npm, with `npm:` aliases resolved to the package they install. A failed registry lookup is GRN-E001. The npm backtest replays event-stream 3.3.6 (2018), which added `flatmap-stream`; 52 of 52 malicious releases replayed now get a warning. On the 974-update PyPI corpus it adds no warning and 18 `info` findings; on the 1,809-update npm corpus it adds 5 warnings, each a young dependency from another owner.
 
 ## 0.1.0a1 (2026-10-30)
 

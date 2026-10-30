@@ -11,8 +11,8 @@ penalized for not using them. **Absolute rules** fire on the new version alone.
 Severities: `block` and `warn` set the verdict; `info` is reported but counts as a pass.
 A warning is a reason to look, not a finding that the release is malicious.
 
-The trust rules, GRN-C002 and GRN-K001 apply to PyPI and npm releases. GRN-C001, GRN-C003
-and GRN-C007 read Python code, so they apply to PyPI only.
+The trust rules, GRN-C002, GRN-C008 and GRN-K001 apply to PyPI and npm releases. GRN-C001,
+GRN-C003 and GRN-C007 read Python code, so they apply to PyPI only.
 
 ## Trust
 
@@ -42,6 +42,7 @@ What the release contains that the trusted version didn't.
 | [GRN-C005](GRN-C005.md) | obfuscated-blob | diff | `warn` | planned |
 | [GRN-C006](GRN-C006.md) | sdist-wheel-mismatch | diff | `warn` | planned |
 | [GRN-C007](GRN-C007.md) | code-not-in-source | diff | `warn` | 0.1 |
+| [GRN-C008](GRN-C008.md) | new-dependency | diff | `warn` (`info` for an established dependency) | 0.2 |
 
 ## Known bad
 

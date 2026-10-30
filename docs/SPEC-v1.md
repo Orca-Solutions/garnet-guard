@@ -71,6 +71,8 @@ Removed packages produce no findings. Added packages (no base version) get only 
 | Tags | GitHub's public git ref advertisement (`/<repo>.git/info/refs`) for the repository named in provenance, else in project URLs | Same |
 | Source files at the tag (GRN-C007) | GitHub's git protocol v2 endpoint (`/<repo>.git/git-upload-pack`), one request per tagged release | Not read |
 | Known bad | OSV API (`MAL-` advisories) | OSV API |
+| Owners | `ownership` in the JSON API (roles and organization, as they are today) | `maintainers` of the version document |
+| New dependencies (GRN-C008) | JSON API (`/pypi/<name>/json`): first upload, releases with files, project URLs, ownership | Packument: `time.created`, versions, repository of the latest version, maintainers |
 
 ### 4.2 Artifact selection
 
@@ -80,9 +82,9 @@ Removed packages produce no findings. Added packages (no base version) get only 
 
 ### 4.3 Facts
 
-For each release Garnet extracts: upload time per file; uploader where the registry exposes it; yanked/deprecated status; per-file provenance (present, verified, Sigstore identity, source repository, workflow path, ref, environment, Trusted Publishing or not); the matching tag and its commit if any; file inventory (path, size, SHA-256, kind); `.pth` files; entry points and console scripts; build backend and build requirements; for npm, `scripts` and `bin`; and a static index of each Python module's top-level statements, imports and sensitive calls.
+For each release Garnet extracts: upload time per file; uploader where the registry exposes it; yanked/deprecated status; per-file provenance (present, verified, Sigstore identity, source repository, workflow path, ref, environment, Trusted Publishing or not); the matching tag and its commit if any; file inventory (path, size, SHA-256, kind); declared dependencies that install without an extra (`Requires-Dist` from the wheel's `METADATA`, or from an sdist's `PKG-INFO` at metadata version 2.2 or later when `Requires-Dist` isn't `Dynamic`; for npm, `dependencies`, `optionalDependencies` and non-optional `peerDependencies`), with any npm alias or source outside the registry; `.pth` files; entry points and console scripts; build backend and build requirements; for npm, `scripts` and `bin`; and a static index of each Python module's top-level statements, imports and sensitive calls.
 
-Facts are a pure function of the release's published data and MUST be cacheable by `(ecosystem, name, version, file hashes)`.
+Facts are a pure function of the release's published data and MUST be cacheable by `(ecosystem, name, version, file hashes)`. Owners on PyPI and the registry profiles of new dependencies describe the registry on the day Garnet runs; they are fetched per run and are not part of that cache key.
 
 ### 4.4 Safety requirements
 
@@ -133,6 +135,7 @@ Default severities are what applies with no policy file.
 | GRN-C005 | obfuscated-blob | diff | A changed file gains a string or bytes literal over 2,048 characters with Shannon entropy over 4.5 bits per character, or any such literal passed to `exec`, `eval`, `compile`, `base64.*decode`, `zlib.decompress` or `marshal.loads`. | warn |
 | GRN-C006 | sdist-wheel-mismatch | diff | The selected wheel contains a `.py` or `.pth` file with no counterpart in the sdist, when the baseline had none. | warn |
 | GRN-C007 | code-not-in-source | diff | A Python file in the candidate's wheel (the sdist when there is no wheel) is not byte-identical to any file in the repository at the candidate's matched git tag (submodules hosted on GitHub included), and it has a §6.3 sensitive call that the file at the same path lacks (every sensitive call counts when there is no file at that path). Calls the baseline already carried outside its source at the same path don't count. Files under a submodule Garnet can't read are reported as GRN-E001. | warn |
+| GRN-C008 | new-dependency | diff | The candidate declares a dependency the baseline didn't, or a dependency the baseline had now installs from outside the registry or (npm) installs a different package under the same name. It keeps the default severity when the dependency is not on the registry, installs from outside it, or was first released less than 90 days before the candidate's first upload (or after it) and shares no owner with the baseline; otherwise it reports at info. A failed registry lookup is GRN-E001 naming GRN-C008. | warn (info for an established dependency or one owned by the baseline's owners) |
 | GRN-K001 | known-malicious | absolute | OSV lists a `MAL-` advisory affecting the candidate version. | block |
 | GRN-E001 | fetch-failed | absolute | Data needed for a rule couldn't be fetched. The finding names which rules were not evaluated. | warn |
 | GRN-E002 | parse-failed | absolute | An artifact or file couldn't be parsed. | warn |
