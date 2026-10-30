@@ -22,6 +22,7 @@ from ..models import (
     FileProvenance,
     Limits,
     ReleaseFacts,
+    TagInfo,
     UnparsedWheelFile,
     WheelCalls,
     WheelDifference,
@@ -461,15 +462,17 @@ def release_facts(
     # the main one.
     tag_repos = tuple(dict.fromkeys(r for r in (source_repo, url_repo) if r))
     tag = None
+    version_tags: list[TagInfo] = []  # every tag naming the version, ``tag`` first
     tag_checked = False
     tag_errors: list[FactError] = []
     for repo in tag_repos:
         try:
-            tag = github.match_tag(ctx.tags.tags(repo), name, version, repo)
+            version_tags = github.matching_tags(ctx.tags.tags(repo), name, version, repo)
         except NetError as err:
             tag_errors.append(FactError("GRN-E001", f"tag lookup: {err}", ("GRN-T004",)))
             continue
-        if tag is not None:
+        if version_tags:
+            tag = version_tags[0]
             break
     if tag is not None:
         tag_checked = True
@@ -491,7 +494,7 @@ def release_facts(
             data, is_sdist = payloads[art.filename]
             source_of = file_reader(art.filename, data, ctx.limits, sdist=is_sdist)
             try:
-                match = source.match_artifact(ctx.trees, tag, art, source_of)
+                match = source.match_tags(ctx.trees, version_tags, art, source_of)
             except NetError as err:
                 errors.append(
                     FactError("GRN-E001", f"source at tag {tag.name}: {err}", ("GRN-C007",))

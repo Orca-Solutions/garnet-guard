@@ -1,6 +1,6 @@
 from typing import cast
 
-from garnet_guard.ecosystems.github import TagLookup, match_tag
+from garnet_guard.ecosystems.github import TagLookup, match_tag, matching_tags
 from garnet_guard.net import Http, Response
 
 TAGS = {"2026.01.04": "a", "v1.18.0": "b", "lightning-2.6.1": "c", "1.0": "d", "1.0.0": "e"}
@@ -18,6 +18,19 @@ def test_zero_padded_tag_matches_normalized_version() -> None:
 def test_prefixed_tags() -> None:
     assert match_tag(TAGS, "scipy", "1.18.0").name == "v1.18.0"
     assert match_tag(TAGS, "lightning", "2.6.1").name == "lightning-2.6.1"
+
+
+def test_matching_tags_lists_every_tag_naming_the_version_match_tag_first() -> None:
+    # Real tag names: sympy/sympy tags 1.12.1 twice, at different commits.
+    tags = {"1.12.1": "a", "sympy-1.12.1": "b", "sympy-1.12.1rc1": "c", "1.12": "d"}
+    found = matching_tags(tags, "sympy", "1.12.1", "sympy/sympy")
+    assert [(t.name, t.sha, t.repo) for t in found] == [
+        ("1.12.1", "a", "sympy/sympy"),
+        ("sympy-1.12.1", "b", "sympy/sympy"),
+    ]
+    assert match_tag(tags, "sympy", "1.12.1").name == "1.12.1"
+    assert [t.name for t in matching_tags(TAGS, "certifi", "2026.1.4")] == ["2026.01.04"]
+    assert matching_tags(TAGS, "lightning", "2.6.2") == []
 
 
 def test_no_match() -> None:
