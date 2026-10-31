@@ -12,8 +12,8 @@ Severities: `block` and `warn` set the verdict; `info` is reported but counts as
 A warning is a reason to look, not a finding that the release is malicious.
 
 The trust rules, GRN-C002, GRN-C008 and GRN-K001 apply to PyPI and npm releases. GRN-C001,
-GRN-C003, GRN-C007 and GRN-C012 read Python code, and GRN-C009 and GRN-C010 read wheels, so
-they apply to PyPI only; GRN-C011 reads JavaScript, so it applies to npm only.
+GRN-C003, GRN-C006, GRN-C007 and GRN-C012 read Python code, and GRN-C009 and GRN-C010 read
+wheels, so they apply to PyPI only; GRN-C011 reads JavaScript, so it applies to npm only.
 
 ## Trust
 
@@ -41,7 +41,7 @@ What the release contains that the trusted version didn't.
 | [GRN-C003](GRN-C003.md) | new-import-time-exec | diff | `warn` (`info` in test files) | 0.1 |
 | [GRN-C004](GRN-C004.md) | new-binary | diff | `warn` (`info` for a library in a new folder) | 0.2 |
 | [GRN-C005](GRN-C005.md) | obfuscated-blob | diff | `warn` | planned |
-| [GRN-C006](GRN-C006.md) | sdist-wheel-mismatch | diff | `warn` | planned |
+| [GRN-C006](GRN-C006.md) | sdist-wheel-mismatch | diff | `warn` | 0.3 |
 | [GRN-C007](GRN-C007.md) | code-not-in-source | diff | `warn` | 0.1 |
 | [GRN-C008](GRN-C008.md) | new-dependency | diff | `warn` (`info` for an established dependency) | 0.2 |
 | [GRN-C009](GRN-C009.md) | new-entry-point | diff | `warn` (`info` outside auto-loaded groups and common command names) | 0.2 |

@@ -193,12 +193,13 @@ as the code writes it.
 GRN-C003 follows a call into one of the release's own top-level packages into that module. When
 the call's name is in the set it counts as a sensitive call as well, unless the release is the
 library of that name: the `requests` project, as its wheel or sdist filename names it, calling
-its own `requests.adapters` isn't reported, and GRN-C007 leaves it out. A module that any other
-release ships under a name in the set may not be what Python imports: the standard library's
-`os` comes before an `os.py` in site-packages, an installed `requests` package before a
-`requests.py` beside it, and `builtins` is built in. So with an empty `os.py`, `requests.py` or
-`builtins.py` beside the package, `os.system`, `requests.post` and `builtins.exec` still count,
-and the call is followed into the release's module too, in case that is the one Python imports.
+its own `requests.adapters` isn't reported, and GRN-C006 and GRN-C007 leave it out. A module
+that any other release ships under a name in the set may not be what Python imports: the
+standard library's `os` comes before an `os.py` in site-packages, an installed `requests`
+package before a `requests.py` beside it, and `builtins` is built in. So with an empty `os.py`,
+`requests.py` or `builtins.py` beside the package, `os.system`, `requests.post` and
+`builtins.exec` still count, and the call is followed into the release's module too, in case
+that is the one Python imports.
 
 Set `2026-10-c` (October 30, 2026) added the file loaders, the process calls outside
 `subprocess`, more network clients (`asyncio` streams, `urllib3`, mail, FTP, telnet, XML-RPC and

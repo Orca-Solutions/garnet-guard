@@ -22,6 +22,7 @@ from ..models import (
     FileProvenance,
     Limits,
     ReleaseFacts,
+    SdistMatch,
     TagInfo,
     UnparsedWheelFile,
     WheelCalls,
@@ -29,11 +30,11 @@ from ..models import (
 )
 from ..net import Http, NetError
 from ..safe_archive import ArchiveError
-from . import github, gittree, osv, source
+from . import github, gittree, osv, sdist, source
 from .provenance import verify_provenance
 
 TRUST_RULES = ("GRN-T001", "GRN-T002", "GRN-T003", "GRN-T005", "GRN-T007")
-CONTENT_RULES = ("GRN-C001", "GRN-C002", "GRN-C003", "GRN-C004", "GRN-C007")
+CONTENT_RULES = ("GRN-C001", "GRN-C002", "GRN-C003", "GRN-C004", "GRN-C006", "GRN-C007")
 # GRN-C009 reads only wheels, and a wheel the content rules can't read leaves
 # GRN-C012 nothing to compare with.
 WHEEL_RULES = (*CONTENT_RULES, "GRN-C009", "GRN-C012")
@@ -445,8 +446,9 @@ def release_facts(
     selected = {s for s in sdists[:1]} | ({wheel} if wheel else set())
 
     artifacts: list[ArtifactFacts] = []
-    payloads: dict[str, tuple[bytes, bool]] = {}  # inspected bytes, kept for GRN-C007
+    payloads: dict[str, tuple[bytes, bool]] = {}  # inspected bytes, kept for GRN-C006 and C007
     read_whole = False  # every file of the read wheel was read
+    sdist_whole = False  # every file of the read sdist was read
     for f in sorted(files, key=lambda x: x.filename):
         art = ArtifactFacts(
             filename=f.filename,
@@ -462,6 +464,8 @@ def release_facts(
                 payloads[f.filename] = (payload, f.packagetype == "sdist")
             if f.filename == wheel:
                 read_whole = payload is not None and whole
+            elif f.packagetype == "sdist":
+                sdist_whole = payload is not None and whole
         artifacts.append(art)
 
     # The attested repository beats project URLs, which anyone can edit.
@@ -528,6 +532,16 @@ def release_facts(
                 )
             artifacts[i] = replace(art, source_match=match)
             break
+
+    # GRN-C006: the read wheel's Python and .pth files against the release's
+    # own sdist, when both were read to the end. A release without one of the
+    # two has nothing to compare; one Garnet couldn't download or read to the
+    # end has a GRN-E001, E002 or E003 naming GRN-C006, and one that fails its
+    # hash is GRN-T008.
+    sdist_match = None
+    if wheel is not None and sdists and read_whole and sdist_whole:
+        sdist_match, errs = _match_sdist(ctx, artifacts, payloads, wheel, sdists[0])
+        errors.extend(errs)
 
     # GRN-C012: the release's other wheels, one per platform family and each
     # late one, compared file by file with the wheel the content rules read.
@@ -598,7 +612,35 @@ def release_facts(
         ),
         read_wheel_family=read_family,
         wheel_unparsed=tuple(sorted(unparsed, key=lambda u: (u.wheel, u.path))),
+        sdist_match=sdist_match,
     )
+
+
+def _match_sdist(
+    ctx: FetchContext,
+    artifacts: list[ArtifactFacts],
+    payloads: dict[str, tuple[bytes, bool]],
+    wheel: str,
+    sdist_name: str,
+) -> tuple[SdistMatch | None, list[FactError]]:
+    """GRN-C006's facts: the read wheel compared with the read sdist, file by
+    file, from the bytes already downloaded. A file that can't be read back is
+    GRN-E002 naming GRN-C006."""
+    by_name = {a.filename: a for a in artifacts}
+    wheel_data, _ = payloads[wheel]
+    sdist_data, _ = payloads[sdist_name]
+    try:
+        match = sdist.match_sdist(
+            by_name[wheel],
+            file_reader(wheel, wheel_data, ctx.limits, sdist=False),
+            by_name[sdist_name],
+            file_reader(sdist_name, sdist_data, ctx.limits, sdist=True),
+            ctx.limits,
+        )
+    except ArchiveError as err:
+        msg = f"comparing {wheel} with {sdist_name}: {err}"
+        return None, [FactError("GRN-E002", msg, ("GRN-C006",))]
+    return match, []
 
 
 def _inspect(

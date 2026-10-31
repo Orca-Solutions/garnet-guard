@@ -42,6 +42,8 @@ from .pyindex import (
 
 _NATIVE_EXT = (".so", ".pyd", ".dylib", ".dll", ".exe")
 _SITE_PREFIX = re.compile(r"^[^/]+\.data/(purelib|platlib)/")
+# Where a line ends in a file read with universal newlines, as Python 3.11 and 3.12 read a .pth
+_UNIVERSAL_NEWLINE = re.compile(r"\r\n|\r|\n")
 # Mach-O: 64- and 32-bit, little- and big-endian, and the universal ("fat")
 # headers, 32- and 64-bit, that hold one slice per architecture.
 _MACHO_MAGIC = (
@@ -53,8 +55,9 @@ _MACHO_MAGIC = (
     b"\xca\xfe\xba\xbf",
 )
 # The rules that read the files of an archive Garnet couldn't read to the end.
-# GRN-C009 reads a wheel's entry points, and GRN-C012 every Python file of a wheel.
-_ARCHIVE_RULES = ("GRN-C001", "GRN-C003", "GRN-C004")
+# GRN-C006 compares the wheel with the sdist, so it needs both. GRN-C009 reads
+# a wheel's entry points, and GRN-C012 every Python file of a wheel.
+_ARCHIVE_RULES = ("GRN-C001", "GRN-C003", "GRN-C004", "GRN-C006")
 _WHEEL_RULES = (*_ARCHIVE_RULES, "GRN-C009", "GRN-C012")
 # Names GRN-C012 never counts as the release's own: the standard library's
 # modules, the builtins, and the first name of each entry of the §6.3 list
@@ -181,12 +184,21 @@ def site_path(path: str) -> str:
 
 
 def exec_lines(pth: bytes) -> tuple[str, ...]:
-    """Lines of a .pth file that the site module executes."""
-    out = []
-    for raw in pth.decode("utf-8", "replace").splitlines():
+    """Lines of a .pth file that the site module executes, on any Python.
+
+    Python 3.11 and 3.12 read the file with universal newlines, which end a
+    line only at ``\\n``, ``\\r`` or ``\\r\\n``, so a line with a form feed in
+    it runs whole. Python 3.13 and later drop a leading UTF-8 BOM and split
+    with ``str.splitlines()``, which also ends a line at a form feed or a
+    vertical tab. The lines of both readings are kept, the first reading's
+    first, each line once.
+    """
+    text = pth.decode("utf-8", "replace").removeprefix("﻿")
+    out: dict[str, None] = {}
+    for raw in (*_UNIVERSAL_NEWLINE.split(text), *text.splitlines()):
         line = raw.strip()
         if line.startswith(("import ", "import\t")):
-            out.append(line)
+            out.setdefault(line)
     return tuple(out)
 
 
@@ -274,7 +286,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                         FactError(
                             "GRN-E003",
                             f"{filename}: {rel} is larger than the parse limit",
-                            ("GRN-C003",) if sdist else ("GRN-C003", "GRN-C012"),
+                            ("GRN-C003",) if sdist else ("GRN-C003", "GRN-C006", "GRN-C012"),
                             rel,
                         )
                     )
