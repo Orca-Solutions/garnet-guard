@@ -356,8 +356,8 @@ _DOCS += (
         Severity.INFO,
         "A dependency comes from a source Garnet doesn't check: git, a local path, a direct URL, a private "
         "index or registry, or another npm package's tarball (a bundled dependency). In a requirements "
-        "file, an index, extra index, --find-links, --no-index or -r/-c include anywhere in the file "
-        "applies to every pin in it.",
+        "file, an index, extra index or --find-links anywhere in the file, or in the files it is read "
+        "with through -r and -c, applies to every pin in them.",
         "Garnet compares releases published on PyPI and npm. Code from other sources wasn't checked, and "
         "it isn't passed either.",
         "Review the change to that dependency by hand. A bundled dependency changes only with the package "

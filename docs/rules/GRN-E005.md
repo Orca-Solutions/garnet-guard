@@ -27,9 +27,20 @@ and accepts any unambiguous prefix of a long option (`--extra-ind`, `--no-ind`) 
 option's value attached (`-ihttps://…`, `-f/srv/wheels`). Garnet reads them the same way. When
 a file sets an index other than PyPI, an extra index, find-links or no-index, every `==` pin
 in it is reported here instead of being checked against PyPI. So is every pin in a file that
-includes another with `-r` or `-c`, which can set an index and which Garnet doesn't follow
-from here, or that holds an option pip would refuse. The reason names the option, never its
-value, which can hold credentials.
+holds an option pip would refuse. The reason names the option, never its value, which can
+hold credentials.
+
+pip reads a file named with `-r` or `-c` as part of the file that names it, and applies its
+index options to everything it reads. `garnet check` follows these includes as pip resolves
+them, beside the file that names them, for the working tree and for the base (at
+`--git-base`, or beside the `--base` file), and applies the index options of the whole
+include tree to every pin in it: an index set in `base.txt` applies to the
+`requirements-dev.txt` that brings it in, and one set in `requirements-dev.txt` applies to
+the pins of `base.txt`. It follows them only inside the directory it checks, never through a
+symlink, and at most 10 deep. An include it can't follow (a URL, a path outside that
+directory, a missing file, a symlink, an environment variable, files that include each
+other, more than 10 deep) leaves the pins of the file that names it, and of the files read
+with it, unchecked.
 
 ## Why it matters
 
@@ -52,8 +63,11 @@ The reason after "was not checked" names the source, for example `git source`,
 be `private index, set with --index-url in this file`, `extra index, set with
 --extra-index-url in this file`, `--find-links in this file, so pip can install it from
 elsewhere`, `--no-index in this file, so pip doesn't install it from PyPI`, `-r in this file
-brings in a file Garnet doesn't follow, which can set another index` (or `-c`) or `an option
-Garnet can't read (<option>), so the index is unknown`. From package-lock.json and
+brings in a file Garnet can't follow (it doesn't exist), which can set another index` (or
+`-c`, with the reason in brackets) or `an option Garnet can't read (<option>), so the index is
+unknown`. For an option in another file of the include tree, "this file" is that file's
+path, such as `private index, set with --index-url in requirements/base.txt, which this file
+brings in`. From package-lock.json and
 yarn.lock it can also be `private registry`, `file: source`, `tarball URL outside the npm
 registry`, `bundled in <package>, checked only as part of it`, `resolved URL isn't this
 package's registry tarball` or `not a valid npm package name`; an invalid name is shown as

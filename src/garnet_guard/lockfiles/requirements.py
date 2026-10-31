@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from dataclasses import dataclass
 
 from .base import PYPI_INDEXES, Pin, normalize
 
@@ -135,58 +136,117 @@ def _split(line: str) -> tuple[str, str]:
     return " ".join(words[:k]).strip(), " ".join(words[k:])
 
 
-def _elsewhere(opt: str, value: str | None) -> str | None:
-    """Why ``opt`` means pip may not install this file's requirements from
-    PyPI, naming the option, never its value (it can hold credentials)."""
+# The option name ``FileOptions.moves`` gives an option pip would refuse; its
+# value is the option as written, without its value.
+UNREADABLE = "?"
+
+
+def _moves(opt: str, value: str | None) -> bool:
+    """Whether ``opt`` means pip may not install the file's requirements
+    from PyPI. Includes (``-r``, ``-c``) are listed apart."""
+    if opt in ("--index-url", "--pypi-url", "--extra-index-url"):
+        return value is None or value.strip().rstrip("/") + "/" not in _PYPI
+    return opt in ("--find-links", "--no-index", UNREADABLE)
+
+
+def describe(opt: str, value: str | None, where: str) -> str:
+    """The reason a pin isn't checked, for an option in ``moves`` found in
+    ``where`` ("this file", or another file's path). It names the option,
+    never its value, which can hold credentials."""
     if opt in ("--index-url", "--pypi-url"):
-        if value is not None and value.strip().rstrip("/") + "/" in _PYPI:
-            return None
-        return f"private index, set with {opt} in this file"
+        return f"private index, set with {opt} in {where}"
     if opt == "--extra-index-url":
-        if value is not None and value.strip().rstrip("/") + "/" in _PYPI:
-            return None
-        return "extra index, set with --extra-index-url in this file"
+        return f"extra index, set with --extra-index-url in {where}"
     if opt == "--find-links":
-        return "--find-links in this file, so pip can install it from elsewhere"
+        return f"--find-links in {where}, so pip can install it from elsewhere"
     if opt == "--no-index":
-        return "--no-index in this file, so pip doesn't install it from PyPI"
-    if opt in ("--requirement", "--constraint"):
-        short = "-r" if opt == "--requirement" else "-c"
-        return f"{short} in this file brings in a file Garnet doesn't follow, which can set another index"
-    return None
+        return f"--no-index in {where}, so pip doesn't install it from PyPI"
+    at = "" if where == "this file" else f" in {where}"
+    return f"an option Garnet can't read ({value}){at}, so the index is unknown"
 
 
-def parse(text: str) -> list[Pin]:
-    """Pins from a requirements file.
+@dataclass(frozen=True)
+class FileOptions:
+    """What a requirements file's options say about where pip installs from.
 
-    ``==`` pins from PyPI are checked. Ranges are ``unpinned``; URLs, paths
-    and editable installs are ``unsupported``. pip applies index options to
-    the whole file, wherever they are, so when the file sets an index other
-    than PyPI, an extra index, ``--find-links`` or ``--no-index``, includes
-    another file with ``-r`` or ``-c`` (which can set one), or holds an
-    option pip would refuse, every ``==`` pin in it is ``unsupported``.
+    ``moves`` are the (option, value) pairs, in file order, that can move its
+    requirements off PyPI; ``includes`` are its ``-r`` and ``-c`` files, as
+    ("-r" or "-c", path as written). Values are compared, never shown.
     """
-    lines: list[tuple[int, str, list[tuple[str, str | None]]]] = []
+
+    moves: tuple[tuple[str, str | None], ...] = ()
+    includes: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class Included:
+    """What the other files pip reads with this one (its ``-r`` and ``-c``
+    files, and the files that bring it in) say about where pip installs
+    from, worked out by the caller (``workspace.requirement_includes``),
+    which reads them. ``why`` is the first reason a pin isn't checked, or
+    None when every include was followed and none moves pins off PyPI;
+    ``origin`` is compared, never shown."""
+
     why: str | None = None
-    origin: list[str] = []
+    origin: tuple[str, ...] = ()
+
+
+def _scan(
+    text: str,
+) -> tuple[list[tuple[int, str, list[tuple[str, str | None]]]], FileOptions]:
+    lines: list[tuple[int, str, list[tuple[str, str | None]]]] = []
+    moves: list[tuple[str, str | None]] = []
+    includes: list[tuple[str, str]] = []
     for line_no, line in logical_lines(text):
         req, opts_text = _split(line)
         try:
             opts = _options(opts_text) if opts_text else []
         except _UnreadableOption as err:
             opts = []
-            why = why or f"an option Garnet can't read ({err.name}), so the index is unknown"
-            origin.append(f"unreadable {err.name}")
+            moves.append((UNREADABLE, err.name))
         for opt, value in opts:
-            reason = _elsewhere(opt, value)
-            if reason:
-                why = why or reason
-                origin.append(f"{opt} {value or ''}")
+            if opt in ("--requirement", "--constraint"):
+                includes.append(("-r" if opt == "--requirement" else "-c", value or ""))
+            elif _moves(opt, value):
+                moves.append((opt, value))
         lines.append((line_no, req, opts))
+    return lines, FileOptions(tuple(moves), tuple(includes))
+
+
+def file_options(text: str) -> FileOptions:
+    """The options of a requirements file that decide where pip installs from."""
+    return _scan(text)[1]
+
+
+def parse(text: str, included: Included | None = None) -> list[Pin]:
+    """Pins from a requirements file.
+
+    ``==`` pins from PyPI are checked. Ranges are ``unpinned``; URLs, paths
+    and editable installs are ``unsupported``. pip applies index options to
+    the whole file, wherever they are, and an included file's options to
+    every file it reads with it. So when the file sets an index other than
+    PyPI, an extra index, ``--find-links`` or ``--no-index``, holds an option
+    pip would refuse, or ``included`` gives a reason from the files read with
+    it, every ``==`` pin in it is ``unsupported``. Without ``included`` (the
+    caller didn't read the includes), a file with ``-r`` or ``-c`` is treated
+    the same way.
+    """
+    lines, opts = _scan(text)
+    why = describe(*opts.moves[0], "this file") if opts.moves else None
+    origin = [f"{o} {v or ''}" for o, v in opts.moves]
+    if included is not None:
+        why = why or included.why
+        origin += included.origin
+    elif opts.includes:
+        short = opts.includes[0][0]
+        why = why or (
+            f"{short} in this file brings in a file Garnet doesn't follow, which can set another index"
+        )
+        origin += [f"{o} {v}" for o, v in opts.includes]
 
     pins: list[Pin] = []
-    for line_no, line, opts in lines:
-        editables = [v for o, v in opts if o == "--editable"]
+    for line_no, line, line_opts in lines:
+        editables = [v for o, v in line_opts if o == "--editable"]
         if not line:
             pins.extend(
                 Pin("(editable)", None, line_no, "unsupported", "editable install")
