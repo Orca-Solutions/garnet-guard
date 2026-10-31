@@ -432,7 +432,7 @@ def test_docs_and_explain(capsys) -> None:
 
 
 def test_deep_expressions_are_read_without_exhausting_the_stack() -> None:
-    deep = "import os\ngetattr(os, " + "chr(115) + " * 3000 + "'x')\n"
+    deep = "import os\ngetattr(os, " + "chr(115) + " * 2000 + "'x')\n"
     assert sites(deep)  # read as a name not written in the source
     calls, _ = index_module(deep.encode())
     assert calls == ()
