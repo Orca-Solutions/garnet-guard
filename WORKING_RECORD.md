@@ -4,7 +4,7 @@ Current state, open tasks, verification and review dispositions. Newest first.
 
 ## 2026-10-31: Install wrapper and agent hooks for npm
 
-**State.** `garnet npm install|ci|update …` (every npm alias) is built, and the Claude Code and Codex hooks check the same commands (`src/garnet_guard/install/npm.py`, `check.check_npm`, `shellwords.NpmCommand`). pnpm, yarn, npx, `npm exec` and `npm install-test` keep the not-checked note. The design is the pip and uv one: read the command and the project, resolve without running package code, check base against head with the engine, then install exactly what was checked. Docs: install-wrapper.md (#npm), SPEC §10.3 and §10.4, THREAT_MODEL, README, ARCHITECTURE, CHANGELOG. One commit, not pushed.
+**State.** `garnet npm install|ci|update …` (every npm alias) is built, and the Claude Code and Codex hooks check the same commands (`src/garnet_guard/install/npm.py`, `check.check_npm`, `shellwords.NpmCommand`). pnpm, yarn, npx, `npm exec` and `npm install-test` keep the not-checked note. The design is the pip and uv one: read the command and the project, resolve without running package code, check base against head with the engine, then install exactly what was checked. Docs: install-wrapper.md (#npm), SPEC §10.3 and §10.4, THREAT_MODEL, README, ARCHITECTURE, CHANGELOG. Branch claude/project-thread-x3rhwk-npm-wrapper.
 
 **Experiments** (npm 10.9.4 with Node 22.22.0, the version on PATH here, and npm 11.21.1 run from its tarball; local packages and git repositories whose every lifecycle script writes a marker file; scratch folders only):
 
