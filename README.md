@@ -12,9 +12,9 @@
   <a href="https://scorecard.dev/viewer/?uri=github.com/Orca-Solutions/garnet-guard"><img src="https://api.scorecard.dev/projects/github.com/Orca-Solutions/garnet-guard/badge" alt="OpenSSF Scorecard" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-8E1B2C" alt="License: Apache-2.0" height="20"></a>
   <a href="https://pypi.org/project/garnet-guard/"><img src="https://img.shields.io/pypi/v/garnet-guard?color=8E1B2C" alt="PyPI version" height="20"></a>
-  <img src="https://img.shields.io/badge/status-pre--alpha-5C636B" alt="Status: pre-alpha" height="20">
-  <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20releases-51%2F51%20warn-8E1B2C" alt="Replayed malicious releases: 51 of 51 warn" height="20"></a>
-  <a href="https://github.com/orca-solutions/garnet-guard#replays-of-real-malicious-releases"><img src="https://img.shields.io/badge/clean%20updates-2.0%25%20flagged%20(366%2F18%2C181)-1B1F24" alt="Clean updates: 366 of 18,181 flagged for a look (2.0%), none a false claim" height="20"></a>
+  <img src="https://img.shields.io/badge/status-alpha-5C636B" alt="Status: alpha" height="20">
+  <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20releases-52%2F52%20warn-8E1B2C" alt="Replayed malicious releases: 52 of 52 warn" height="20"></a>
+  <a href="https://github.com/orca-solutions/garnet-guard#replays-of-real-malicious-releases"><img src="https://img.shields.io/badge/clean%20updates-3.3%25%20flagged%20(606%2F18%2C181)-1B1F24" alt="Clean updates: 606 of 18,181 flagged for a look (3.3%), none a false claim" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/actions/workflows/garnet-guard.yml"><img src="https://raw.githubusercontent.com/orca-solutions/garnet-guard/main/docs/brand/badge/checked-by-garnet-guard.svg" alt="Dependencies checked by Garnet Guard" height="20"></a>
 </p>
 
@@ -22,7 +22,7 @@
 
 *Trust the last release. Check the next.*
 
-> Status: pre-alpha. 0.1.0a1 is an early pre-release on PyPI: `pip install --pre garnet-guard`. The GitHub Action is a preview, and the rest of this README describes the first full release. Website, rule pages and replays: [garnetguard.dev](https://garnetguard.dev/).
+> Status: alpha. 0.2.0 is on PyPI: `pip install garnet-guard`. The GitHub Action is a preview. Website, rule pages and replays: [garnetguard.dev](https://garnetguard.dev/).
 
 ## Why
 
@@ -114,7 +114,7 @@ We fed the original malicious files from 36 compromised PyPI packages (47 malici
 | bramin, dreamgen, ensmallen, magique, magique-ai, napari-ufish, nucbox, pantheon-agents, pantheon-toolsets, synago | 0.0.3, 1.8.1, 0.8.101, 0.6.9, 0.4.5, 0.0.3, 0.1.2, 0.6.1, 0.5.5, 0.1.1 | warn | GRN-C001 new `<name>-setup.pth` only; GRN-T004 had nothing to check, see the limits below |
 | mrmustard | 0.7.4 | warn | GRN-C003 `subprocess.check_output`, `urllib.request.urlopen` in a thread started at import from `mrmustard/__init__.py` |
 | 20 clean updates ([list](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/clean.toml)) | | 0 warn | none |
-| 9,439 updates of the top 1,000 PyPI packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-pypi-1000/REPORT.md)) | | 220 flagged for a look (2.3%); none makes a false claim | GRN-C003 65, GRN-C002 57, GRN-T004 49, GRN-T001 18, GRN-T003 16, GRN-T002 14, GRN-C001 3 |
+| 9,439 updates of the top 1,000 PyPI packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-pypi-1000/REPORT.md)) | | 300 flagged for a look (3.2%); none makes a false claim | GRN-C003 65, GRN-C002 60, GRN-T004 48, GRN-T006 34, GRN-C008 23, GRN-T001 18, GRN-T003 16, GRN-T002 14, GRN-C009 9, GRN-C004 6, GRN-C007 5, GRN-C001 4, GRN-C012 2, GRN-C010 1 |
 
 The same replay covers the npm account takeovers of August and September 2025, and event-stream 3.3.6 (2018), which added a dependency that later carried the payload. npm deletes the tarball of a removed version, so these use the registry facts the public write-ups recorded (provenance present or not, the `package.json` scripts and dependencies) and fetch the previous release and the repository's tags live. The malicious tarballs were not inspected.
 
@@ -125,7 +125,7 @@ The same replay covers the npm account takeovers of August and September 2025, a
 | nx 21.4.1 → 21.5.0 | warn | GRN-T001 21.4.1 had provenance, 21.5.0 has none; GRN-C002 `postinstall` became `node telemetry.js`; GRN-T004 no tag |
 | @ctrl/tinycolor 4.1.0 → 4.1.1 | warn | GRN-C002 new `postinstall` running `node bundle.js`; GRN-T004 no tag |
 | event-stream 3.3.5 → 3.3.6 | warn | GRN-C008 new dependency `flatmap-stream`, first released 35 days earlier |
-| 8,742 updates of the top 1,000 npm packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-npm-1000/REPORT.md)) | 146 flagged for a look (1.7%); none makes a false claim | GRN-T004 89, GRN-T001 48, GRN-T002 3, GRN-C002 3, GRN-T003 2, GRN-T005 1 |
+| 8,742 updates of the top 1,000 npm packages ([report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-npm-1000/REPORT.md)) | 306 flagged for a look (3.5%); none makes a false claim | GRN-C008 162, GRN-T004 89, GRN-T001 48, GRN-T002 3, GRN-C002 3, GRN-T003 2, GRN-T005 1 |
 
 Limits, stated plainly:
 - **Three releases were missed by the rules as first written, and the replay is why they aren't now.** ultralytics 8.3.42 was built and published by the project's own release workflow, with valid attestations and its usual git tag, after a GitHub Actions cache-poisoning attack, and its miner runs when a model is downloaded, not at import; no trust or import-time rule sees it. GRN-C007 was written for it: it compares the wheel's Python files with the repository at the release's tag and reports the two that differ. embiggen 0.11.97 was missed because the trusted release shipped only an sdist and the malicious one only a wheel, so content rules had no pair to compare and passed silently; they now compare across kinds. mrmustard 0.7.4 was missed because its payload sits in a function defined inside the function `__init__.py` calls at import, one step past where GRN-C003 stopped following; it follows that step now. Each fix was checked against the clean corpus before it landed.
@@ -138,16 +138,16 @@ Limits, stated plainly:
 - The content rules recognize a sensitive call by the name it is called under. A listed function handed to another call that runs it later (`Thread(target=os.system)`), or given a harmless-looking name first (`json.dumps = subprocess.Popen`), isn't reported yet; [#91](https://github.com/orca-solutions/garnet-guard/issues/91) tracks the check.
 - The litellm 1.82.7 sdist isn't replayed, because no public source gives its URL. Its wheel is, and content rules compare wheels.
 - chalk and debug are reported by the missing tag alone: they never used provenance, and the one changed file, `index.js`, is gone from the registry. GRN-C011 now reads the JavaScript an npm package loads and lists, at `info`, a new process, network or eval use or obfuscated names; it can't run on these two replays, because there is no file to read.
-- The 20 clean updates in `clean.toml` are a smoke test. The clean-corpus backtests cover 18,181 updates, the last 11 releases of the top 1,000 PyPI packages (9,439) and of the top 1,000 npm packages (8,742): 366 are flagged for a look (2.0%), every warning states something true, but none of those updates is malicious, so each is a false alarm a reviewer has to dismiss.
+- The 20 clean updates in `clean.toml` are a smoke test. The clean-corpus backtests cover 18,181 updates, the last 11 releases of the top 1,000 PyPI packages (9,439) and of the top 1,000 npm packages (8,742): 606 are flagged for a look (3.3%), every warning states something true, but none of those updates is malicious, so each is a false alarm a reviewer has to dismiss. Some show a release doing what the trusted one did, a new way: a `setup.py` that runs the same command with `subprocess.run` instead of `Popen`, or entry points renamed with the same targets. The [PyPI report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-pypi-1000/REPORT.md#accurate-but-nothing-new-runs) lists the ones the triage found.
 
 Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightning](https://snyk.io/blog/lightning-pypi-compromise-bun-based-credential-stealer), [CSA on elementary-data](https://labs.cloudsecurityalliance.org/research/csa-research-note-pypi-elementarydata-supply-chain-20260429/), [PyPI's incident report on litellm and telnyx](https://blog.pypi.org/posts/2026-04-02-incident-report-litellm-telnyx-supply-chain-attack/), [PyPI's analysis of ultralytics](https://blog.pypi.org/posts/2024-12-11-ultralytics-attack-analysis/), [The Hacker News on the Hades campaign](https://thehackernews.com/2026/06/hades-pypi-attack-19-packages-poisoned.html), [StepSecurity on mrmustard](https://www.stepsecurity.io/blog/compromised-pypi-mrmustard-0-7-4-credential-stealer), the OSV advisory named on each entry in incidents.toml, the PyPI snapshots in DataDog's malicious-software-packages dataset, and the file hashes in [ossf/malicious-packages](https://github.com/ossf/malicious-packages).
 
-## Try it today (0.1 preview)
+## Try it today
 
 `garnet diff` compares two releases of one PyPI or npm package, and `garnet check` compares two lockfiles:
 
 ```sh
-pip install --pre garnet-guard   # or run it without installing: uvx garnet-guard check --git-base main
+pip install garnet-guard   # or run it without installing: uvx garnet-guard check --git-base main
 garnet diff requests 2.32.4 2.32.5
 garnet diff pypi:lightning 2.6.4 2.6.5 --format json
 garnet diff npm:chalk 5.6.0 5.6.2
@@ -161,16 +161,16 @@ The replays run from a checkout of this repository:
 
 ```sh
 uv sync
-uv run python -m backtest      # replay 51 malicious releases and the clean corpus
+uv run python -m backtest      # replay 52 malicious releases and the clean corpus
 ```
 
-`garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json and Yarn 1 yarn.lock for npm. Entries it can't check (not pinned with `==`; from git, a path, a private index or registry; bundled inside another npm package) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. pnpm-lock.yaml and Yarn 2+ lockfiles aren't read yet: `garnet check` leaves them out when it looks for lockfiles, and names one passed with `--head`, or a yarn.lock that was a Yarn 1 lockfile in the `--git-base` commit, as unsupported (exit code 3). `garnet --help` lists every option.
+`garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json and Yarn 1 yarn.lock for npm (on `main` for 0.3; 0.2.0 reads the PyPI lockfiles only). Entries it can't check (not pinned with `==`; from git, a path, a private index or registry; bundled inside another npm package) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. pnpm-lock.yaml and Yarn 2+ lockfiles aren't read yet: `garnet check` leaves them out when it looks for lockfiles, and names one passed with `--head`, or a yarn.lock that was a Yarn 1 lockfile in the `--git-base` commit, as unsupported (exit code 3). `garnet --help` lists every option.
 
 The exit code is 0 below `--fail-on` (default: the policy's `fail_on`, else `block`), 1 for warn, 2 for block and 3 if Garnet Guard itself failed.
 
 ## Ecosystems
 
-PyPI (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt) and npm (package-lock.json and npm-shrinkwrap.json, lockfileVersion 1 to 3, and Yarn 1 yarn.lock). npm releases are checked for provenance, tags, install scripts and OSV advisories, from a lockfile with `garnet check` or one release at a time with `garnet diff npm:<name> <old> <new>`. pnpm-lock.yaml and Yarn 2+ (Berry) lockfiles need a YAML parser and follow.
+PyPI (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt) and npm (package-lock.json and npm-shrinkwrap.json, lockfileVersion 1 to 3, and Yarn 1 yarn.lock, on `main` for 0.3). npm releases are checked for provenance, tags, install scripts and OSV advisories, from a lockfile with `garnet check` or one release at a time with `garnet diff npm:<name> <old> <new>`. pnpm-lock.yaml and Yarn 2+ (Berry) lockfiles need a YAML parser and follow.
 
 ## Project
 

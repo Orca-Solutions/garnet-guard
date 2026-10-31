@@ -126,12 +126,19 @@ def owners(data: Any) -> tuple[str, ...]:
 
 
 def select_wheel(filenames: list[str]) -> str | None:
-    """SPEC §4.2: the wheel pip would install on this machine, else the first sorted.
+    """SPEC §4.2: the wheel pip would install on this machine.
 
     pip ranks a wheel by its most specific tag this interpreter supports, so a
     platform wheel beats a pure-Python one. Content rules read the same file
     pip would install: a platform wheel added to a pure-Python project is the
     one read, not the pure wheel beside it.
+
+    When no wheel fits this interpreter, as for a release older than it, the
+    pick is a wheel for this machine's platform family, then the newest
+    CPython, then x86-64, then the name (``_preference``). Two releases of a
+    project are then read for the same Python where they can be: pendulum
+    2.0.4's first wheel by name is a Python 2 build with no compiled code,
+    while its Python 3 wheels have the extension modules 2.0.5's have.
     """
     wheels = sorted(f for f in filenames if f.endswith(".whl"))
     if not wheels:
@@ -146,7 +153,10 @@ def select_wheel(filenames: list[str]) -> str | None:
         scores = [rank[t] for t in wtags if t in rank]
         if scores and (best is None or min(scores) < best[0]):
             best = (min(scores), w)
-    return best[1] if best else wheels[0]
+    if best:
+        return best[1]
+    here = _platform_family(next(iter(sys_tags())).platform)
+    return min(wheels, key=lambda w: (wheel_family(w) != here, _preference(w)))
 
 
 # GRN-C012 compares the wheel Garnet read with one wheel per other platform
@@ -163,16 +173,20 @@ def wheel_family(filename: str) -> str:
     except ValueError:
         return "unknown"
     platforms = sorted({t.platform for t in tags})
-    if platforms == ["any"]:
+    return _platform_family(next((p for p in platforms if p != "any"), platforms[0]))
+
+
+def _platform_family(platform: str) -> str:
+    """The family of one platform tag, as ``wheel_family`` names it."""
+    if platform == "any":
         return "any"
-    first = next((p for p in platforms if p != "any"), platforms[0])
-    if first.startswith("win"):
+    if platform.startswith("win"):
         return "Windows"
-    if first.startswith("macosx"):
+    if platform.startswith("macosx"):
         return "macOS"
-    if first.startswith(("manylinux", "musllinux", "linux")):
+    if platform.startswith(("manylinux", "musllinux", "linux")):
         return "Linux"
-    return first.split("_")[0]
+    return platform.split("_")[0]
 
 
 # A CPython or generic Python tag with a version: cp313, py3, py310. The

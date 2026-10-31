@@ -73,11 +73,11 @@ What Garnet Guard couldn't evaluate, said out loud instead of passed.
 
 Example findings marked as replays come from `uv run python -m backtest`, which runs
 Garnet Guard against real compromised releases listed in [backtest/incidents.toml](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml)
-and a corpus of clean updates. In the current replay of 51 malicious releases from 40
-compromised packages (47 on PyPI, 4 on npm), with git tags as they stood when each release
-was uploaded, all 51 get a `warn` from trust and content rules alone. Three of them
+and a corpus of clean updates. In the current replay of 52 malicious releases from 41
+compromised packages (47 on PyPI, 5 on npm), with git tags as they stood when each release
+was uploaded, all 52 get a `warn` from trust and content rules alone. Three of them
 (ultralytics 8.3.42, embiggen 0.11.97 and mrmustard 0.7.4) were missed by the rules as first
-written and are caught by fixes the replay prompted (see the [README](https://github.com/orca-solutions/garnet-guard#replays-of-real-malicious-releases)). 0 of 20 clean updates got a `warn` from a detection rule. Other examples are
+written and are caught by fixes the replay prompted (see the [README](https://github.com/orca-solutions/garnet-guard#replays-of-real-malicious-releases)). 0 of 26 clean updates (20 on PyPI, 6 on npm) got a `warn` from a detection rule. Other examples are
 illustrative and say so.
 
 ## Rule IDs and links
