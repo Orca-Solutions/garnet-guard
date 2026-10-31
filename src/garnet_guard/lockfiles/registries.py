@@ -38,14 +38,18 @@ class Registries:
 
     ``default`` and each entry of ``scopes`` (``@scope``) is None when the
     configuration sets nothing, True when it names the public registry and
-    False for any other. ``source`` is the file the setting came from.
-    ``also`` is a second file's settings, for a tool that may read either:
-    a package counts as public only if neither sends it elsewhere.
+    False for any other. ``any_scope`` is True when a setting Garnet can't
+    resolve (a key naming an environment variable) may send any scope not
+    in ``scopes`` to another registry. ``source`` is the file the setting
+    came from. ``also`` is a second file's settings, for a tool that may
+    read either: a package counts as public only if neither sends it
+    elsewhere.
     """
 
     source: str = ""
     default: bool | None = None
     scopes: Mapping[str, bool | None] = field(default_factory=dict)
+    any_scope: bool = False
     also: Registries | None = None
 
     def other_registry(self, name: str) -> str | None:
@@ -53,6 +57,8 @@ class Registries:
         public one, or None when it installs from the public registry."""
         scope = name.partition("/")[0] if name.startswith("@") else None
         public = self.scopes.get(scope) if scope is not None else None
+        if public is None and scope is not None and self.any_scope:
+            public = False
         if public is None:
             public = self.default
         if public is False:
@@ -71,6 +77,54 @@ NONE = Registries()
 
 def _public(url: str) -> bool:
     return "${" not in url and url.strip().rstrip("/") in PUBLIC
+
+
+# pnpm 10 passes every .npmrc key, and every top-level pnpm-workspace.yaml
+# key, through envReplace (@pnpm/config.env-replace): ``${NAME}`` becomes
+# the variable's value, and ``${NAME:-text}`` or ``${NAME-text}`` the text
+# written in the file when the variable is unset. Garnet can't see the
+# environment, so each such expression in a key may be any text. The
+# backslashes before one stay in the text around it, which keeps the
+# match linear: pnpm keeps one escaped with a backslash as written, and
+# halves an even run, so its key keeps a backslash or ``${`` either way.
+_ENV_EXPR = re.compile(r"\$\{[^${}]+\}")
+
+
+def _env_key(key: str) -> list[str] | None:
+    """The text around each environment variable a key names, or None for
+    a key that names none."""
+    parts = _ENV_EXPR.split(key)
+    return parts if len(parts) > 1 else None
+
+
+def _may_be(parts: list[str], name: str) -> bool:
+    """True if a key naming environment variables may be read as ``name``:
+    its text, in order, with any text where each variable is. Matched
+    leftmost first, which is exact for this and never backtracks."""
+    first, *middle, last = parts
+    if len(first) + len(last) > len(name) or not (name.startswith(first) and name.endswith(last)):
+        return False
+    at, end = len(first), len(name) - len(last)
+    for part in middle:
+        found = name.find(part, at, end)
+        if found < 0:
+            return False
+        at = found + len(part)
+    return True
+
+
+def _may_set_scope(parts: list[str]) -> str | bool:
+    """Whether a key naming environment variables may be read as an
+    ``@scope:registry`` key: the scope when the text before the first
+    variable names it, True when it may be any scope's, False when it
+    can't be one."""
+    first, last = parts[0], parts[-1]
+    if not (last.endswith(":registry") or ":registry".endswith(last)):
+        return False
+    scope, colon, _ = first.partition(":")
+    if not (scope == "" or scope.startswith("@")) or "/" in scope:
+        return False
+    return scope if colon else True
 
 
 # .npmrc is read the way pnpm 10 reads it: with the ``ini`` 1.x parser
@@ -178,20 +232,38 @@ def npmrc(text: str) -> Registries:
     A value that isn't text, or that names an environment variable
     (``${NPM_REGISTRY}``), is taken as another registry: pnpm stops on the
     first, and Garnet can't see the variable, so it can't tell the package
-    installs from the public one. As in pnpm, the scope of a scope key runs
-    to its first colon (``@corp:x:registry`` is ``@corp``'s).
+    installs from the public one. A key that names one
+    (``${X:-registry}``, which pnpm reads as ``registry`` when X is unset)
+    is taken as setting every registry key it may be read as, unless its
+    value is npm's public registry. As in pnpm, the scope of a scope key
+    runs to its first colon (``@corp:x:registry`` is ``@corp``'s).
     """
     default: bool | None = None
     scopes: dict[str, bool | None] = {}
+    any_scope = False
     for key, value in _npmrc_settings(text).items():
         public = isinstance(value, str) and _public(value)
-        if key == "registry":
+        parts = _env_key(key)
+        if parts is not None:
+            # pnpm sets the keys in the file's order, so a later line still
+            # wins. A public value can only make a package public.
+            if public:
+                continue
+            if _may_be(parts, "registry"):
+                default = False
+            scope = _may_set_scope(parts)
+            if scope is True:
+                scopes.clear()
+                any_scope = True
+            elif scope:
+                scopes[scope] = False
+        elif key == "registry":
             default = public
         elif key.startswith("@") and key.endswith(":registry"):
             scope = key[: key.index(":")]
             if "/" not in scope:
                 scopes[scope] = public
-    return Registries(NPMRC, default, scopes)
+    return Registries(NPMRC, default, scopes, any_scope)
 
 
 def pnpm_workspace(text: str) -> Registries:
@@ -199,19 +271,39 @@ def pnpm_workspace(text: str) -> Registries:
     settings over .npmrc's, so a ``registries`` table (``default`` and
     ``@scope`` URLs) replaces the registries .npmrc set; a ``registry`` key
     there changes nothing, since pnpm has read the registries by then.
+    pnpm expands environment variables in this file's top-level keys too,
+    so a key that may be read as ``registries`` (``${X:-registries}``)
+    sends every package elsewhere, unless a ``registries`` key follows it.
     Raises ``LockfileError`` for one Garnet can't read; only ``registries``
-    is held to the YAML reader's rules (anchors, aliases, tags elsewhere,
-    in a catalog say, are passed over)."""
-    doc = load(text, schema="core", read=frozenset({"registries"}))
+    and keys naming a variable are held to the YAML reader's rules
+    (anchors, aliases, tags elsewhere, in a catalog say, are passed
+    over)."""
+    doc = load(text, schema="core", read=_WorkspaceKeys())
     if doc is None:
         return Registries(PNPM_WORKSPACE)
     if not isinstance(doc, YamlMapping):
         raise LockfileError("the top level isn't a mapping")
-    if "registries" not in doc:
-        return Registries(PNPM_WORKSPACE)
-    table = doc["registries"]
+    found = Registries(PNPM_WORKSPACE)
+    # pnpm sets the keys in the file's order, so the last one wins.
+    for key, value in doc.items():
+        if key == "registries":
+            found = _registries_table(value, doc.lines[key])
+        elif isinstance(key, str) and (parts := _env_key(key)) and _may_be(parts, "registries"):
+            found = Registries(PNPM_WORKSPACE, False, {}, any_scope=True)
+    return found
+
+
+class _WorkspaceKeys:
+    """The top-level pnpm-workspace.yaml keys read: ``registries``, and any
+    key naming an environment variable, which may be read as it."""
+
+    def __contains__(self, key: object) -> bool:
+        return key == "registries" or (isinstance(key, str) and _env_key(key) is not None)
+
+
+def _registries_table(table: object, line: int) -> Registries:
     if not isinstance(table, YamlMapping):
-        raise LockfileError(f"line {doc.lines['registries']}: registries isn't a mapping")
+        raise LockfileError(f"line {line}: registries isn't a mapping")
     # With no default, pnpm 10 installs unscoped packages from npm's public
     # registry, even when .npmrc names another one (which Garnet still
     # counts, as it counts either file).

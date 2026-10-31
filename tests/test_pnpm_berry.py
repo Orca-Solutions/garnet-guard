@@ -732,6 +732,82 @@ def test_npmrc_registry_settings(text: str, default: bool | None, scopes: dict[s
     assert (settings.source, settings.default, dict(settings.scopes)) == (".npmrc", default, scopes)
 
 
+@pytest.mark.parametrize(
+    ("text", "default", "scopes", "any_scope"),
+    [
+        # pnpm 10.28.0 expands environment variables in keys: with X unset,
+        # it fetched from https://x/ for each of the first four.
+        ("${X:-registry}=https://x/\n", False, {}, True),
+        ("${X-registry}=https://x/\n", False, {}, True),
+        ("${X:-@corp}:registry=https://x/\n", None, {}, True),
+        ("@corp:${X:-registry}=https://x/\n", None, {"@corp": False}, False),
+        # A variable that is set may be any text, so ${X} may be any key.
+        ("${X}=https://x/\n", False, {}, True),
+        # pnpm keeps one escaped with a backslash as written, and fetched from
+        # npm's registry.
+        ("\\${X:-registry}=https://x/\n", None, {}, False),
+        # Keys that can't be read as a registry key, whatever the variable.
+        ("//${HOST}/:_authToken=hunter2\n", None, {}, False),
+        ("${X}:_authToken=hunter2\n", None, {}, False),
+        ("//npm.corp.example/${X}:registry=https://x/\n", None, {}, False),
+        ("@co/rp${X}:registry=https://x/\n", None, {}, False),
+        ("${X}registry${Y}s=https://x/\n", None, {}, False),
+        ("re${X}gi${Y}st${Z}ry=https://x/\n", False, {}, False),
+        # Keys built to make a pattern matcher backtrack.
+        ("${A}" * 5000 + "q${A}y=https://x/\n", None, {}, True),
+        ("\\" * 100_000 + "${A=https://x/\n", None, {}, False),
+        # npm's public registry as the value can only make a package public.
+        ("${X:-registry}=https://registry.npmjs.org/\n", None, {}, False),
+        # The file's order holds, as in pnpm: a later line wins.
+        ("${X:-registry}=https://x/\nregistry=https://registry.npmjs.org/\n", True, {}, True),
+        ("registry=https://registry.npmjs.org/\n${X:-registry}=https://x/\n", False, {}, True),
+        (
+            "@pub:registry=https://registry.npmjs.org/\n${X:-@pub}:registry=https://x/\n",
+            None,
+            {},
+            True,
+        ),
+        (
+            "${X:-@pub}:registry=https://x/\n@pub:registry=https://registry.npmjs.org/\n",
+            None,
+            {"@pub": True},
+            True,
+        ),
+    ],
+)
+def test_npmrc_keys_naming_environment_variables(
+    text: str, default: bool | None, scopes: dict[str, bool], any_scope: bool
+) -> None:
+    settings = npmrc(text)
+    assert (settings.default, dict(settings.scopes), settings.any_scope) == (
+        default,
+        scopes,
+        any_scope,
+    )
+
+
+def test_an_npmrc_key_naming_a_variable_may_send_any_scope_elsewhere() -> None:
+    settings = npmrc(
+        "@pub:registry=https://registry.npmjs.org/\n${X:-@corp}:registry=https://x/\n"
+        "@jsr:registry=https://registry.npmjs.org/\n"
+    )
+    assert settings.other_registry("ms") is None
+    assert settings.other_registry("@corp/a") == ".npmrc"
+    assert settings.other_registry("@pub/a") == ".npmrc"
+    assert settings.other_registry("@jsr/a") is None and settings.public_scope("@jsr")
+    assert not npmrc("${X:-@jsr}:registry=https://x/\n").public_scope("@jsr")
+
+
+def test_an_npmrc_key_naming_a_variable_reports_the_package(tmp_path: Path) -> None:
+    head = tmp_path / "pnpm-lock.yaml"
+    head.write_bytes(fixture("pnpm-lock-base.yaml"))
+    (tmp_path / ".npmrc").write_text("${GARNET_UNSET:-registry}=https://npm.corp.example/\n")
+    settings = registry_settings(head, head.read_bytes(), tmp_path)
+    assert settings.other_registry("ms") == ".npmrc"
+    pins = parse("pnpm-lock.yaml", head.read_bytes(), registries=settings)
+    assert {p.detail for p in pins if p.package == "ms"} == {"private registry, set in .npmrc"}
+
+
 def test_an_npmrc_registry_reports_the_packages_it_serves() -> None:
     settings = npmrc(
         "registry=https://npm.corp.example/\n@pub:registry=https://registry.npmjs.org/\n"
@@ -867,6 +943,45 @@ def test_pnpm_workspace_registry_settings(
 
 
 @pytest.mark.parametrize(
+    ("text", "default", "scopes", "any_scope"),
+    [
+        # pnpm 10.28.0 expands environment variables in this file's top-level
+        # keys: with X unset it fetched from https://x/ for the first two and
+        # from npm's registry for the next two (a registry key there changes
+        # nothing). A set X may make the fourth registries, so it counts.
+        ("packages: [.]\n${X:-registries}:\n  default: https://x/\n", False, {}, True),
+        (
+            "registries:\n  default: https://registry.npmjs.org/\n"
+            "${X:-registries}:\n  default: https://x/\n",
+            False,
+            {},
+            True,
+        ),
+        (
+            "${X:-registries}:\n  default: https://x/\n"
+            "registries:\n  default: https://registry.npmjs.org/\n",
+            True,
+            {},
+            False,
+        ),
+        ("${X:-registry}: https://x/\n", False, {}, True),
+        ("${X}: {default: https://x/}\n", False, {}, True),
+        ("//${HOST}/:_authToken: hunter2\n", None, {}, False),
+    ],
+)
+def test_pnpm_workspace_keys_naming_environment_variables(
+    text: str, default: bool | None, scopes: dict[str, bool], any_scope: bool
+) -> None:
+    settings = pnpm_workspace(text)
+    assert (settings.default, dict(settings.scopes), settings.any_scope) == (
+        default,
+        scopes,
+        any_scope,
+    )
+    assert (settings.other_registry("@corp/a") == "pnpm-workspace.yaml") is any_scope
+
+
+@pytest.mark.parametrize(
     ("text", "message"),
     [
         ("registries: hunter2\n", "line 1: registries isn't a mapping"),
@@ -875,6 +990,7 @@ def test_pnpm_workspace_registry_settings(
         ("catalog: &c {a: 1}\nregistries: *c\n", "line 2: a YAML alias, which Garnet refuses"),
         ("catalog: &c {a: 1}\n<<: *c\n", "line 2: a YAML merge key, which Garnet refuses"),
         ("registries: {}\nregistries: {default: hunter2}\n", "line 2: a key repeated"),
+        ("${X}: &a hunter2\n", "line 1: a YAML anchor, which Garnet refuses"),
         ("- hunter2\n", "the top level isn't a mapping"),
         ("catalog: '\n", "invalid YAML"),
     ],

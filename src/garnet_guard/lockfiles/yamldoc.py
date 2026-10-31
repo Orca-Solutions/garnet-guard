@@ -26,6 +26,7 @@ publicly, and these files can hold tokens.
 from __future__ import annotations
 
 import re
+from collections.abc import Container
 from typing import Any, Literal
 
 import yaml
@@ -162,7 +163,7 @@ def _refuse(event: yaml.Event, line: int, kind: str) -> None:
         raise LockfileError(f"line {line}: a YAML tag Garnet doesn't read")
 
 
-def _build(text: str, schema: Schema, read: frozenset[str] | None) -> object:
+def _build(text: str, schema: Schema, read: Container[object] | None) -> object:
     loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     root: object = None
     documents = 0
@@ -257,7 +258,7 @@ def _build(text: str, schema: Schema, read: frozenset[str] | None) -> object:
     return root
 
 
-def load(text: str, *, schema: Schema, read: frozenset[str] | None = None) -> object:
+def load(text: str, *, schema: Schema, read: Container[object] | None = None) -> object:
     """The document in ``text``: str, None, bool, :class:`Scalar`,
     :class:`Mapping` and :class:`Sequence` values only. Raises
     ``LockfileError`` with a position, never the file's text.
