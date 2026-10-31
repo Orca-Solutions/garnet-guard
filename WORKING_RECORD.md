@@ -2,6 +2,20 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-31: VS Code extension planned for after 0.3
+
+**State.** The maintainer agreed a VS Code extension is a planned surface, not a launch feature. ROADMAP.md lists it under 1.0, after 0.3 and alongside the schema freeze: a thin shell over the CLI in its own repository, free, with lockfile diagnostics and an ignore quick fix, and no rule of its own. Prerequisites named there: the download cache (`--cache-dir`, still "not supported in this preview yet"), the npm lockfile parsers (#97, #101) and the frozen JSON schema. The JSON report already carries `lockfile` and `line` for each finding, which is what the extension maps to diagnostics. Nothing is built. The maintainer then said yes to both follow-ups: SPEC §1 and the new §10.5 name the extension as the fifth surface at 1.0 (a shell over the CLI, no rules of its own, diagnostics on the pinned line, one ignore quick fix, nothing sent anywhere), and `docs/vscode.md` describes what works today: the Action's comment through the GitHub Pull Requests extension, and `garnet check --git-base main --format sarif --output garnet.sarif` opened in Microsoft's SARIF Viewer, with a `tasks.json` task. The README's "Locally" paragraph and the docs index link to it.
+
+**Verification.** `garnet check --git-base HEAD --format sarif` runs here and writes a valid SARIF with no results when nothing changed. VS Code and the SARIF Viewer were not run in this container; the viewer's behavior in the page comes from its README (results as squiggles, in the Problems list and in its panel; relative paths reconciled with the workspace "in most cases"). Someone with VS Code should try the page's steps once.
+
+**Open tasks.** Try the SARIF Viewer steps in VS Code and fix the page if the viewer behaves differently.
+
+## 2026-10-31: 0.2.0 released
+
+**State.** 0.2.0 is on PyPI, tagged `v0.2.0` at `e6e9f44`, the merge of #100. The release workflow passed, Verify included. The changelog date is now 2026-10-31, the day of the tag. The Action examples in the README, docs/action.md and `action/examples/` pin `e6e9f44`. The dogfood workflow still pins `69c8e01` on main.
+
+**Open tasks.** Publish the Marketplace listing from the `v0.2.0` release (docs/marketplace.md, Publishing).
+
 ## 2026-10-31: 0.2.0 prepared
 
 **State.** The version is `0.2.0`, the release for launch. The changelog's Unreleased entries are now under `0.2.0 (2026-12-01)`; change the date if the tag goes out on another day. It holds everything merged through #99. Held by the maintainer and not in it: #97 (npm lockfiles) and #98 (GRN-C006). The README's install lines drop `--pre`, and its status line and badge say alpha, with the `3 - Alpha` classifier, because PyPI keeps 0.2.0's README through launch week (the plan had been to drop "pre-alpha" on Dec 8). docs/marketplace.md now says to publish to PyPI first, then the listing.
