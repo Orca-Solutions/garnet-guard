@@ -165,6 +165,51 @@ def inspect_tarball(filename: str, data: bytes, limits: Limits) -> NpmInspection
 _CONTENT = ("GRN-C002", "GRN-C011")
 
 
+@dataclass(frozen=True)
+class InstallHooks:
+    """What an npm tarball makes npm run when it is installed (GRN-C008).
+
+    ``binding_gyp`` is a ``binding.gyp`` at the package root: with no
+    ``install`` or ``preinstall`` script, npm runs ``node-gyp rebuild`` for it
+    (``@npmcli/run-script`` and arborist's rebuild step), unless package.json
+    sets ``"gypfile": false`` (``gypfile_off``). ``problem`` says why the
+    tarball couldn't be read; nothing else is then known.
+    """
+
+    scripts: tuple[tuple[str, str], ...] = ()
+    binding_gyp: bool = False
+    gypfile_off: bool = False
+    problem: str | None = None
+
+
+def install_hooks(filename: str, data: bytes, limits: Limits) -> InstallHooks:
+    """Read a tarball's root package.json and look for a root binding.gyp.
+
+    Lists the archive and reads only ``package.json``; nothing is unpacked.
+    """
+    try:
+        reader = open_archive(data, filename, limits)
+        entries = reader.entries()
+        prefix = _strip_prefix([e.path for e in entries])
+        paths = {e.path[len(prefix) :]: e.path for e in entries}
+        if "package.json" not in paths:
+            return InstallHooks(problem=f"{filename} has no package.json")
+        body = reader.read(paths["package.json"])
+    except ArchiveError as err:
+        return InstallHooks(problem=f"{filename}: {err}")
+    try:
+        doc = json.loads(body.decode("utf-8", "replace"))
+    except ValueError:
+        doc = None
+    if not isinstance(doc, dict):
+        return InstallHooks(problem=f"{filename}: package.json isn't a JSON object")
+    return InstallHooks(
+        scripts=install_scripts(body),
+        binding_gyp="binding.gyp" in paths,
+        gypfile_off=doc.get("gypfile") is False,
+    )
+
+
 def _sorted(result: NpmInspection) -> NpmInspection:
     result.files.sort(key=lambda f: f.path)
     return result

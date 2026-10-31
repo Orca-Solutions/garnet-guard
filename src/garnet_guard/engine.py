@@ -12,7 +12,7 @@ from pathlib import Path
 from . import __version__
 from . import policy as pol
 from .checks import ALL_CHECKS, DOCS
-from .checks.content import new_requirement_names
+from .checks.content import new_requirement_names, owned_young_dependencies
 from .checks.docs import rule_url
 from .checks.trust import coverage_notes
 from .ecosystems import github, gittree, npm, pypi
@@ -20,6 +20,7 @@ from .models import (
     Change,
     ChangeResult,
     DependencyProfile,
+    DependencyRelease,
     Evidence,
     FactError,
     Finding,
@@ -28,6 +29,7 @@ from .models import (
     Policy,
     RawFinding,
     ReleaseFacts,
+    Requirement,
     Severity,
     Verdict,
 )
@@ -71,6 +73,7 @@ class Fetcher:
         )
         self._npm = npm.FetchContext(http=self.http, limits=options.limits, tags=tags)
         self._profiles: dict[tuple[str, str], DependencyProfile] = {}
+        self._dep_releases: dict[tuple[str, str, str, datetime], DependencyRelease] = {}
         self._profiles_lock = threading.Lock()
 
     def __enter__(self) -> Fetcher:
@@ -112,6 +115,23 @@ class Fetcher:
                 self._profiles[key] = hit
         return hit
 
+    def dependency_release(
+        self, ecosystem: str, req: Requirement, at: datetime
+    ) -> DependencyRelease:
+        """The release of a new dependency that a version published at ``at``
+        would install, read once per run. Raises ``NetError``."""
+        key = (ecosystem, req.package, req.spec, at)
+        with self._profiles_lock:
+            hit = self._dep_releases.get(key)
+        if hit is None:
+            if ecosystem == "npm":
+                hit = npm.dependency_release(self._npm, req, at)
+            else:
+                hit = pypi.dependency_release(self._pypi, req, at)
+            with self._profiles_lock:
+                self._dep_releases[key] = hit
+        return hit
+
 
 def with_dependency_profiles(
     fetcher: Fetcher, base: ReleaseFacts | None, cand: ReleaseFacts
@@ -119,12 +139,13 @@ def with_dependency_profiles(
     """The candidate with a registry profile for each dependency the baseline
     didn't declare (GRN-C008). A lookup that fails is a GRN-E001 on the
     candidate naming GRN-C008, so the rule never passes a name it couldn't see.
-    Profiles the facts already carry (an incident replay) are kept.
+    Profiles the facts already carry (an incident replay) are kept. Then reads
+    the releases ``with_dependency_releases`` needs.
     """
     known = {p.name for p in cand.dependencies}
     names = [n for n in new_requirement_names(base, cand) if n not in known]
     if not names:
-        return cand
+        return with_dependency_releases(fetcher, base, cand)
     profiles: list[DependencyProfile] = []
     errors: list[FactError] = []
     for name in names:
@@ -136,9 +157,50 @@ def with_dependency_profiles(
                     "GRN-E001", f"registry lookup for dependency {name}: {err}", ("GRN-C008",)
                 )
             )
-    return replace(
+    cand = replace(
         cand,
         dependencies=cand.dependencies + tuple(profiles),
+        errors=cand.errors + tuple(errors),
+    )
+    return with_dependency_releases(fetcher, base, cand)
+
+
+def candidate_upload(cand: ReleaseFacts) -> datetime | None:
+    """When the candidate's first file was uploaded, if the registry said."""
+    stamps = [a.uploaded_at for a in cand.artifacts if a.uploaded_at is not None]
+    return min(stamps) if stamps else None
+
+
+def with_dependency_releases(
+    fetcher: Fetcher, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> ReleaseFacts:
+    """The candidate with the release each young dependency that shares an
+    owner with the trusted package would install (GRN-C008), read after the
+    profiles. A read that fails is a GRN-E001 naming GRN-C008, and the rule
+    keeps its severity for that dependency. Releases the facts already carry
+    are kept.
+    """
+    at = candidate_upload(cand)
+    known = {d.name for d in cand.dependency_releases}
+    wanted = [r for r in owned_young_dependencies(base, cand) if r.package not in known]
+    if at is None or not wanted:
+        return cand
+    got: list[DependencyRelease] = []
+    errors: list[FactError] = []
+    for r in wanted:
+        try:
+            got.append(fetcher.dependency_release(cand.ecosystem, r, at))
+        except NetError as err:
+            errors.append(
+                FactError(
+                    "GRN-E001",
+                    f"release of dependency {r.package} that {cand.version} would install: {err}",
+                    ("GRN-C008",),
+                )
+            )
+    return replace(
+        cand,
+        dependency_releases=cand.dependency_releases + tuple(got),
         errors=cand.errors + tuple(errors),
     )
 

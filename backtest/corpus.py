@@ -17,6 +17,7 @@ JSON (never pickle) so a rerun only re-runs the pure checks.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import sys
@@ -33,16 +34,18 @@ from typing import Any
 from packaging.version import InvalidVersion, Version
 
 from garnet_guard import __version__, models
-from garnet_guard.checks.content import new_requirement_names
+from garnet_guard.checks.content import new_requirement_names, owned_young_dependencies
 from garnet_guard.ecosystems import github, gittree, npm, pypi
-from garnet_guard.engine import run_checks
+from garnet_guard.engine import candidate_upload, run_checks
 from garnet_guard.models import (
     Change,
     ChangeResult,
     DependencyProfile,
+    DependencyRelease,
     FactError,
     Limits,
     ReleaseFacts,
+    Requirement,
     Severity,
 )
 from garnet_guard.net import Http, NetError
@@ -57,7 +60,7 @@ FIRST = {
 }
 NOT_DETECTION = {"GRN-K001", "GRN-E001", "GRN-E002", "GRN-E003"}
 RELEASES_PER_PACKAGE = 11  # 11 releases give 10 updates per package
-CACHE_FORMAT = 40
+CACHE_FORMAT = 45
 
 
 def _ecosystem(argv: list[str]) -> tuple[str, int, list[str]]:
@@ -251,6 +254,81 @@ class ProfileCache:
         tmp.replace(p)
 
 
+class DependencyReleaseCache:
+    """Releases of young dependencies with a shared owner (GRN-C008), one JSON
+    file per (requirement, candidate upload time), cached like the profiles."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root / f"v{CACHE_FORMAT}-garnet-{__version__}" / "dependency-releases"
+
+    def _path(self, ecosystem: str, req: Requirement, at: datetime) -> Path:
+        key = json.dumps([req.package, req.spec, at.isoformat()]).encode()
+        return self.root / ecosystem / f"{hashlib.sha256(key).hexdigest()[:32]}.json"
+
+    def get(self, ecosystem: str, req: Requirement, at: datetime) -> DependencyRelease | None:
+        p = self._path(ecosystem, req, at)
+        if not p.exists():
+            return None
+        rel: DependencyRelease = decode(DependencyRelease, json.loads(p.read_text()))
+        return rel
+
+    def put(self, ecosystem: str, req: Requirement, at: datetime, rel: DependencyRelease) -> None:
+        p = self._path(ecosystem, req, at)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(encode(rel), sort_keys=True))
+        tmp.replace(p)
+
+
+def with_dependency_releases(
+    ecosystem: str, base: ReleaseFacts, cand: ReleaseFacts, cache: DependencyReleaseCache
+) -> ReleaseFacts:
+    """The candidate with the release each young dependency with a shared
+    owner would install, as ``engine.with_dependency_releases`` does, cached
+    on disk."""
+    at = candidate_upload(cand)
+    wanted = owned_young_dependencies(base, cand)
+    if at is None or not wanted:
+        return cand
+    got: list[DependencyRelease] = []
+    errors: list[FactError] = []
+    todo: list[Requirement] = []
+    for r in wanted:
+        hit = cache.get(ecosystem, r, at)
+        if hit is None:
+            todo.append(r)
+        else:
+            got.append(hit)
+    if todo:
+        with Http() as http:
+            tags = github.TagLookup(http)
+            for r in todo:
+                try:
+                    if ecosystem == "npm":
+                        nctx = npm.FetchContext(http=http, limits=Limits(), tags=tags)
+                        rel = npm.dependency_release(nctx, r, at)
+                    else:
+                        pctx = pypi.FetchContext(
+                            http=http, limits=Limits(), tags=tags, trees=gittree.TreeLookup(http)
+                        )
+                        rel = pypi.dependency_release(pctx, r, at)
+                except NetError as err:
+                    errors.append(
+                        FactError(
+                            "GRN-E001",
+                            f"release of dependency {r.package} that {cand.version} would "
+                            f"install: {err}",
+                            ("GRN-C008",),
+                        )
+                    )
+                    continue
+                cache.put(ecosystem, r, at, rel)
+                got.append(rel)
+    return dataclasses.replace(
+        cand, dependency_releases=tuple(got), errors=cand.errors + tuple(errors)
+    )
+
+
 def with_profiles(
     ecosystem: str, base: ReleaseFacts, cand: ReleaseFacts, cache: ProfileCache
 ) -> ReleaseFacts:
@@ -369,9 +447,11 @@ def run_package(
     t0 = time.monotonic()
     facts = fetch_package(ecosystem, package, versions, cache)
     profiles = ProfileCache(cache.root.parent)
+    dep_releases = DependencyReleaseCache(cache.root.parent)
     rows: list[dict[str, Any]] = []
     for old, new in zip(versions, versions[1:], strict=False):
         cand = with_profiles(ecosystem, facts[old], facts[new], profiles)
+        cand = with_dependency_releases(ecosystem, facts[old], cand, dep_releases)
         result = run_checks(Change(ecosystem, package, old, new), facts[old], cand)
         findings = finding_rows(result)
         warn_rules = sorted(

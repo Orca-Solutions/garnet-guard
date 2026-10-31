@@ -9,8 +9,11 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any
 
+from packaging.requirements import InvalidRequirement
+from packaging.requirements import Requirement as PackagingRequirement
 from packaging.tags import sys_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
+from packaging.version import InvalidVersion, Version
 
 from ..facts.inventory import file_reader, inspect_artifact, site_path, wheel_files, wheel_own
 from ..facts.pyindex import sensitive_calls
@@ -18,10 +21,12 @@ from ..models import (
     ArtifactFacts,
     CallSite,
     DependencyProfile,
+    DependencyRelease,
     FactError,
     FileProvenance,
     Limits,
     ReleaseFacts,
+    Requirement,
     TagInfo,
     UnparsedWheelFile,
     WheelCalls,
@@ -692,6 +697,104 @@ def package_profile(ctx: FetchContext, package: str) -> DependencyProfile:
         latest_version=latest if isinstance(latest, str) else None,
         owners=owners(data),
     )
+
+
+# A young dependency's release is read only when it ships at most this many
+# wheels; one with more stays at the rule's severity, with a note.
+MAX_DEPENDENCY_WHEELS = 10
+
+
+def _registry_files(entries: Any) -> list[RegistryFile]:
+    """The files of one release as the JSON API's ``releases`` table lists them."""
+    out = []
+    for u in entries if isinstance(entries, list) else []:
+        if not isinstance(u, dict):
+            continue
+        digests = u.get("digests")
+        sha = digests.get("sha256") if isinstance(digests, dict) else None
+        if not (isinstance(u.get("filename"), str) and isinstance(u.get("url"), str) and sha):
+            continue
+        out.append(
+            RegistryFile(
+                filename=u["filename"],
+                url=u["url"],
+                sha256=str(sha),
+                packagetype=str(u.get("packagetype", "")),
+                uploaded_at=_parse_time(u.get("upload_time_iso_8601")),
+                size=u.get("size") if isinstance(u.get("size"), int) else None,
+            )
+        )
+    return sorted(out, key=lambda f: f.filename)
+
+
+def dependency_release(ctx: FetchContext, req: Requirement, at: datetime) -> DependencyRelease:
+    """The release of a new dependency that a version published at ``at``
+    would install (GRN-C008): the newest version that matches the
+    requirement's specifier and had a file on PyPI by then.
+
+    Lists its files, reads each wheel's file list (never its code) for
+    ``.pth`` files that land in site-packages, and verifies each file's PEP 740
+    provenance. Raises ``NetError`` when a request fails; anything else that
+    stops the read is in ``problem``.
+    """
+    name = normalize(req.package)
+    out = DependencyRelease(name, req.spec, None)
+    try:
+        specifier = PackagingRequirement(req.spec).specifier
+    except InvalidRequirement:
+        return replace(out, problem=f"Garnet can't read the requirement {req.spec!r}")
+    resp = ctx.http.get(f"https://pypi.org/pypi/{name}/json", max_bytes=PROFILE_MAX_BYTES)
+    if resp.status == 404:
+        return replace(out, problem=f"PyPI has no project {name}")
+    if resp.status != 200:
+        raise NetError(f"PyPI JSON API returned HTTP {resp.status} for {name}")
+    data = resp.json()
+    releases = data.get("releases") if isinstance(data, dict) else None
+    available: dict[Version, str] = {}
+    for raw, entries in (releases if isinstance(releases, dict) else {}).items():
+        stamps = [f.uploaded_at for f in _registry_files(entries) if f.uploaded_at is not None]
+        if not stamps or min(stamps) > at:
+            continue
+        try:
+            available[Version(raw)] = raw
+        except InvalidVersion:
+            continue
+    matching = list(specifier.filter(available))
+    if not matching:
+        return replace(
+            out,
+            problem=f"no version matching {specifier or 'any'} had a file on PyPI by "
+            f"{at:%Y-%m-%d %H:%M} UTC",
+        )
+    version = available[max(matching)]
+    files = _registry_files(releases.get(version) if isinstance(releases, dict) else None)
+    out = replace(out, version=version, files=tuple(f.filename for f in files))
+    provenance = tuple(_fetch_provenance(ctx, name, version, f) for f in files)
+    out = replace(out, provenance=provenance)
+
+    wheels = [f for f in files if f.filename.endswith(".whl")]
+    if len(wheels) > MAX_DEPENDENCY_WHEELS:
+        return replace(
+            out,
+            problem=f"{name} {version} has {len(wheels)} wheels; Garnet reads a young "
+            f"dependency's wheels only up to {MAX_DEPENDENCY_WHEELS}",
+        )
+    pth: list[str] = []
+    for f in wheels:
+        got = ctx.http.get(f.url, max_bytes=ctx.limits.max_artifact_bytes)
+        if got.status != 200:
+            raise NetError(f"download {f.filename}: HTTP {got.status}")
+        if hashlib.sha256(got.content).hexdigest() != f.sha256.lower():
+            return replace(out, problem=f"{f.filename} doesn't match PyPI's sha256")
+        entries, _, errs = wheel_files(f.filename, got.content, ctx.limits)
+        if errs:
+            return replace(out, problem=errs[0].summary)
+        pth += [
+            f"{f.filename}: {e.path}"
+            for e in entries
+            if e.kind == "pth" and "/" not in site_path(e.path)
+        ]
+    return replace(out, wheels_read=tuple(f.filename for f in wheels), pth_files=tuple(pth))
 
 
 def _unfetchable(name: str, version: str, why: str) -> ReleaseFacts:

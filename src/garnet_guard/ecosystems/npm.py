@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import posixpath
 import re
 import threading
@@ -12,10 +13,11 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-from ..facts.npmmeta import inspect_tarball
+from ..facts.npmmeta import INSTALL_SCRIPTS, inspect_tarball, install_hooks, install_scripts
 from ..models import (
     ArtifactFacts,
     DependencyProfile,
+    DependencyRelease,
     FactError,
     FileProvenance,
     Limits,
@@ -23,7 +25,7 @@ from ..models import (
     Requirement,
 )
 from ..net import Http, NetError
-from . import github, osv
+from . import github, npm_range, osv
 from .npm_provenance import verify_provenance
 
 REGISTRY = "https://registry.npmjs.org"
@@ -446,6 +448,105 @@ def package_profile(ctx: FetchContext, package: str) -> DependencyProfile:
         owners=maintainers(pack),
         unpublished_versions=tuple(v for _, v in gone),
         earliest_unpublished_at=gone[0][0] if gone else None,
+    )
+
+
+def requirement_range(r: Requirement) -> str:
+    """The version range of an npm requirement as package.json writes it,
+    the part after ``npm:name@`` for an alias."""
+    spec = r.spec
+    for label in (" (optional)", " (peer)"):
+        if spec.endswith(label):
+            spec = spec[: -len(label)]
+            break
+    rng = spec[len(r.name) + 1 :] if spec.startswith(f"{r.name}@") else spec
+    if rng.startswith("npm:"):
+        target = rng[4:]
+        at = target.rfind("@")
+        rng = target[at + 1 :] if at > 0 else ""
+    return rng.strip()
+
+
+def _integrity(dist: dict[str, Any]) -> str | None:
+    """The tarball's SRI string, from ``integrity`` or the old ``shasum``."""
+    integrity = dist.get("integrity")
+    if isinstance(integrity, str):
+        return integrity
+    shasum = dist.get("shasum")
+    if isinstance(shasum, str):
+        try:
+            return "sha1-" + base64.b64encode(bytes.fromhex(shasum)).decode()
+        except ValueError:
+            return None
+    return None
+
+
+def _script_order(script: tuple[str, str]) -> tuple[int, str]:
+    return (INSTALL_SCRIPTS.index(script[0]), script[1])
+
+
+def dependency_release(ctx: FetchContext, req: Requirement, at: datetime) -> DependencyRelease:
+    """The release of a new dependency that a version published at ``at``
+    would install (GRN-C008): the newest version that satisfies the range and
+    was published by then. Reads its provenance (verified with Sigstore) and
+    its tarball's install scripts and ``binding.gyp``, from the tarball and
+    from the registry's copy of package.json. Raises ``NetError`` when a
+    request fails; anything else that stops the read is in ``problem``.
+    """
+    name = req.package
+    rng = requirement_range(req)
+    out = DependencyRelease(name, req.spec, None)
+    pack = packument(ctx, name)
+    if pack is None:
+        return replace(out, problem=f"npm has no package {name}")
+    times, versions = _table(pack, "time"), _table(pack, "versions")
+    published = [v for v in versions if (t := _parse_time(times.get(v))) is not None and t <= at]
+    try:
+        version = npm_range.best_match(rng, published)
+    except ValueError:
+        return replace(out, problem=f"Garnet can't read the range {rng!r}")
+    if version is None:
+        return replace(
+            out,
+            problem=f"no version matching {rng or '*'} was published by {at:%Y-%m-%d %H:%M} UTC",
+        )
+    filename = tarball_name(name, version)
+    out = replace(out, version=version, files=(filename,))
+    doc = versions[version]
+    if not isinstance(doc, dict):
+        return replace(out, problem=f"npm's record of {name} {version} is malformed")
+    dist = _table(doc, "dist")
+    integrity = _integrity(dist)
+    if integrity is None:
+        return replace(out, problem=f"{name} {version} has no integrity hash")
+    user = doc.get("_npmUser") or {}
+    trusted = bool(user.get("trustedPublisher")) if isinstance(user, dict) and user else None
+    if dist.get("attestations"):
+        prov = _fetch_provenance(ctx, name, version, filename, integrity, trusted)
+    else:
+        prov = FileProvenance(filename=filename, present=False, verified=False)
+    out = replace(out, provenance=(prov,))
+
+    url = dist.get("tarball")
+    if not isinstance(url, str) or urlsplit(url).scheme != "https":
+        return replace(out, problem=f"{name} {version} has no tarball URL")
+    resp = ctx.http.get(url, max_bytes=ctx.limits.max_artifact_bytes)
+    if resp.status != 200:
+        raise NetError(f"download {filename}: HTTP {resp.status}")
+    if _compute_sri(integrity, resp.content) != integrity:
+        return replace(out, problem=f"{filename} doesn't match the registry's integrity hash")
+    hooks = install_hooks(filename, resp.content, ctx.limits)
+    if hooks.problem is not None:
+        return replace(out, problem=hooks.problem)
+    # npm runs what the package.json on disk says; the registry's copy can
+    # differ (manifest confusion), so a script in either counts.
+    listed = install_scripts(json.dumps(doc).encode())
+    scripts = tuple(sorted(set(hooks.scripts) | set(listed), key=_script_order))
+    return replace(
+        out,
+        install_scripts=scripts,
+        binding_gyp=hooks.binding_gyp,
+        gypfile_off=hooks.gypfile_off and doc.get("gypfile") is not True,
     )
 
 

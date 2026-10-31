@@ -204,8 +204,14 @@ _DOCS: tuple[RuleDoc, ...] = (
         "The new version depends on a package the trusted version didn't, or a dependency it "
         "had now installs from somewhere else. It is a warning when the registry has no such "
         "package, when it installs from git, a URL or a path, or when its first release came "
-        "less than 90 days before this one (or after it), whoever owns it. An established "
-        "dependency is info.",
+        "less than 90 days before this one (or after it). A young dependency that an owner of "
+        "the trusted package also owns is info only when the release this one would install "
+        "(the newest matching version published by then) has no install-time hook (npm: a "
+        "preinstall, install or postinstall script, or a binding.gyp; PyPI: an sdist pip would "
+        "build because no wheel fits every platform, or a .pth file) and every file has "
+        "verified provenance from the "
+        "repository the trusted version is attested from. Anything Garnet couldn't check keeps "
+        "the warning. An established dependency is info.",
         "A dependency installs with the package, and a new one gets no comparison of its own: "
         "Garnet has no trusted version of it to diff against. Adding a package the attacker "
         "controls is a quiet way to carry a payload into a trusted one. event-stream 3.3.6 "
@@ -214,7 +220,9 @@ _DOCS: tuple[RuleDoc, ...] = (
         "Open the new dependency's registry page and repository. Check who publishes it, how "
         "long it has existed, and why this release needs it; the release notes or the commit "
         "that added it should say. A package a few weeks old, with no repository and one "
-        "release, needs a look before the update merges.",
+        "release, needs a look before the update merges. When the evidence says why a "
+        "shared owner's helper kept the warning (an install script, no provenance, provenance "
+        "from another repository), read that part of the helper first.",
     ),
     RuleDoc(
         "GRN-C009",

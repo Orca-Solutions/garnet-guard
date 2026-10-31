@@ -376,6 +376,43 @@ class DependencyProfile:
 
 
 @dataclass(frozen=True)
+class DependencyRelease:
+    """The release of a new dependency that the candidate would install (GRN-C008).
+
+    Read only for a dependency first released less than 90 days before the
+    candidate that an owner of the trusted package also owns: that one is
+    reported at info only when this release has no install-time hook and
+    verified provenance from the trusted package's repository.
+
+    ``version`` is the newest version that matches the candidate's range and
+    was published at or before the candidate's first upload; None when there
+    is none, or ``problem`` says why Garnet couldn't tell. ``files`` are the
+    release's files as the registry lists them now: every file on PyPI, the
+    tarball on npm. ``provenance`` has one entry per file Garnet looked up.
+    A release Garnet couldn't read has ``problem`` set, and the rule keeps its
+    severity.
+    """
+
+    name: str
+    spec: str  # the requirement as the candidate declares it
+    version: str | None
+    files: tuple[str, ...] = ()
+    # npm: the install scripts in the tarball's package.json and in the
+    # registry's copy of it, a binding.gyp at the package root (npm then runs
+    # ``node-gyp rebuild`` when there is no install or preinstall script), and
+    # whether package.json turns that off with ``"gypfile": false``.
+    install_scripts: tuple[tuple[str, str], ...] = ()
+    binding_gyp: bool = False
+    gypfile_off: bool = False
+    # PyPI: the wheels read, and the .pth files they install into site-packages
+    # as "wheel: path".
+    wheels_read: tuple[str, ...] = ()
+    pth_files: tuple[str, ...] = ()
+    provenance: tuple[FileProvenance, ...] = ()
+    problem: str | None = None
+
+
+@dataclass(frozen=True)
 class EntryPoint:
     """One line of a wheel's ``entry_points.txt``: ``name = target`` under ``[group]``.
 
@@ -484,6 +521,10 @@ class ReleaseFacts:
     # looked up by the engine for GRN-C008. A name with no profile and no
     # GRN-E001 naming GRN-C008 wasn't looked up at all (no baseline to diff).
     dependencies: tuple[DependencyProfile, ...] = ()
+    # The release each young dependency with an owner in common with the
+    # trusted package would install, read by the engine for GRN-C008. A
+    # dependency that needed one and has none had a failed lookup (GRN-E001).
+    dependency_releases: tuple[DependencyRelease, ...] = ()
     # The registry accounts that own the package: PyPI's owner and maintainer
     # roles and organization (as they are today), npm's maintainers of this
     # version. Empty when the registry didn't say.

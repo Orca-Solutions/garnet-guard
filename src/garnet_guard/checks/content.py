@@ -16,9 +16,11 @@ from ..models import (
     CallSite,
     Change,
     DependencyProfile,
+    DependencyRelease,
     EntryPoint,
     Evidence,
     FileEntry,
+    FileProvenance,
     JsUse,
     ModuleIndex,
     RawFinding,
@@ -764,7 +766,10 @@ def code_not_in_source(
 
 
 # GRN-C008: a dependency first published this close to the release that adds
-# it is reported at warn, whoever owns it; an established one at info.
+# it is reported at warn; an established one at info. A young one that an
+# owner of the trusted package also owns is info only when the release it
+# would install has no install-time hook and verified provenance from the
+# trusted package's own repository (DECISIONS 92).
 YOUNG_DEPENDENCY_DAYS = 90
 _REGISTRY = {"pypi": "PyPI", "npm": "npm"}
 
@@ -851,6 +856,163 @@ def _uploaded(rel: ReleaseFacts) -> datetime | None:
     return min(stamps) if stamps else None
 
 
+def _young(p: DependencyProfile, uploaded: datetime | None) -> int | None:
+    """Days from a dependency's first release to the candidate's first upload,
+    when that is under ``YOUNG_DEPENDENCY_DAYS`` (negative: released after it)."""
+    if p.first_release_at is None or uploaded is None:
+        return None
+    days = (uploaded - p.first_release_at).days
+    return days if days < YOUNG_DEPENDENCY_DAYS else None
+
+
+def owned_young_dependencies(
+    base: ReleaseFacts | None, cand: ReleaseFacts
+) -> tuple[Requirement, ...]:
+    """The new registry dependencies whose release the engine reads for
+    GRN-C008: first released less than ``YOUNG_DEPENDENCY_DAYS`` before the
+    candidate, with an owner the trusted package has too. Needs the profiles
+    in ``cand.dependencies``. In declaration order, one per package."""
+    if base is None:
+        return ()
+    new, _, _, _ = _dependency_changes(base, cand)
+    profiles = {p.name: p for p in cand.dependencies}
+    uploaded = _uploaded(cand)
+    trusted_owners = set(base.owners)
+    out: dict[str, Requirement] = {}
+    for r in new:
+        p = profiles.get(r.package)
+        if r.source is not None or p is None or not p.on_registry or r.package in out:
+            continue
+        if _young(p, uploaded) is not None and trusted_owners & set(p.owners):
+            out[r.package] = r
+    return tuple(out.values())
+
+
+def _verified_repos(rel: ReleaseFacts) -> tuple[set[str], set[str], bool]:
+    """The repositories (lowercased) and GitHub repository ids of a release's
+    verified attestations, and whether any file's provenance is unknown."""
+    repos: set[str] = set()
+    ids: set[str] = set()
+    unknown = False
+    for a in rel.artifacts:
+        p = a.provenance
+        if p is None or not p.verification_ran:
+            unknown = True
+        elif p.verified and p.repository:
+            repos.add(p.repository.lower())
+            if p.repository_id:
+                ids.add(p.repository_id)
+    return repos, ids, unknown
+
+
+def _scripts_said(scripts: tuple[tuple[str, str], ...]) -> str:
+    said = [
+        f"{'an' if n[0] in 'aeiou' else 'a'} {n} script ({_clip(cmd, 80)})" for n, cmd in scripts
+    ]
+    return " and ".join(said)
+
+
+def _hooks(rel: DependencyRelease, ecosystem: str) -> list[str]:
+    """What the release runs when it is installed, in words, or nothing."""
+    out: list[str] = []
+    if ecosystem == "npm":
+        if rel.install_scripts:
+            out.append(f"has {_scripts_said(rel.install_scripts)}")
+        named = {n for n, _ in rel.install_scripts}
+        if rel.binding_gyp and not rel.gypfile_off and not named & {"install", "preinstall"}:
+            out.append("has a binding.gyp, for which npm runs node-gyp rebuild")
+        return out
+    wheels = [f for f in rel.files if f.endswith(".whl")]
+    sdist = any(not f.endswith(".whl") for f in rel.files)
+    if not rel.files:
+        out.append("has no files on PyPI")
+    elif not wheels:
+        out.append("has no wheel, so pip builds it from the sdist and runs its build code")
+    elif sdist and not any(f[: -len(".whl")].endswith("-none-any") for f in wheels):
+        out.append("has wheels only for some platforms, so pip builds the sdist where none fits")
+    out += [
+        f"installs the .pth file {_clip(p, 120)}, which Python reads at every start"
+        for p in rel.pth_files
+    ]
+    return out
+
+
+def _provenance_from(base: ReleaseFacts, rel: DependencyRelease) -> tuple[str | None, list[str]]:
+    """The repository the release is attested from when every file has
+    verified provenance from the trusted release's repository, else why not."""
+    repos, ids, unknown = _verified_repos(base)
+    what = f"{rel.name} {rel.version}"
+    if not repos:
+        if unknown:
+            return None, [f"Garnet couldn't verify the provenance of {base.package} {base.version}"]
+        return None, [f"{base.package} {base.version} has no verified provenance to compare with"]
+    provs: tuple[FileProvenance, ...] = rel.provenance
+    if not provs or len(provs) != len(rel.files):
+        return None, [f"Garnet couldn't look up the provenance of every file of {what}"]
+    missing = [p for p in provs if not p.present]
+    unverifiable = [p for p in provs if p.present and not p.verification_ran]
+    failed = [p for p in provs if p.present and p.verification_ran and not p.verified]
+    elsewhere = sorted(
+        {
+            p.repository or "an unnamed repository"
+            for p in provs
+            if p.verified
+            and (p.repository or "").lower() not in repos
+            and not (p.repository_id and p.repository_id in ids)
+        }
+    )
+    why: list[str] = []
+    if missing:
+        n = len(provs)
+        why.append(
+            f"{what} has no provenance"
+            if len(missing) == n
+            else f"{len(missing)} of {n} file(s) of {what} have no provenance"
+        )
+    if unverifiable:
+        why.append(f"Garnet couldn't verify the provenance of {what}")
+    if failed:
+        why.append(
+            f"the provenance of {what} doesn't verify ({_clip(failed[0].error or 'no reason given', 80)})"
+        )
+    if elsewhere:
+        trusted = " or ".join(sorted(repos))
+        why.append(
+            f"{what} has provenance from {', '.join(elsewhere)}, not {trusted} like {base.package} {base.version}"
+        )
+    if why:
+        return None, why
+    return provs[0].repository, []
+
+
+def _same_owner_verdict(
+    base: ReleaseFacts, cand: ReleaseFacts, r: Requirement, rel: DependencyRelease | None
+) -> tuple[bool, str]:
+    """Whether a young dependency with a shared owner drops to info, and the
+    evidence that says why or why not."""
+    if rel is None:
+        return False, (
+            f"kept at warn: the release of {r.package} that {cand.version} would install "
+            "wasn't read"
+        )
+    if rel.version is None:
+        return False, f"kept at warn: {_clip(rel.problem or 'no version to read', 160)}"
+    what = f"{rel.name} {rel.version}"
+    hooks = [f"{what} {h}" for h in _hooks(rel, cand.ecosystem)]
+    repo, why = _provenance_from(base, rel)
+    # A read that stopped part way leaves the rest unknown: it never counts as clean.
+    stopped = [_clip(rel.problem, 160)] if rel.problem is not None else []
+    reasons = hooks + why + stopped
+    if reasons or repo is None:
+        return False, f"kept at warn: {', and '.join(reasons)}"
+    clean = (
+        f"no install scripts in {what}"
+        if cand.ecosystem == "npm"
+        else f"{what} installs from a wheel with no .pth file"
+    )
+    return True, f"info: same owner, {clean}, provenance from {repo}"
+
+
 def _installs(r: Requirement) -> str:
     """What a requirement installs, for the evidence."""
     if r.source is not None:
@@ -867,11 +1029,16 @@ def new_dependency(
     Every new dependency is reported, with what the registry says about it.
     The rule keeps its severity for one that installs from outside the
     registry, one the registry doesn't have, and one whose first release came
-    within ``YOUNG_DEPENDENCY_DAYS`` of this release (or after it), even when
-    an account that owns the trusted package owns it too: whoever holds that
-    account could have made both. An established dependency is reported at
-    info. A new dependency the engine couldn't look up is listed at info, and
-    GRN-E001 says the lookup failed.
+    within ``YOUNG_DEPENDENCY_DAYS`` of this release (or after it). A young
+    dependency that an account owning the trusted package owns too drops to
+    info only when the release the candidate would install
+    (``cand.dependency_releases``) has no install-time hook and every file has
+    verified provenance from a repository the trusted release is attested
+    from: whoever holds a maintainer's account could publish both, but an
+    attestation from the trusted package's repository also takes access to
+    that repository's CI. Anything Garnet couldn't read keeps the severity. An established dependency is reported at info. A new
+    dependency the engine couldn't look up is listed at info, and GRN-E001
+    says the lookup failed.
     """
     if base is None:
         return
@@ -881,6 +1048,7 @@ def new_dependency(
     registry = _REGISTRY.get(change.ecosystem, "the registry")
     page = _REGISTRY_PAGE.get(change.ecosystem, "{}")
     profiles = {p.name: p for p in cand.dependencies}
+    releases = {d.name: d for d in cand.dependency_releases}
     trusted_owners = set(base.owners)
     uploaded = _uploaded(cand)
     evidence: list[Evidence] = []
@@ -938,6 +1106,7 @@ def new_dependency(
             continue
         parts = [alias.strip(" ()")] if alias else []
         shared = sorted(trusted_owners & set(p.owners))
+        young = _young(p, uploaded)
         if p.first_release_at is not None:
             when = _released(p.first_release_at, p, registry, short=True)
             if uploaded is not None:
@@ -946,13 +1115,6 @@ def new_dependency(
                     when += f", after {cand.version} itself"
                 else:
                     when += f", {days} day(s) before {cand.version}"
-                if days < YOUNG_DEPENDENCY_DAYS:
-                    since = (
-                        "'s earliest version still published was released"
-                        if p.unpublished_versions
-                        else " was first released"
-                    )
-                    flagged.append(f"{r.package}{since} {max(days, 0)} day(s) before it")
             parts.append(when)
             if p.unpublished_versions:
                 parts.append(_unpublished(p, registry))
@@ -962,6 +1124,17 @@ def new_dependency(
         parts.append(f"github.com/{p.source_repo}" if p.source_repo else "no repository link")
         if shared:
             parts.append(f"owned by {', '.join(shared[:3])}, who also own(s) {base.package}")
+        lowered = False
+        if young is not None and shared:
+            lowered, said = _same_owner_verdict(base, cand, r, releases.get(r.package))
+            parts.append(said)
+        if young is not None and not lowered:
+            since = (
+                "'s earliest version still published was released"
+                if p.unpublished_versions
+                else " was first released"
+            )
+            flagged.append(f"{r.package}{since} {max(young, 0)} day(s) before it")
         evidence.append(Evidence("url", f"{r.spec}: {'; '.join(parts)}", url=url))
 
     heads = []

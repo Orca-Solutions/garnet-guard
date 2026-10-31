@@ -4,6 +4,10 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 
 ## Unreleased
 
+### Changed
+
+- GRN-C008 new-dependency: a dependency first released less than 90 days before the new version, which an account owning the trusted package also owns, can now be reported at `info` (DECISIONS 92). Garnet reads the release of it the new version would install (the newest version matching the new version's range, published at or before its first upload) and lowers the finding only when that release has no install-time hook and every file has verified provenance from a repository the trusted version is attested from. An install-time hook is a `preinstall`, `install` or `postinstall` script in the tarball's or the registry's `package.json`, or a root `binding.gyp` (npm runs `node-gyp rebuild` for it), on npm; an sdist pip would build because no wheel fits every platform, or a wheel that installs a `.pth` file, on PyPI. A trusted version without verified provenance, a failed lookup (also GRN-E001), an attestation that couldn't be verified or a release Garnet couldn't read keeps `warn`, and the evidence says which way it went and why. Shared owners alone still never lower the finding. Backtest delta pending.
+
 ## 0.2.0 (2026-12-01)
 
 The first full release, for launch. It adds seven content and trust rules to the ones in 0.1.0a1, widens the sensitive call set, and reads the wheel pip would install. With every rule it ships, the backtest warns on all 52 replayed malicious releases (47 PyPI, 5 npm), and flags 606 of 18,181 everyday updates of the top 1,000 PyPI and npm packages for a look (3.3%), none a false claim. An ignore now expires within 12 months, so a policy with a longer `until` has to shorten it (Changed, below).
