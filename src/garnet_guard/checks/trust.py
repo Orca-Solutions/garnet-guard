@@ -127,13 +127,25 @@ def _publishers(
     return out
 
 
+def _repo_key(p: FileProvenance) -> tuple[str, str] | None:
+    """(host, repository id) for an id match, or None when either is unknown."""
+    if not p.repository_id or not p.repository:
+        return None
+    host, sep, _ = p.repository.partition("/")
+    if not sep or not host or ":" in host:
+        return None  # no host to scope the id to (e.g. "kind:unknown")
+    return host.lower(), p.repository_id
+
+
 def publisher_changed(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
     """GRN-T002: a candidate file was attested by a repository the baseline wasn't.
 
     Needs verified attestations on both sides. A renamed repository keeps its
-    GitHub repository id, so a rename doesn't fire.
+    repository id, so a rename doesn't fire. Ids are numbered per host (Fulcio
+    puts GitLab project ids in the same extension as GitHub repository ids), so
+    an id matches only on the same host.
     """
     if base is None:
         return
@@ -141,13 +153,13 @@ def publisher_changed(
     if not bp or not cp:
         return
     base_repos = {k[0] for k in bp}
-    base_ids = {p.repository_id for ps in bp.values() for p in ps if p.repository_id}
+    base_ids = {_repo_key(p) for ps in bp.values() for p in ps} - {None}
     for key, provs in sorted(cp.items(), key=lambda kv: str(kv[0])):
         repo = key[0]
         if repo in base_repos:
             continue
-        if base_ids and all(p.repository_id in base_ids for p in provs):
-            continue  # same GitHub repository id: a rename, not a new publisher
+        if base_ids and all(_repo_key(p) in base_ids for p in provs):
+            continue  # same host and repository id: a rename, not a new publisher
         yield RawFinding(
             "GRN-T002",
             f"{cand.version} was published from {provs[0].repository}, not {', '.join(sorted(r or '?' for r in base_repos))}",
