@@ -42,7 +42,7 @@ Garnet MUST accept these formats and detect them by file name and content:
 | PyPI | `uv.lock` | All packages with a registry source. |
 | PyPI | `poetry.lock` | Lock format 2.x. |
 | PyPI | `pylock.toml` (PEP 751) | `packages` entries with `index` or archive URLs on PyPI. |
-| PyPI | `requirements*.txt` | Only lines pinned with `==`. Hashes are read when present. Unpinned lines produce an info finding GRN-E004 and are skipped. |
+| PyPI | `requirements*.txt` | Only lines pinned with `==`. Hashes are read when present. Unpinned lines produce an info finding GRN-E004 and are skipped. Options are read as pip reads them (unambiguous prefixes of long options, attached short values) and apply to the whole file: a file that sets an index other than PyPI, an extra index, `--find-links` or `--no-index`, includes another file with `-r` or `-c` (not followed; it can set an index), or holds an option pip would refuse, reports every `==` pin in it with GRN-E005. The finding names the option, never its value. |
 | npm | `package-lock.json` | lockfileVersion 2 and 3. |
 | npm | `pnpm-lock.yaml` | lockfile v9. |
 | npm | `yarn.lock` | Yarn classic v1 and Berry. |

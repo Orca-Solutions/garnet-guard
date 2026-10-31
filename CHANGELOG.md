@@ -21,6 +21,7 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 
 ### Fixed
 
+- A requirements file's `--index-url` (`-i`) applied only to the lines after it, and abbreviated or attached options (`-ihttps://…`, `--index=…`, `--extra-ind URL`, `-f/dir`, `--find-l=/x`, `--no-ind`) weren't read, so a pin could be checked against PyPI while pip installed it from another index. Options are now read as pip 24 reads them and apply to the whole file: a file that sets an index other than PyPI, an extra index, `--find-links` or `--no-index`, includes another file with `-r` or `-c` (which Garnet doesn't follow there, and which can set an index), or holds an option pip would refuse, reports every `==` pin in it as GRN-E005, naming the option, never its value. `--hash` and other options that don't change where pip installs from keep pins checked.
 - The text report wrote a line break inside a lockfile version, or any other field, as a new line, so the rest could pass for a line of the report. It is shown as `\x0a` now, like other control characters.
 - `--policy-change` compared ignore names PEP 503 normalized whatever the ecosystem, so an ignore moved from `foo_bar` to `foo-bar`, two different npm packages, wasn't listed. Only an ignore with `ecosystem = "pypi"` is compared normalized now; matching already compared npm names exactly.
 

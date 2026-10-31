@@ -21,6 +21,16 @@ direct file URL, or a registry other than PyPI and npm. In an npm lockfile, a pa
 bundled inside another package's tarball (`inBundle`, with no `resolved` URL or integrity
 of its own) and an entry whose name breaks npm's naming rules are reported the same way.
 
+In a requirements file, pip applies `--index-url` (`-i`), `--extra-index-url`, `--find-links`
+(`-f`) and `--no-index` to every requirement in the file, before or after the option's line,
+and accepts any unambiguous prefix of a long option (`--extra-ind`, `--no-ind`) and a short
+option's value attached (`-ihttps://…`, `-f/srv/wheels`). Garnet reads them the same way. When
+a file sets an index other than PyPI, an extra index, find-links or no-index, every `==` pin
+in it is reported here instead of being checked against PyPI. So is every pin in a file that
+includes another with `-r` or `-c`, which can set an index and which Garnet doesn't follow
+from here, or that holds an option pip would refuse. The reason names the option, never its
+value, which can hold credentials.
+
 ## Why it matters
 
 Garnet Guard's rules are written against registry metadata. A dependency from somewhere
@@ -38,7 +48,12 @@ examplelib (new) → 2.6.2: PASS
 ```
 
 The reason after "was not checked" names the source, for example `git source`,
-`direct URL or path`, `editable install` or `private index`. From package-lock.json and
+`direct URL or path`, `editable install` or `private index`. From a requirements file it can
+be `private index, set with --index-url in this file`, `extra index, set with
+--extra-index-url in this file`, `--find-links in this file, so pip can install it from
+elsewhere`, `--no-index in this file, so pip doesn't install it from PyPI`, `-r in this file
+brings in a file Garnet doesn't follow, which can set another index` (or `-c`) or `an option
+Garnet can't read (<option>), so the index is unknown`. From package-lock.json and
 yarn.lock it can also be `private registry`, `file: source`, `tarball URL outside the npm
 registry`, `bundled in <package>, checked only as part of it`, `resolved URL isn't this
 package's registry tarball` or `not a valid npm package name`; an invalid name is shown as
