@@ -71,6 +71,27 @@ def discover(root: Path) -> list[Path]:
     return found
 
 
+def left_out(root: Path) -> list[Path]:
+    """Lockfiles in ``root`` that :func:`discover` leaves out because Garnet
+    can't read them yet: a Yarn 2 or later yarn.lock."""
+    path = root / "yarn.lock"
+    return [path] if _present(path) and _yarn_berry(path, root) else []
+
+
+def refuse_switch_to_berry(path: Path, base: bytes | None) -> None:
+    """Raise if a yarn.lock left out as Yarn 2 or later wasn't one in the base.
+
+    The switch can come with any change to what installs, and Garnet can read
+    only the base side of it, so it isn't skipped.
+    """
+    if base is not None and not is_berry(base[:65536]):
+        raise LockfileError(
+            f"{path.name} is now a Yarn 2 or later (Berry) lockfile, which Garnet doesn't "
+            "read yet, and the base version isn't one, so the change can't be checked; "
+            "review it by hand"
+        )
+
+
 def plain_file(path: Path, root: Path) -> bool:
     """True if ``path`` is a regular file reached without following a symlink.
 

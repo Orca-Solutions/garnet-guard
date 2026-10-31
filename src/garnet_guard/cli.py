@@ -32,8 +32,10 @@ from .workspace import (
     dedupe,
     discover,
     git_show,
+    left_out,
     plain_file,
     read_lockfile,
+    refuse_switch_to_berry,
 )
 
 _FAIL_ON = {"warn": Severity.WARN, "block": Severity.BLOCK, "never": Severity.OFF}
@@ -225,6 +227,9 @@ def _check(args: argparse.Namespace) -> int:
     policy = _policy(args)
     today = _today()
     heads = [Path(h) for h in args.head] if args.head else discover(cwd)
+    if not args.head and args.git_base:
+        for path in left_out(cwd):
+            refuse_switch_to_berry(path, git_show(args.git_base, path, cwd=cwd))
     if not heads:
         raise UsageError("no lockfiles found; pass --head PATH")
     if args.base and len(heads) != 1:

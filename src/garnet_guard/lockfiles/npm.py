@@ -115,7 +115,9 @@ def source_problem(url: str, name: str, version: str | None) -> str | None:
     """None when ``url`` is ``name``'s tarball for ``version`` on the public
     registry, else a short reason for the GRN-E005 finding.
 
-    The reason never quotes the URL, which can carry credentials.
+    The version must be SemVer, so it can't carry ``/`` or ``..`` into the
+    path it is compared with. The reason never quotes the URL, which can
+    carry credentials.
     """
     lower = url.lower()
     if lower.startswith(REGISTRY_HOSTS):
@@ -124,7 +126,12 @@ def source_problem(url: str, name: str, version: str | None) -> str | None:
         except ValueError:
             return "unsupported source"
         # yarn adds the tarball's SHA-1 as a fragment; anything else is unusual.
-        if parts.query or version is None or unquote(parts.path) != tarball_path(name, version):
+        if (
+            parts.query
+            or version is None
+            or not is_semver(version)
+            or unquote(parts.path) != tarball_path(name, version)
+        ):
             return "resolved URL isn't this package's registry tarball"
         return None
     if _git_url(url):

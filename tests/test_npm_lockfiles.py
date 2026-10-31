@@ -24,6 +24,7 @@ from garnet_guard.lockfiles import base as lock_base
 from garnet_guard.lockfiles.diff import new_unchecked, version_key
 from garnet_guard.lockfiles.npm import INVALID_NAME, semver_key, valid_name
 from garnet_guard.lockfiles.package_lock import key_lines
+from garnet_guard.lockfiles.yarn import is_berry
 from garnet_guard.models import Change
 from garnet_guard.report import to_json, to_text
 from garnet_guard.workspace import changes_for, dedupe, discover, read_lockfile
@@ -96,11 +97,75 @@ def test_package_lock_v3_pins_every_installed_package_at_its_key_line() -> None:
     assert text[35 - 1].strip() == '"node_modules/debug/node_modules/ms": {'
 
 
-def test_package_lock_v2_reads_packages_not_the_v1_section() -> None:
+def test_package_lock_v2_adds_nothing_from_a_matching_v1_section() -> None:
     pins = parse("package-lock.json", fixture("package-lock-v2.json"))
     head = parse("package-lock.json", fixture("package-lock-head.json"))
     assert rows(pins) == rows(head)
     assert ("ms", "2.1.3", 51, "registry", None) in rows(pins)
+
+
+def test_both_sections_are_read_whatever_the_lockfile_version() -> None:
+    """npm 7 and later install from "packages" when it is there, and npm 6
+    from "dependencies", so an entry in either one is checked."""
+    v1_with_packages = {
+        "lockfileVersion": 1,
+        "dependencies": {"ms": reg("ms", "2.1.2")},
+        "packages": {
+            "": {"name": "app"},
+            "node_modules/ms": reg("ms", "2.1.2", resolved="https://evil.example/ms-2.1.2.tgz"),
+            "node_modules/evil": reg("evil", "1.0.0", resolved="https://evil.example/e.tgz"),
+        },
+    }
+    pins = parse("package-lock.json", json.dumps(v1_with_packages, indent=2).encode())
+    assert [(p.package, p.source, p.detail) for p in pins] == [
+        ("ms", "registry", None),
+        ("ms", "unsupported", "tarball URL outside the npm registry"),
+        ("evil", "unsupported", "tarball URL outside the npm registry"),
+    ]
+
+    v2 = json.loads(fixture("package-lock-v2.json"))
+    v2["dependencies"]["ms"] = reg("ms", "2.1.4")
+    v2["dependencies"]["extra"] = reg("extra", "1.0.0")
+    changes, _ = changes_for(
+        "package-lock.json", json.dumps(v2).encode(), fixture("package-lock-base.json")
+    )
+    assert {(c.package, c.candidate) for c in changes} == {
+        ("ms", "2.1.3"),
+        ("ms", "2.1.4"),
+        ("extra", "1.0.0"),
+    }
+
+
+def test_a_v2_dependencies_section_written_for_links_and_file_sources_adds_nothing() -> None:
+    """npm 7 and later write links, file: tarballs and aliases differently in
+    the two sections; they still describe the same install."""
+    doc = json.loads(lock({}, version=2))
+    doc["packages"].update(
+        {
+            "node_modules/a": {"resolved": "packages/a", "link": True},
+            "packages/a": {"version": "0.1.0"},
+            "node_modules/libtgz": {
+                "name": "lib",
+                "version": "0.2.0",
+                "resolved": "file:vendor/lib-0.2.0.tgz",
+                "integrity": "sha512-AAAA",
+            },
+            "node_modules/ms-tar": {**reg("ms", "2.1.3"), "name": "ms"},
+            "node_modules/lib": {"version": "1.0.0", "resolved": "git+ssh://git@x/o/lib.git#abc"},
+        }
+    )
+    doc["dependencies"] = {
+        "a": {"version": "file:packages/a"},
+        "libtgz": {"version": "file:vendor/lib-0.2.0.tgz", "integrity": "sha512-AAAA"},
+        "ms-tar": {"version": f"{REG}/ms/-/ms-2.1.3.tgz", "integrity": "sha512-AAAA"},
+        "lib": {"version": "git+ssh://git@x/o/lib.git#abc"},
+    }
+    pins = parse("package-lock.json", json.dumps(doc, indent=2).encode())
+    assert [(p.package, p.source, p.detail) for p in pins] == [
+        ("lib", "unsupported", "file: source"),
+        ("ms", "registry", None),
+        ("lib", "unsupported", "git source"),
+    ]
 
 
 def test_package_lock_v1_tree_gives_the_same_packages() -> None:
@@ -201,6 +266,15 @@ def test_workspaces_links_git_and_file_sources() -> None:
             reg("ms", "2.1.3", resolved=f"{REG}/ms/-/ms-2.1.3.tgz?x=1"),
             ("unsupported", "resolved URL isn't this package's registry tarball"),
         ),
+        # A "version" that walks the URL path to another package's tarball.
+        (
+            reg(
+                "ms",
+                "2.1.3/../../../evil/-/evil-1.0.0",
+                resolved=f"{REG}/ms/-/ms-2.1.3/../../../evil/-/evil-1.0.0.tgz",
+            ),
+            ("unsupported", "resolved URL isn't this package's registry tarball"),
+        ),
         ({"version": "2.1.3"}, ("unsupported", "no resolved URL or integrity")),
         (
             {"version": "latest", "integrity": "sha512-AAAA"},
@@ -212,6 +286,15 @@ def test_package_lock_sources(entry: dict[str, object], expected: tuple[str, str
     (pin,) = parse("package-lock.json", lock({"node_modules/ms": entry}))
     assert (pin.source, pin.detail) == expected
     assert pin.package == "ms" and pin.ecosystem == "npm"
+
+
+def test_the_text_report_escapes_a_line_break_in_a_version() -> None:
+    entry = {"version": "1.0.0\n# Approved", "resolved": "https://evil.example/x.tgz"}
+    _, unchecked = changes_for("package-lock.json", lock({"node_modules/ms": entry}), None)
+    (u,) = unchecked
+    out = to_text(report([unchecked_result(u.change, u.rule_id, u.detail)]))
+    assert "ms (new) → 1.0.0\\x0a# Approved: PASS" in out
+    assert "\n# Approved" not in out
 
 
 def test_details_never_quote_the_resolved_url() -> None:
@@ -233,6 +316,20 @@ def test_a_git_dependency_moving_to_another_commit_is_reported() -> None:
     _, unchecked = changes_for("package-lock.json", at("bbb"), at("aaa"))
     assert [(u.change.package, u.rule_id, u.detail) for u in unchecked] == [
         ("lib", "GRN-E005", "git source")
+    ]
+
+
+def test_a_new_tarball_behind_the_same_url_is_reported() -> None:
+    def with_integrity(integrity: str) -> bytes:
+        url = "https://example.com/x/latest.tgz"
+        entry = {"version": "1.0.0", "resolved": url, "integrity": integrity}
+        return lock({"node_modules/x": entry})
+
+    old, new = with_integrity("sha512-AAAA"), with_integrity("sha512-BBBB")
+    assert changes_for("package-lock.json", old, old) == ([], [])
+    _, unchecked = changes_for("package-lock.json", new, old)
+    assert [(u.change.package, u.change.candidate, u.detail) for u in unchecked] == [
+        ("x", "1.0.0", "tarball URL outside the npm registry")
     ]
 
 
@@ -289,14 +386,65 @@ def test_bundled_dependencies_in_lockfile_version_1() -> None:
         "dependencies": {
             "parent": {
                 **reg("parent", "1.0.0"),
-                "dependencies": {"child": {"version": "2.0.0", "bundled": True}},
+                "dependencies": {
+                    "child": {
+                        "version": "2.0.0",
+                        "bundled": True,
+                        "dependencies": {"grandchild": {"version": "3.0.0", "bundled": True}},
+                    }
+                },
             }
         },
     }
     pins = parse("package-lock.json", json.dumps(doc, indent=2).encode())
+    # The grandchild ships in parent's tarball too, as lockfileVersion 2 says.
     assert rows(pins) == [
         ("parent", "1.0.0", 4, "registry", None),
         ("child", "2.0.0", 9, "unsupported", "bundled in parent, checked only as part of it"),
+        ("grandchild", "3.0.0", 13, "unsupported", "bundled in parent, checked only as part of it"),
+    ]
+
+
+def test_a_flagged_bundle_entry_with_its_own_url_is_judged_by_that_url() -> None:
+    """npm fetches an inBundle entry from its own resolved URL when the parent's
+    tarball doesn't hold it, and npm writes no URL for one it found there."""
+    base = lock(
+        {"node_modules/debug": reg("debug", "2.6.9"), "node_modules/ms": reg("ms", "2.0.0")}
+    )
+
+    def moved(**entry: object) -> bytes:
+        return lock(
+            {
+                "node_modules/debug": reg("debug", "2.6.9"),
+                "node_modules/debug/node_modules/ms": {**reg("ms", "2.1.3"), **entry},
+            }
+        )
+
+    changes, unchecked = changes_for("package-lock.json", moved(inBundle=True), base)
+    assert [(c.package, c.baseline, c.candidate) for c in changes] == [("ms", "2.0.0", "2.1.3")]
+    assert unchecked == []
+
+    evil = moved(inBundle=True, resolved="https://evil.example/ms-2.1.3.tgz")
+    _, unchecked = changes_for("package-lock.json", evil, base)
+    assert [(u.change.package, u.detail) for u in unchecked] == [
+        ("ms", "tarball URL outside the npm registry")
+    ]
+    elsewhere = moved(inBundle=True, resolved="https://evil.example/other.tgz")
+    assert len(changes_for("package-lock.json", elsewhere, evil)[1]) == 1  # a new URL is new
+
+    v1 = {
+        "lockfileVersion": 1,
+        "dependencies": {
+            "debug": {
+                **reg("debug", "2.6.9"),
+                "dependencies": {"ms": {**reg("ms", "2.1.3"), "bundled": True}},
+            }
+        },
+    }
+    pins = parse("package-lock.json", json.dumps(v1).encode())
+    assert [(p.package, p.version, p.source) for p in pins] == [
+        ("debug", "2.6.9", "registry"),
+        ("ms", "2.1.3", "registry"),
     ]
 
 
@@ -449,6 +597,13 @@ def test_two_invalid_names_are_told_apart() -> None:
             "inBundle that isn't true",
         ),
         (b"\xff\xfe{}", "not UTF-8"),
+        (lock({"node_modules/x": {"version": "\ud800"}}), "version that isn't valid text"),
+        (lock({"node_modules/\udc00": reg("x", "1.0.0")}), "key that isn't valid text"),
+        (b'{"lockfileVersion": 1, "packages": ["hunter2"]}', "packages entry isn't an object"),
+        (
+            b'{"lockfileVersion": 3, "packages": {}, "dependencies": ["hunter2"]}',
+            "dependencies entry isn't an object",
+        ),
     ],
 )
 def test_hostile_package_locks_are_lockfile_errors(data: bytes, message: str) -> None:
@@ -614,6 +769,32 @@ SCOPED = """\
             '  resolved "https://registry.yarnpkg.com/x/-/x-1.0.0.tgz"\n',
             (INVALID_NAME, "1.0.0", "unsupported", "not a valid npm package name"),
         ),
+        (
+            'ms@^2.1.1:\n  version "2.1.3/../../../evil/-/evil-1.0.0"\n  resolved '
+            '"https://registry.yarnpkg.com/ms/-/ms-2.1.3/../../../evil/-/evil-1.0.0.tgz"\n',
+            (
+                "ms",
+                "2.1.3/../../../evil/-/evil-1.0.0",
+                "unsupported",
+                "resolved URL isn't this package's registry tarball",
+            ),
+        ),
+        # yarn links the link: folder and installs ms@^2.1.1 from the resolved URL.
+        (
+            '"ms@link:./vendor/ms", ms@^2.1.1:\n  version "2.1.3"\n'
+            '  resolved "https://registry.yarnpkg.com/ms/-/ms-2.1.3.tgz"\n',
+            ("ms", "2.1.3", "registry", None),
+        ),
+        (
+            '"ms@^2.1.1", "ms@link:./nowhere":\n  version "2.1.3"\n'
+            '  resolved "https://evil.example/ms-2.1.3.tgz"\n',
+            ("ms", "2.1.3", "unsupported", "tarball URL outside the npm registry"),
+        ),
+        (
+            'ms@^2.1.1:\r\n  version "2.1.3"\r\n'
+            '  resolved "https://registry.yarnpkg.com/ms/-/ms-2.1.3.tgz"\r\n',
+            ("ms", "2.1.3", "registry", None),
+        ),
     ],
 )
 def test_yarn_lock_sources(entry: str, expected: tuple[str, str | None, str, str | None]) -> None:
@@ -627,6 +808,42 @@ def test_yarn_link_entries_are_skipped() -> None:
         parse("yarn.lock", yarn('"linked@link:./packages/linked":\n  version "0.0.0"\n  uid ""\n'))
         == []
     )
+
+
+def test_a_new_yarn_tarball_behind_the_same_url_is_reported() -> None:
+    def with_integrity(integrity: str) -> bytes:
+        return yarn(
+            '"x@https://example.com/x.tgz":\n  version "1.0.0"\n'
+            f'  resolved "https://example.com/x.tgz"\n  integrity {integrity}\n'
+        )
+
+    old, new = with_integrity("sha512-AAAA"), with_integrity("sha512-BBBB")
+    assert changes_for("yarn.lock", old, old) == ([], [])
+    assert len(changes_for("yarn.lock", new, old)[1]) == 1
+
+
+def test_yarn_lock_nested_tables_are_read_not_skipped() -> None:
+    """Dependency tables are parsed as yarn parses them, so a line yarn reads
+    differently can't hide in one."""
+    body = (
+        "ms@^2.1.1:\n"
+        '  version "2.1.3"\n'
+        '  resolved "https://registry.yarnpkg.com/ms/-/ms-2.1.3.tgz"\n'
+        "  dependencies:\n"
+        '    a "^1.0.0"\n'
+        '    "@b/c" "^2.0.0"\n'
+        "  optionalDependencies:\n"
+        '    d "^3.0.0"\n'
+        "\n"
+        "other@^1:\n"
+        '  version "1.0.0"\n'
+        '  resolved "https://registry.yarnpkg.com/other/-/other-1.0.0.tgz"\n'
+    )
+    pins = parse("yarn.lock", yarn(body))
+    assert [(p.package, p.version, p.line, p.source) for p in pins] == [
+        ("ms", "2.1.3", 6, "registry"),
+        ("other", "1.0.0", 15, "registry"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -647,6 +864,26 @@ def test_yarn_link_entries_are_skipped() -> None:
         ('ms@^2 "hunter2":\n  version "1.0.0"\n', "line 5: an entry key"),
         ('ms@^2:\n  version "hunter2\n', "line 6: a quoted string"),
         ('ms@^2:\n  version "1" "hunter2"\n', "line 6: a field"),
+        # yarn's own parser throws on these and yarn reads the file as YAML.
+        ('ms@^2.1.1:\n  version:\n    "hunter2"\n', "line 7: a field"),
+        ('ms@npm:ms@^2:\n  version "1.0.0"\n', "line 5: an entry key"),
+        ('1to2@^1:\n  version "1.0.0"\n', "line 5: an entry key"),
+        ('_x@^1:\n  version "1.0.0"\n', "line 5: a character Garnet can't read"),
+        ('ms@^2:\n  version "1.0.0"\n  "" "x"\n', "line 7: a field"),
+        ('ms@^2:\n  version "\\ud800"\n', "line 6: a quoted string that isn't valid text"),
+        # yarn stops reading at these lines and ignores the rest of the file.
+        ('ms@^2:\n  version "1.0.0"\n\n\n  resolved "hunter2"\n', "line 9: indentation"),
+        ('ms@^2:\n  version "1.0.0"\n    resolved "hunter2"\n', "line 7: indentation"),
+        # yarn reads these, but not the way an entry reads.
+        ('"ms@^2" "hunter2@^1"\n', "line 5: expected an entry"),
+        ("ms@^2:\n  version true\n", "line 6: a version that isn't a string"),
+        ('ms@^2:\n  resolved:\n  version "1"\n', "line 6: a resolved that isn't a string"),
+        ('"__metadata":\n  version "1"\n', "line 5: a __metadata entry"),
+        ("# yarn lockfile v2\n", "line 5: a lockfile version Garnet doesn't read"),
+        (
+            '<<<<<<< ours\nms@^2:\n  version "1.0.0"\n=======\nms@^2:\n  version "2.0.0"\n>>>>>>> b\n',
+            "merge conflict markers",
+        ),
     ],
 )
 def test_malformed_yarn_locks_are_lockfile_errors(body: str, message: str) -> None:
@@ -659,6 +896,23 @@ def test_malformed_yarn_locks_are_lockfile_errors(body: str, message: str) -> No
 def test_a_yarn_lock_without_the_v1_header_is_refused() -> None:
     with pytest.raises(LockfileError, match="no '# yarn lockfile v1' header"):
         parse("yarn.lock", b'ms@^2:\n  version "2.1.3"\n')
+
+
+def test_only_a_metadata_entry_with_a_version_counts_as_berry() -> None:
+    """Yarn 1 ignores a lockfile whose __metadata entry has content. One with
+    nothing under it, or one further down, may still be installed from, so
+    it is read, and refused for its missing header."""
+    assert is_berry(fixture("yarn-berry.lock"))
+    assert is_berry(b"\xef\xbb\xbf# c\n\n__metadata:\r\n  version: 8\r\n")
+    for data in (
+        b'__metadata:\n\nms@^2.1.1:\n  version: 2.1.3\n  resolved: "https://evil.example/ms.tgz"\n',
+        b"ms@^2.1.1:\n  version: 2.1.3\n__metadata:\n  version: 8\n",
+        b"__metadata:\n  cacheKey: 8\n",
+        b"# yarn lockfile v1\n__metadata:\n  version: 8\n",
+    ):
+        assert not is_berry(data)
+        with pytest.raises(LockfileError):
+            parse("yarn.lock", data)
 
 
 def test_yarn_berry_is_refused_by_name_and_by_content() -> None:
@@ -769,6 +1023,32 @@ def test_discover_leaves_out_a_berry_yarn_lock_but_lists_a_symlinked_one(tmp_pat
     (tmp_path / "elsewhere.lock").write_bytes(fixture("yarn-berry.lock"))
     (tmp_path / "yarn.lock").symlink_to(tmp_path / "elsewhere.lock")
     assert [p.name for p in discover(tmp_path)] == ["yarn.lock"]  # refused by the caller
+
+
+def test_discover_lists_a_yarn_lock_that_yarn_1_would_install_from(tmp_path: Path) -> None:
+    (tmp_path / "yarn.lock").write_bytes(b"__metadata:\n\nms@^2.1.1:\n  version: 2.1.3\n")
+    assert [p.name for p in discover(tmp_path)] == ["yarn.lock"]  # and refused when read
+
+
+def test_check_refuses_a_yarn_lock_that_became_berry(tmp_path, monkeypatch, capsys) -> None:
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "t@example.com")
+    _git(tmp_path, "config", "user.name", "t")
+    _git(tmp_path, "config", "commit.gpgsign", "false")
+    (tmp_path / "uv.lock").write_bytes(b"version = 1\n")
+    (tmp_path / "yarn.lock").write_bytes(fixture("yarn-base.lock"))
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-qm", "base")
+    (tmp_path / "yarn.lock").write_bytes(fixture("yarn-berry.lock"))
+    monkeypatch.chdir(tmp_path)
+    assert main(["check", "--git-base", "HEAD", "--no-policy"]) == 3
+    err = capsys.readouterr().err
+    assert "yarn.lock is now a Yarn 2 or later (Berry) lockfile" in err
+
+    # A yarn.lock that was Berry in the base too is left out, as before.
+    _git(tmp_path, "commit", "-qam", "berry")
+    assert main(["check", "--git-base", "HEAD", "--no-policy"]) == 0
+    assert capsys.readouterr().out.endswith("verdict: pass\n")
 
 
 def test_check_help_lists_the_formats(capsys) -> None:

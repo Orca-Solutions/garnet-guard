@@ -357,7 +357,8 @@ _DOCS += (
         "Garnet compares releases published on PyPI and npm. Code from other sources wasn't checked, and "
         "it isn't passed either.",
         "Review the change to that dependency by hand. A bundled dependency changes only with the package "
-        "that ships it, so review that package's update.",
+        "that ships it, so review that package's update, or the lockfile edit itself if that package "
+        "didn't change.",
     ),
 )
 

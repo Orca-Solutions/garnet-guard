@@ -164,7 +164,7 @@ uv sync
 uv run python -m backtest      # replay 51 malicious releases and the clean corpus
 ```
 
-`garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json and Yarn 1 yarn.lock for npm. Entries it can't check (not pinned with `==`; from git, a path, a private index or registry; bundled inside another npm package) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. pnpm-lock.yaml and Yarn 2+ lockfiles aren't read yet: `garnet check` leaves them out when it looks for lockfiles, and names one passed with `--head` as unsupported (exit code 3). `garnet --help` lists every option.
+`garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json and Yarn 1 yarn.lock for npm. Entries it can't check (not pinned with `==`; from git, a path, a private index or registry; bundled inside another npm package) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. pnpm-lock.yaml and Yarn 2+ lockfiles aren't read yet: `garnet check` leaves them out when it looks for lockfiles, and names one passed with `--head`, or a yarn.lock that was a Yarn 1 lockfile in the `--git-base` commit, as unsupported (exit code 3). `garnet --help` lists every option.
 
 The exit code is 0 below `--fail-on` (default: the policy's `fail_on`, else `block`), 1 for warn, 2 for block and 3 if Garnet Guard itself failed.
 

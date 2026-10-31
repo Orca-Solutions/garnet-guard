@@ -18,8 +18,8 @@ status: implemented
 
 A dependency comes from a source Garnet Guard doesn't check: a git URL, a local path, a
 direct file URL, or a registry other than PyPI and npm. In an npm lockfile, a package
-bundled inside another package's tarball (`inBundle`) and an entry whose name breaks
-npm's naming rules are reported the same way.
+bundled inside another package's tarball (`inBundle`, with no `resolved` URL or integrity
+of its own) and an entry whose name breaks npm's naming rules are reported the same way.
 
 ## Why it matters
 
@@ -49,7 +49,7 @@ and line in the evidence.
 
 Nothing to do if you meant it. Review changes to that dependency by hand, as you would
 any vendored code. A bundled dependency changes only with the package that ships it, so
-review that package's update.
+review that package's update, or the lockfile edit itself if that package didn't change.
 
 ## Allowlisting
 
