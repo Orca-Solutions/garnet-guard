@@ -4,6 +4,10 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 
 ## Unreleased
 
+## 0.2.0 (2026-12-01)
+
+The first full release, for launch. It adds seven content and trust rules to the ones in 0.1.0a1, widens the sensitive call set, and reads the wheel pip would install. With every rule it ships, the backtest warns on all 52 replayed malicious releases (47 PyPI, 5 npm), and flags 606 of 18,181 everyday updates of the top 1,000 PyPI and npm packages for a look (3.3%), none a false claim. An ignore now expires within 12 months, so a policy with a longer `until` has to shorten it (Changed, below).
+
 ### Added
 
 - GRN-C004 new-binary, on PyPI. Garnet reads each file's first bytes, so ELF, Mach-O and PE code counts as native whatever the file is called. The rule warns for native code under a name whose last extension says otherwise (num2words 0.5.15 shipped a Windows DLL as `_build.py`; GPU code objects such as `.cubin` and `.hsaco`, and `.node` addons, count as native names), for any native code when the trusted release shipped none, including a file that becomes native code, for a `.pyc` that Python imports with no source beside it, including one whose `.py` the new version removed (pytest's assertion cache, `test_x.cpython-313-pytest-8.4.1.pyc`, isn't imported and isn't reported), and for a hash-based `.pyc` (PEP 552), checked or not, that Python loads in place of its source without comparing its code. A new library in a new folder of a release that already shipped native code is reported at `info`; rebuilt binaries, new libraries in a folder that already held native code, and new extension modules of a compiled release are not reported. On the 974-update PyPI corpus it reports nothing. Among the 52 replayed malicious releases it adds a warning to num2words 0.5.15 and 0.5.16 and memoryos 2.0.34, each already warned by another rule. An archive Garnet can't read to the end now names GRN-C004 among the rules not evaluated.

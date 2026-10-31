@@ -2,6 +2,12 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-31: 0.2.0 prepared
+
+**State.** The version is `0.2.0`, the release for launch. The changelog's Unreleased entries are now under `0.2.0 (2026-12-01)`; change the date if the tag goes out on another day. It holds everything merged through #99. Held by the maintainer and not in it: #97 (npm lockfiles) and #98 (GRN-C006). The README's install lines drop `--pre`, and its status line and badge say alpha, with the `3 - Alpha` classifier, because PyPI keeps 0.2.0's README through launch week (the plan had been to drop "pre-alpha" on Dec 8). docs/marketplace.md now says to publish to PyPI first, then the listing.
+
+**Open tasks.** Merge, tag `v0.2.0` on the merge commit, approve the PyPI deployment, publish the Marketplace listing from the release, then move the Action pins to the `v0.2.0` commit in a follow-up pull request.
+
 ## 2026-10-31: Final clean-corpus numbers for 0.2.0
 
 **State.** The top-1,000 clean corpora were run again with every rule 0.2.0 ships: main at `17b8cd1` plus PR #96, which changes which wheel is read for a release with no wheel for this Python. Two passes each, with the same result:

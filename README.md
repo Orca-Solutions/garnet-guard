@@ -12,7 +12,7 @@
   <a href="https://scorecard.dev/viewer/?uri=github.com/Orca-Solutions/garnet-guard"><img src="https://api.scorecard.dev/projects/github.com/Orca-Solutions/garnet-guard/badge" alt="OpenSSF Scorecard" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-8E1B2C" alt="License: Apache-2.0" height="20"></a>
   <a href="https://pypi.org/project/garnet-guard/"><img src="https://img.shields.io/pypi/v/garnet-guard?color=8E1B2C" alt="PyPI version" height="20"></a>
-  <img src="https://img.shields.io/badge/status-pre--alpha-5C636B" alt="Status: pre-alpha" height="20">
+  <img src="https://img.shields.io/badge/status-alpha-5C636B" alt="Status: alpha" height="20">
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20releases-52%2F52%20warn-8E1B2C" alt="Replayed malicious releases: 52 of 52 warn" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard#replays-of-real-malicious-releases"><img src="https://img.shields.io/badge/clean%20updates-3.3%25%20flagged%20(606%2F18%2C181)-1B1F24" alt="Clean updates: 606 of 18,181 flagged for a look (3.3%), none a false claim" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/actions/workflows/garnet-guard.yml"><img src="https://raw.githubusercontent.com/orca-solutions/garnet-guard/main/docs/brand/badge/checked-by-garnet-guard.svg" alt="Dependencies checked by Garnet Guard" height="20"></a>
@@ -22,7 +22,7 @@
 
 *Trust the last release. Check the next.*
 
-> Status: pre-alpha. 0.1.0a1 is an early pre-release on PyPI: `pip install --pre garnet-guard`. The GitHub Action is a preview, and the rest of this README describes the first full release. Website, rule pages and replays: [garnetguard.dev](https://garnetguard.dev/).
+> Status: alpha. 0.2.0 is on PyPI: `pip install garnet-guard`. The GitHub Action is a preview. Website, rule pages and replays: [garnetguard.dev](https://garnetguard.dev/).
 
 ## Why
 
@@ -142,12 +142,12 @@ Limits, stated plainly:
 
 Reproduce it with `uv run python -m backtest`. Incident sources: [Snyk on lightning](https://snyk.io/blog/lightning-pypi-compromise-bun-based-credential-stealer), [CSA on elementary-data](https://labs.cloudsecurityalliance.org/research/csa-research-note-pypi-elementarydata-supply-chain-20260429/), [PyPI's incident report on litellm and telnyx](https://blog.pypi.org/posts/2026-04-02-incident-report-litellm-telnyx-supply-chain-attack/), [PyPI's analysis of ultralytics](https://blog.pypi.org/posts/2024-12-11-ultralytics-attack-analysis/), [The Hacker News on the Hades campaign](https://thehackernews.com/2026/06/hades-pypi-attack-19-packages-poisoned.html), [StepSecurity on mrmustard](https://www.stepsecurity.io/blog/compromised-pypi-mrmustard-0-7-4-credential-stealer), the OSV advisory named on each entry in incidents.toml, the PyPI snapshots in DataDog's malicious-software-packages dataset, and the file hashes in [ossf/malicious-packages](https://github.com/ossf/malicious-packages).
 
-## Try it today (0.1 preview)
+## Try it today
 
 `garnet diff` compares two releases of one PyPI or npm package, and `garnet check` compares two lockfiles:
 
 ```sh
-pip install --pre garnet-guard   # or run it without installing: uvx garnet-guard check --git-base main
+pip install garnet-guard   # or run it without installing: uvx garnet-guard check --git-base main
 garnet diff requests 2.32.4 2.32.5
 garnet diff pypi:lightning 2.6.4 2.6.5 --format json
 garnet diff npm:chalk 5.6.0 5.6.2
