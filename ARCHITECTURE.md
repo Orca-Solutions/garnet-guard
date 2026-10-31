@@ -91,7 +91,7 @@ class Ecosystem(Protocol):
 
 **PyPI (built in 0.1).** JSON API for metadata and files, the Integrity API (`/integrity/<project>/<version>/<filename>/provenance`) for PEP 740 attestations, verified with the `pypi-attestations` library. Wheels and the sdist are both inspected, because sdists carry build code. Lockfile parsers: uv.lock, poetry.lock, pylock.toml and requirements.txt lines pinned with `==`.
 
-**npm (0.1, `garnet diff` only).** Registry packument and tarball, npm provenance / Sigstore attestations, and the install-time `scripts` from `package.json`. Planned: `bin` diffs and the lockfile parsers (package-lock.json, pnpm-lock.yaml, yarn.lock), so `garnet check` and the Action read only Python lockfiles today.
+**npm (`garnet diff` in 0.1; lockfiles on main, not yet released).** Registry packument and tarball, npm provenance / Sigstore attestations, and the install-time `scripts` from `package.json`. Lockfile parsers: package-lock.json and npm-shrinkwrap.json (lockfileVersion 1 to 3) and Yarn 1 yarn.lock. Names are kept as written and checked against npm's naming rules before they can reach a URL; an alias is checked as the package it installs; a registry `resolved` URL must be that package's tarball for that version. Planned: `bin` diffs, and pnpm-lock.yaml and Yarn 2+ yarn.lock, which need a YAML parser (and an ADR for it).
 
 **Source host.** Tag lookups go to the repository named by provenance first, falling back to project URLs in metadata. GitHub only at first. Tags come from the public git ref advertisement (`github.com/<repo>.git/info/refs`, ADR-0014), which needs no token and has no REST rate limit. GRN-C007 reads the repository's files at the tag over the same git endpoint (`ecosystems/gittree.py`).
 

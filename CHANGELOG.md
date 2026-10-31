@@ -4,6 +4,21 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 
 ## Unreleased
 
+### Added
+
+- `garnet check` reads npm lockfiles: package-lock.json and npm-shrinkwrap.json (lockfileVersion 1, 2 and 3) and Yarn 1 yarn.lock, and so does the Action with `lockfiles: auto` (the example workflows' `paths` filters don't list the npm lockfiles yet). Every installed package counts, dev, optional and peer dependencies included, and each finding points at the entry's line: its key in package-lock.json, its `version` line in yarn.lock. An alias (`npm:real@range`) is checked as the package it installs. An entry counts as a registry release when its `resolved` URL is that package's tarball for that version on registry.npmjs.org or registry.yarnpkg.com, with a SemVer version, or when it has a version and an integrity but no URL (npm's `omit-lockfile-registry-resolved`). A registry URL for any other tarball, git, `file:`, other tarball URLs, private registries, a package bundled inside another one (`inBundle` with no URL or integrity of its own, reported as "bundled in <package>, checked only as part of it"; a flagged entry that has a URL is judged by it, since npm fetches it from there when the parent's tarball doesn't hold it) and a name that breaks npm's naming rules are GRN-E005; an invalid name is shown as `(invalid name)`, never echoed. A new integrity at the same URL counts as a change. The project, workspace members, links and yarn.lock entries whose patterns are all `link:` are skipped. package-lock.json's `packages` and `dependencies` sections are both read whatever `lockfileVersion` says, since npm 7 and later install from the first and npm 6 from the second; an entry the second installs differently is reported too. yarn.lock is read with a port of Yarn 1's own parser, and a file yarn would read some other way is refused with exit code 3: one its parser rejects (yarn then reads it as YAML), one with a line yarn stops reading at, one with merge conflict markers, and one with a `__metadata` entry. npm versions are ordered by SemVer 2.0 precedence when Garnet picks the baseline. `garnet check` finds package-lock.json, npm-shrinkwrap.json and yarn.lock after the Python lockfiles, and leaves out pnpm-lock.yaml and a Yarn 2+ yarn.lock, which need a YAML parser; passed with `--head`, either is refused with exit code 3, and so is a yarn.lock that is Yarn 2+ now and wasn't in the `--git-base` commit. Only a yarn.lock whose first entry is `__metadata:` with a `version` under it, the shape Yarn 1 ignores, counts as Yarn 2+. A lockfile larger than 64 MiB is refused with exit code 3 too.
+
+### Changed
+
+- Lockfile errors name the lockfile, and say when the problem is in the base version.
+- `garnet diff npm:<name>` accepts every name npm's rules allow, including older names with `~`, `!`, `*`, `'`, `(` or `)` or a leading `-`, and refuses names with `..`. The npm lockfile parsers apply the same rules, so a name they pass is one the registry adapter accepts.
+- GRN-E005's explanation says Garnet compares releases published on PyPI and npm (it said PyPI), and lists private registries and bundled npm dependencies among the sources it doesn't check.
+
+### Fixed
+
+- The text report wrote a line break inside a lockfile version, or any other field, as a new line, so the rest could pass for a line of the report. It is shown as `\x0a` now, like other control characters.
+- `--policy-change` compared ignore names PEP 503 normalized whatever the ecosystem, so an ignore moved from `foo_bar` to `foo-bar`, two different npm packages, wasn't listed. Only an ignore with `ecosystem = "pypi"` is compared normalized now; matching already compared npm names exactly.
+
 ## 0.2.0 (2026-10-31)
 
 The first full release, for launch. It adds seven content and trust rules to the ones in 0.1.0a1, widens the sensitive call set, and reads the wheel pip would install. With every rule it ships, the backtest warns on all 52 replayed malicious releases (47 PyPI, 5 npm), and flags 606 of 18,181 everyday updates of the top 1,000 PyPI and npm packages for a look (3.3%), none a false claim. An ignore now expires within 12 months, so a policy with a longer `until` has to shorten it (Changed, below).

@@ -164,13 +164,13 @@ uv sync
 uv run python -m backtest      # replay 52 malicious releases and the clean corpus
 ```
 
-`garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files. Lines it can't check (not pinned with `==`, or from git, a path or a private index) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. `garnet --help` lists every option.
+`garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json and Yarn 1 yarn.lock for npm (on `main` for 0.3; 0.2.0 reads the PyPI lockfiles only). Entries it can't check (not pinned with `==`; from git, a path, a private index or registry; bundled inside another npm package) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. pnpm-lock.yaml and Yarn 2+ lockfiles aren't read yet: `garnet check` leaves them out when it looks for lockfiles, and names one passed with `--head`, or a yarn.lock that was a Yarn 1 lockfile in the `--git-base` commit, as unsupported (exit code 3). `garnet --help` lists every option.
 
 The exit code is 0 below `--fail-on` (default: the policy's `fail_on`, else `block`), 1 for warn, 2 for block and 3 if Garnet Guard itself failed.
 
 ## Ecosystems
 
-Python first (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt). npm is checked by `garnet diff npm:<name> <old> <new>` (provenance, tags, install scripts, OSV); the npm lockfile parsers (package-lock, pnpm-lock, yarn.lock) follow.
+PyPI (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt) and npm (package-lock.json and npm-shrinkwrap.json, lockfileVersion 1 to 3, and Yarn 1 yarn.lock, on `main` for 0.3). npm releases are checked for provenance, tags, install scripts and OSV advisories, from a lockfile with `garnet check` or one release at a time with `garnet diff npm:<name> <old> <new>`. pnpm-lock.yaml and Yarn 2+ (Berry) lockfiles need a YAML parser and follow.
 
 ## Project
 

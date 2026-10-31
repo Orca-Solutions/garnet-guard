@@ -235,12 +235,26 @@ class Ecosystem(Protocol):
 
 ### 4.3 Lockfile parser
 
+Each format is a module in `lockfiles/` with a `parse(text) -> list[Pin]`; `lockfiles.parse` picks one by file name, else by content, and every failure is a `LockfileError` whose message names a position, never the file's text.
+
 ```python
-class LockfileParser(Protocol):
-    ecosystem: ClassVar[str]
-    def detect(self, name: str, head: bytes) -> bool: ...
-    def parse(self, data: bytes) -> list[Pin]: ...   # Pin(package, version, line, source)
+def detect(name: str, head: bytes) -> Format: ...    # raises LockfileError for formats not read yet
+def parse(name: str, data: bytes, *, format: Format | None = None) -> list[Pin]: ...
+
+@dataclass(frozen=True)
+class Pin:
+    package: str             # PEP 503 normalized on PyPI; as written on npm
+    version: str | None
+    line: int                # where a report points: the entry's version line, or its key
+    source: Literal["registry", "unpinned", "unsupported"] = "registry"
+    detail: str | None = None        # why it's unpinned or unsupported (GRN-E004 / GRN-E005)
+    ecosystem: str = "pypi"          # "pypi" or "npm"
+    origin: str | None = None        # where an unsupported entry installs from; compared, never shown
+
+def diff_pins(base: list[Pin], head: list[Pin]) -> list[PinChange]: ...
 ```
+
+`diff_pins` matches pins by `(ecosystem, package)` and orders versions in the ecosystem's own way: PEP 440 on PyPI, SemVer 2.0 precedence on npm, with versions that don't parse first.
 
 ### 4.4 Check
 

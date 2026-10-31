@@ -187,12 +187,13 @@ def test_stale_report_is_never_reused(env: dict[str, str]) -> None:
     assert _outputs(env)["exit-code"] == "3"
 
 
+@pytest.mark.parametrize("name", ["requirements.txt", "package-lock.json", "yarn.lock"])
 @pytest.mark.parametrize("explicit", [False, True])
-def test_symlinked_lockfile_is_refused(env: dict[str, str], explicit: bool) -> None:
+def test_symlinked_lockfile_is_refused(env: dict[str, str], explicit: bool, name: str) -> None:
     ws = Path(env["GITHUB_WORKSPACE"])
-    (ws / "requirements.txt").symlink_to("/etc/hostname")
+    (ws / name).symlink_to("/etc/hostname")
     if explicit:
-        env |= {"GARNET_LOCKFILES": "requirements.txt"}
+        env |= {"GARNET_LOCKFILES": name}
     assert _run("action/run.sh", env).returncode == 0
     out = _outputs(env)
     assert out["exit-code"] == "3"
@@ -200,6 +201,18 @@ def test_symlinked_lockfile_is_refused(env: dict[str, str], explicit: bool) -> N
         "uv.log" not in os.listdir(env["STUB_DIR"])
         or "garnet check" not in Path(env["STUB_LOG"]).read_text()
     )
+
+
+def test_auto_list_names_every_lockfile_garnet_discovers() -> None:
+    """run.sh refuses symlinks among the files ``garnet check`` discovers, so
+    its list has to name each of them."""
+    from garnet_guard import workspace
+
+    script = (ROOT / "action" / "run.sh").read_text()
+    listed = re.search(r"heads=\((\"\$ws/uv\.lock\".*?)\)", script, re.DOTALL)
+    assert listed is not None
+    for name in (*workspace._DIRECT, *workspace._NPM):
+        assert f'"$ws/{name}"' in listed[1]
 
 
 def test_explicit_lockfiles_and_no_footer(env: dict[str, str]) -> None:

@@ -91,9 +91,9 @@ def test_poetry_lock() -> None:
 def test_pylock() -> None:
     pins = parse("pylock.toml", PYLOCK)
     assert [(p.package, p.source) for p in pins] == [
-        ("attrs", "pypi"),
+        ("attrs", "registry"),
         ("local", "unsupported"),
-        ("certifi", "pypi"),
+        ("certifi", "registry"),
     ]
 
 
@@ -109,9 +109,9 @@ baz @ https://example.com/baz.whl
 """
     pins = parse("requirements.txt", text)
     assert [(p.package, p.version, p.line, p.source) for p in pins] == [
-        ("requests", "2.32.5", 2, "pypi"),
+        ("requests", "2.32.5", 2, "registry"),
         ("flask", None, 4, "unpinned"),
-        ("foo", "1.0", 5, "pypi"),
+        ("foo", "1.0", 5, "registry"),
         ("(editable)", None, 6, "unsupported"),
         ("baz", None, 8, "unsupported"),
     ]
