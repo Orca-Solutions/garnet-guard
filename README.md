@@ -10,6 +10,7 @@
 <p align="center">
   <a href="https://github.com/orca-solutions/garnet-guard/actions/workflows/ci.yml"><img src="https://github.com/orca-solutions/garnet-guard/actions/workflows/ci.yml/badge.svg" alt="CI" height="20"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/Orca-Solutions/garnet-guard"><img src="https://api.scorecard.dev/projects/github.com/Orca-Solutions/garnet-guard/badge" alt="OpenSSF Scorecard" height="20"></a>
+  <a href="https://www.bestpractices.dev/projects/16128"><img src="https://www.bestpractices.dev/projects/16128/badge" alt="OpenSSF Best Practices" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-8E1B2C" alt="License: Apache-2.0" height="20"></a>
   <a href="https://pypi.org/project/garnet-guard/"><img src="https://img.shields.io/pypi/v/garnet-guard?color=8E1B2C" alt="PyPI version" height="20"></a>
   <img src="https://img.shields.io/badge/status-alpha-5C636B" alt="Status: alpha" height="20">
@@ -41,10 +42,10 @@ Malware feeds caught these only after the fact. Cooldowns only buy time. pip and
 | Signal | Example |
 |---|---|
 | **Trust downgrade** | The new release has no provenance attestation when the old one did, was built by a different repo or workflow, has no matching git tag, or gained a file days after release that pip would install in place of a reviewed one. |
-| **Risky content change** | A new `.pth` or `sitecustomize.py` file, new build hooks, a new pytest or setuptools plugin entry point, new import-time `exec`/`subprocess`/network code, code that isn't at the release's git tag, a new native binary or one named like a `.py` file, code in another platform's wheel that the checked wheel lacks, a new dependency that is new to the registry. |
+| **Risky content change** | A new `.pth` or `sitecustomize.py` file, new build hooks, a new pytest or setuptools plugin entry point, new import-time `exec`/`subprocess`/network code, code that isn't at the release's git tag, a new native binary or one named like a `.py` file, code in the wheel that its own sdist lacks, code in another platform's wheel that the checked wheel lacks, a new dependency that is new to the registry. |
 | **Known bad** | The release matches an OSV / OpenSSF malicious-package advisory. |
 
-Garnet never runs the code it inspects. It downloads both releases and reads them statically: the sdist and the wheel pip would install, plus one wheel for each other platform and up to 30 wheels uploaded late, to compare with it.
+Garnet never runs the code it inspects. It downloads both releases and reads them statically: the sdist and the wheel pip would install, compared with each other, plus one wheel for each other platform and up to 30 wheels uploaded late, to compare with that wheel.
 
 ## How you'll use it
 
@@ -84,16 +85,17 @@ The example pins the commit tagged `v0.2.0`, the release on PyPI. Inputs, permis
 
 **Locally.** `garnet check` compares two lockfiles, for example your branch against `main`, and checks every package that changed. Once you've reviewed a finding, an ignore in `garnet.toml` silences it until a date you choose ([docs/policy.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/policy.md)). In VS Code, the same findings show on the lockfile lines through the SARIF Viewer extension ([docs/vscode.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/vscode.md)).
 
-**Before an install (preview, on `main` for 0.3).** Put `garnet` in front of pip or uv, and it checks the change before anything is installed, then installs exactly what it checked:
+**Before an install (preview, on `main` for 0.3).** Put `garnet` in front of pip, uv or npm, and it checks the change before anything is installed, then installs exactly what it checked:
 
 ```sh
 garnet pip install requests==2.32.3
 garnet uv add httpx
+garnet npm install left-pad@1.3.0
 ```
 
-It resolves with builds turned off, so no package's build code runs during the check. Findings at or above `fail_on` stop the install (exit 2 for block). A command it can't resolve without building, such as a release that needs a source-only dependency, is reported as not checked, with what you can do, and nothing is installed (exit 3). Details and limits: [docs/install-wrapper.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md).
+It resolves with builds turned off (for npm, with scripts and git turned off), so no package's code runs during the check. npm then installs the checked lockfile with `npm ci --ignore-scripts`, and runs install scripts only for packages that didn't change. Findings at or above `fail_on` stop the install (exit 2 for block). A command it can't resolve without building, such as a release that needs a source-only dependency, is reported as not checked, with what you can do, and nothing is installed (exit 3). Details and limits: [docs/install-wrapper.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md).
 
-**In agent hooks (preview, on `main` for 0.3).** `garnet hook claude-code` and `garnet hook codex` print a PreToolUse hook configuration. Before the agent runs a pip or uv install, the hook checks it the same way and answers: findings as context, a deny at or above `fail_on`, and an ask (Claude Code) or a deny (Codex) when it can't check the command. The hook never installs. npm, pnpm, yarn and poetry aren't checked yet; the hook says so instead of staying silent. The configurations for both agents: [docs/install-wrapper.md#agent-hooks](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md#agent-hooks).
+**In agent hooks (preview, on `main` for 0.3).** `garnet hook claude-code` and `garnet hook codex` print a PreToolUse hook configuration. Before the agent runs a pip, uv or npm install, the hook checks it the same way and answers: findings as context, a deny at or above `fail_on`, and an ask (Claude Code) or a deny (Codex) when it can't check the command. The hook never installs. pnpm, yarn, npx and poetry aren't checked yet; the hook says so instead of staying silent. The configurations for both agents: [docs/install-wrapper.md#agent-hooks](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md#agent-hooks).
 
 ## Replays of real malicious releases
 
@@ -145,7 +147,7 @@ Limits, stated plainly:
 - ensmallen's `datasets/` modules are larger than Garnet's parse limit in both releases. It reported that as GRN-E003 and still found the `.pth`.
 - In telnyx 4.87.1 a typo stopped the payload from running. GRN-C003 reads code; it reports what the module calls at import, not whether the call would succeed.
 - The content rules recognize a sensitive call by the name it is called under. A listed function handed to another call that runs it later (`Thread(target=os.system)`), or given a harmless-looking name first (`json.dumps = subprocess.Popen`), isn't reported yet; [#91](https://github.com/orca-solutions/garnet-guard/issues/91) tracks the check.
-- The litellm 1.82.7 sdist isn't replayed, because no public source gives its URL. Its wheel is, and content rules compare wheels.
+- The litellm 1.82.7 sdist isn't replayed, because no public source gives its URL. Its wheel is, and content rules compare wheels; GRN-C006, which compares a release's wheel with its own sdist, has nothing to compare it with. GRN-C006 reports a Python file in the wheel with a sensitive call the sdist's copy lacks, and a `.pth` file the sdist doesn't have. It is quiet on telnyx 4.87.1 and 4.87.2: each sdist carries the same `_client.py`, payload included, byte for byte (all 2,491 Python files match), and GRN-C003 reports them. Code that is in both files, scripts and data files the wheel installs outside site-packages, and files other than `.py` and `.pth` aren't compared; a release with no sdist has nothing to compare.
 - chalk and debug are reported by the missing tag alone: they never used provenance, and the one changed file, `index.js`, is gone from the registry. GRN-C011 now reads the JavaScript an npm package loads and lists, at `info`, a new process, network or eval use or obfuscated names; it can't run on these two replays, because there is no file to read.
 - The 20 clean updates in `clean.toml` are a smoke test. The clean-corpus backtests cover 18,181 updates, the last 11 releases of the top 1,000 PyPI packages (9,439) and of the top 1,000 npm packages (8,742): 606 are flagged for a look (3.3%), every warning states something true, but none of those updates is malicious, so each is a false alarm a reviewer has to dismiss. Some show a release doing what the trusted one did, a new way: a `setup.py` that runs the same command with `subprocess.run` instead of `Popen`, or entry points renamed with the same targets. The [PyPI report](https://github.com/orca-solutions/garnet-guard/blob/main/backtest/corpus-results-pypi-1000/REPORT.md#accurate-but-nothing-new-runs) lists the ones the triage found.
 

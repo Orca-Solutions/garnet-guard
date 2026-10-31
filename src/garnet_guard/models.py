@@ -269,7 +269,16 @@ class PthFile:
     """A ``.pth`` file and the lines in it that Python runs at every startup."""
 
     path: str
+    # As ``str.splitlines()`` splits the file, each time a line appears
     exec_lines: tuple[str, ...]
+    # Lines Python 3.11 and 3.12 (a form feed inside a line) or 3.13 and later
+    # (a line behind a BOM) run that ``exec_lines`` lacks, each once
+    other_lines: tuple[str, ...] = ()
+
+    @property
+    def all_lines(self) -> tuple[str, ...]:
+        """Every line some Python runs, each once."""
+        return tuple(dict.fromkeys((*self.exec_lines, *self.other_lines)))
 
 
 @dataclass(frozen=True)
@@ -336,6 +345,38 @@ class SourceMatch:
     matched: int  # files byte-identical to the source
     unmatched: tuple[UnsourcedFile, ...]
     unchecked: tuple[str, ...] = ()  # files under a submodule Garnet couldn't read
+
+
+@dataclass(frozen=True)
+class WheelOnlyCode:
+    """Code in a file of the wheel the content rules read that the release's
+    sdist doesn't have (GRN-C006): for a ``.py`` file, the sensitive calls its
+    sdist copy doesn't make; for a ``.pth`` file, the executable lines its sdist
+    copy lacks, or all of them when the sdist has no copy. Recorded only when
+    there is such code, and for a ``.pth`` with no sdist copy at all."""
+
+    path: str  # where the file installs, relative to site-packages
+    at: str | None  # the sdist file it was compared with; None: the sdist has none
+    calls: tuple[CallSite, ...] = ()
+    lines: tuple[str, ...] = ()  # a .pth file's executable lines the sdist copy lacks
+    sdist_parsed: bool = True  # False: the sdist copy couldn't be parsed, so every call counts
+
+
+@dataclass(frozen=True)
+class SdistMatch:
+    """How the Python and ``.pth`` files of the wheel the content rules read
+    compare with the release's sdist (GRN-C006). Counted over the wheel's
+    parsed Python files that install in site-packages."""
+
+    wheel: str  # the wheel's filename
+    sdist: str  # the sdist's filename
+    matched: int  # same bytes somewhere in the sdist (CRLF line endings read as LF)
+    differ: int  # the sdist's copy at the same install path has other bytes
+    absent: int  # the sdist has no copy
+    code: tuple[WheelOnlyCode, ...] = ()
+    # Install paths of files counted in ``differ`` or ``absent`` that parse but
+    # are nested too deep for Garnet to list their calls (GRN-E002 names GRN-C006)
+    unwalked: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -533,6 +574,10 @@ class ReleaseFacts:
     wheel_calls: tuple[WheelCalls, ...] = ()
     read_wheel_family: str | None = None
     wheel_unparsed: tuple[UnparsedWheelFile, ...] = ()
+    # GRN-C006: the wheel the content rules read compared with the release's
+    # sdist. None when the release lacks one of the two, or Garnet couldn't
+    # read one of them to the end (its GRN-E finding names GRN-C006).
+    sdist_match: SdistMatch | None = None
 
     @property
     def content(self) -> tuple[ArtifactFacts, ...]:

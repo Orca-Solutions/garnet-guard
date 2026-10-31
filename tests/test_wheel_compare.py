@@ -385,7 +385,7 @@ def test_files_over_the_parse_limit_are_budget_exceeded(monkeypatch: pytest.Monk
         (
             "GRN-E003",
             f"{pure1}: demo/__init__.py is larger than the parse limit",
-            ("GRN-C003", "GRN-C012"),
+            ("GRN-C003", "GRN-C006", "GRN-C012"),
         ),
         ("GRN-E003", f"{win1}: demo/__init__.py is larger than the parse limit", ("GRN-C012",)),
     ]

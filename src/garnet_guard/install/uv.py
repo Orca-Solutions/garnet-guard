@@ -608,12 +608,17 @@ class Copy:
         return path.read_bytes() if path.is_file() else None
 
 
-def copy_project(project: Path, into: Path) -> Copy:
+def copy_project(
+    project: Path,
+    into: Path,
+    names: Sequence[str] = COPIED,
+    max_bytes: int = MAX_PROJECT_FILE_BYTES,
+) -> Copy:
     """Copy the project's files into ``into``, an empty folder only this user can read."""
     if any(into.iterdir()):
         raise UvError("the folder for the copy isn't empty")
     originals: dict[str, bytes | None] = {}
-    for name in COPIED:
+    for name in names:
         path = project / name
         if path.is_symlink():
             raise UvError(f"{name} is a symlink; Garnet Guard reads regular files only")
@@ -623,8 +628,8 @@ def copy_project(project: Path, into: Path) -> Copy:
         if not path.is_file():
             raise UvError(f"{name} isn't a regular file")
         data = path.read_bytes()
-        if len(data) > MAX_PROJECT_FILE_BYTES:
-            raise UvError(f"{name} is larger than {MAX_PROJECT_FILE_BYTES} bytes")
+        if len(data) > max_bytes:
+            raise UvError(f"{name} is larger than {max_bytes} bytes")
         originals[name] = data
         target = into / name
         fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

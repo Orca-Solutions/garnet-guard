@@ -639,6 +639,120 @@ def _rows() -> list[Row]:
         release("1.0", {"demo/__init__.py": INIT + BLOB_EXEC}),
         release("1.1", {"demo/__init__.py": INIT + BLOB_EXEC + "X = 2\n"}),
     )
+    # GRN-C006 sdist-wheel-mismatch: the wheel has code its own sdist doesn't.
+    # The shape issue #60 expected of telnyx 4.87.1: a call appended to the
+    # wheel's copy of a file the sdist also carries, clean there.
+    client = "def connect():\n    return 1\n"
+    appended = (
+        client + "\nimport subprocess\n\ndef setup():\n    subprocess.run(['sh', '-c', 'x'])\n"
+    )
+    paired = {"demo/__init__.py": INIT, "demo/_client.py": client}
+    src_layout = {f"src/{p}": body for p, body in paired.items()}
+    fetch = "import urllib.request\n\ndef get(url):\n    return urllib.request.urlopen(url)\n"
+    fires(
+        "GRN-C006",
+        "a call appended to the wheel's copy of a file the sdist has clean",
+        release("1.0", paired, sdist_files=paired),
+        release("1.1", {**paired, "demo/_client.py": appended}, sdist_files=paired),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C006",
+        "a module only the wheel has, which opens a URL",
+        release("1.0", PKG, sdist_files=PKG),
+        release("1.1", {**PKG, "demo/_fetch.py": fetch}, sdist_files=PKG),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C006",
+        "a src/ layout sdist whose copy lacks the wheel's call",
+        release("1.0", paired, sdist_files=src_layout),
+        release("1.1", {**paired, "demo/_client.py": appended}, sdist_files=src_layout),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C006",
+        "a .pth with an import line that only the wheel has",
+        release("1.0", PKG, sdist_files=PKG),
+        release("1.1", {**PKG, "demo_boot.pth": "import demo._boot\n"}, sdist_files=PKG),
+        eco=PYPI,
+    )
+    # Python 3.11 and 3.12 run the text past a form feed as part of the line.
+    boot = {**PKG, "demo.pth": "import demo._boot\n"}
+    fires(
+        "GRN-C006",
+        "a .pth line runs on past a form feed the sdist's copy lacks",
+        release("1.0", boot, sdist_files=boot),
+        release(
+            "1.1",
+            {**PKG, "demo.pth": "import demo._boot\x0c;import os; os.system('id')\n"},
+            sdist_files=boot,
+        ),
+        eco=PYPI,
+    )
+    # The maintainer's 2026-10-31 decision: code only in a test file or a file
+    # outside the packages (aenum 3.1.16, google-auth-oauthlib 1.2.0) is info.
+    fires(
+        "GRN-C006",
+        "a test module only the wheel has, listed at info",
+        release("1.0", PKG, sdist_files=PKG),
+        release("1.1", {**PKG, "demo/test_stdlib.py": fetch}, sdist_files=PKG),
+        Verdict.PASS,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C006",
+        "a script outside the packages only the wheel has, listed at info",
+        release("1.0", PKG, sdist_files=PKG),
+        release("1.1", {**PKG, "scripts/readme-gen/gen.py": fetch}, sdist_files=PKG),
+        Verdict.PASS,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C006",
+        "a test module only the wheel has, which a package module imports",
+        release("1.0", PKG, sdist_files=PKG),
+        release(
+            "1.1",
+            {"demo/__init__.py": "from demo import test_stdlib\n", "demo/test_stdlib.py": fetch},
+            sdist_files=PKG,
+        ),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    # The telnyx 4.87.1 and 4.87.2 shape as published: both files carry the
+    # payload byte for byte, so it is GRN-C003's to report.
+    both = {**paired, "demo/_client.py": client + THREAD_PAYLOAD}
+    quiet(
+        "GRN-C006",
+        "the wheel and the sdist carry the same payload",
+        release("1.0", paired, sdist_files=paired),
+        release("1.1", both, sdist_files=both),
+        instead="GRN-C003",
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C006",
+        "a _version.py the build wrote into the wheel",
+        release("1.0", PKG, sdist_files=PKG),
+        release("1.1", {**PKG, "demo/_version.py": "__version__ = '1.1'\n"}, sdist_files=PKG),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C006",
+        "the trusted wheel already made the call its sdist lacks",
+        release("1.0", {**paired, "demo/_client.py": appended}, sdist_files=paired),
+        release("1.1", {**paired, "demo/_client.py": appended}, sdist_files=paired),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C006",
+        "no sdist to compare the wheel with",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "demo/_fetch.py": fetch}),
+        eco=PYPI,
+    )
 
     # GRN-C007 code-not-in-source
     # The ultralytics 8.3.42 shape: the build wrote a file the tag doesn't have.
@@ -1412,6 +1526,24 @@ def _rows() -> list[Row]:
             wheel_unparsed=(UnparsedWheelFile(win1, "Windows", legacy, legacy_sha),),
         ),
         Verdict.WARN,
+    )
+    # A wheel file GRN-C006 compares that parses but is too deep to walk: its
+    # calls are unknown, so GRN-C006 isn't evaluated for it.
+    deep = appended + "\nTABLE = " + " + ".join(["1"] * 1500) + "\n"
+    fires(
+        "GRN-E002",
+        "a wheel file not in the sdist is too deep for GRN-C006 to walk",
+        release("1.0", paired, sdist_files=paired),
+        release("1.1", {**paired, "demo/_client.py": deep}, sdist_files=paired),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-E002",
+        "a wheel file too deep to walk, unchanged since the trusted wheel",
+        release("1.0", {**paired, "demo/_client.py": deep}, sdist_files=paired),
+        release("1.1", {**paired, "demo/_client.py": deep}, sdist_files=paired),
+        eco=PYPI,
     )
     quiet(
         "GRN-E002",

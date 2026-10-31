@@ -208,6 +208,36 @@ _DOCS: tuple[RuleDoc, ...] = (
         "release's tag doesn't explain is a reason not to merge.",
     ),
     RuleDoc(
+        "GRN-C006",
+        "sdist-wheel-mismatch",
+        "diff",
+        W,
+        "The wheel Garnet reads has code the release's own sdist doesn't: a Python file that "
+        "isn't byte for byte in the sdist and makes a call that runs processes, loads code or "
+        "uses the network which the sdist's copy of it doesn't (every such call, when the "
+        "sdist has no copy or its copy can't be parsed), or a .pth file the sdist has no copy "
+        "of, or whose executable lines its copy lacks. An sdist's top folder and its src/ "
+        "folder aren't part of a file's installed path. A call the trusted version's wheel "
+        "already carried outside its sdist in the same file isn't new, nor is a .pth line it "
+        "carried outside its sdist in any .pth file. Both files must be read to the end; when "
+        "one can't be, or a wheel file is nested too deep to list its calls, a GRN-E finding "
+        "names this rule. Calls only in test files, or in a top-level folder with no "
+        "__init__.py, are a separate finding at info unless something imports or names the "
+        "file; a .pth file never is.",
+        "A wheel is built from its sdist, or from the same tagged source, so its code should "
+        "be in the sdist byte for byte. Reviewers read the sdist or the repository; pip "
+        "installs the wheel. Code that is only in the wheel is the part nobody reviewed. "
+        "Files a build writes, such as a _version.py, differ too and make no such calls, so "
+        "they stay quiet. An uploader who controls both files can put the same code in each: "
+        "telnyx 4.87.1 and 4.87.2 carry their payload in both, byte for byte, so this rule "
+        "has nothing to say about them and GRN-C003 reports them.",
+        "Open the file the evidence names in the wheel and the same file in the sdist, then "
+        "in the project's repository at the release's tag. If the project's build scripts "
+        "write that code on purpose, add a time-limited ignore with the reason. If nothing "
+        "there explains it, don't merge, and tell the maintainers: the wheel wasn't built "
+        "from the sdist they published.",
+    ),
+    RuleDoc(
         "GRN-C007",
         "code-not-in-source",
         "diff",
@@ -399,4 +429,4 @@ DOCS: dict[str, RuleDoc] = {d.rule_id: d for d in _DOCS}
 
 # Rules in the SPEC §6.2 catalog that aren't built yet. A policy may already
 # name them; they produce no findings until they ship.
-PLANNED: frozenset[str] = frozenset({"GRN-C006"})
+PLANNED: frozenset[str] = frozenset()

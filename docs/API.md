@@ -220,6 +220,7 @@ class ReleaseFacts:
     wheel_differences: tuple[WheelDifference, ...]  # other wheels' extra calls (GRN-C012)
     wheel_calls: tuple[WheelCalls, ...]       # each wheel file's calls, for the next version
     wheel_unparsed: tuple[UnparsedWheelFile, ...]  # other wheels' files that didn't parse
+    sdist_match: SdistMatch | None            # the wheel against its own sdist (GRN-C006)
     errors: tuple[FactError, ...]             # become GRN-E findings
 ```
 
