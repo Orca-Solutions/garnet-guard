@@ -10,6 +10,8 @@ A tag `v*` pushed to the repository starts it:
 2. **Build** checks that the tagged commit is on `main` and that the tag equals `v` + the version in `pyproject.toml`, then builds the sdist and wheel.
 3. **Publish** runs in the `pypi` environment, which waits for the maintainer's approval. It has only the `id-token: write` permission. `pypa/gh-action-pypi-publish` uploads the files and their attestations.
 4. **Verify** downloads each file's attestation back from PyPI and verifies it against this repository with `pypi-attestations`. A failure here means a published file can't be traced to this repository and needs investigating before anyone is told to upgrade.
+5. **Sign build provenance** (beside Publish) records, with `actions/attest-build-provenance`, which workflow run built each file from which commit, signs that record with Sigstore and stores it on GitHub. It has only `id-token: write`, `attestations: write` and `contents: read`, and runs nothing from the package.
+6. **Draft the GitHub release**, after Verify passes, creates a draft release for the tag with the same wheel and sdist, the signed provenance (`garnet_guard-<version>.provenance.sigstore.json`) and `SHA256SUMS.txt`. Its notes are the version's section of `CHANGELOG.md`; a version with no section stops the job. A version with `a`, `b` or `rc` in it is marked as a pre-release. If a draft for the tag already exists, the files are added to it. Releases are immutable once published, so files can't be added to a published one and the job stops.
 
 ## Cutting a release
 
@@ -25,6 +27,21 @@ A tag `v*` pushed to the repository starts it:
 
 4. Approve the `pypi` deployment on the workflow run (Actions → Release → Review deployments).
 5. Confirm the Verify job passed and the release page on PyPI shows the attestations.
+6. Open **Releases**, find the draft for the tag, check its notes and files (wheel, sdist, `.provenance.sigstore.json`, `SHA256SUMS.txt`), and click **Publish release**. Don't create the GitHub release by hand first: once published it is locked and the files can't be attached.
+
+## Checking a release yourself
+
+Anyone can check that a file came from this repository's release workflow, whether it was downloaded from PyPI or from the GitHub release:
+
+```sh
+gh attestation verify garnet_guard-0.3.0-py3-none-any.whl --repo Orca-Solutions/garnet-guard
+# offline, with the bundle attached to the GitHub release:
+gh attestation verify garnet_guard-0.3.0-py3-none-any.whl --repo Orca-Solutions/garnet-guard \
+  --bundle garnet_guard-0.3.0.provenance.sigstore.json
+sha256sum -c SHA256SUMS.txt
+```
+
+The PyPI attestations are checked with `pypi-attestations verify pypi --repository https://github.com/Orca-Solutions/garnet-guard pypi:<file>`, as the Verify job does.
 
 ## One-time setup (maintainer)
 
