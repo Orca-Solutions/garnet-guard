@@ -40,7 +40,7 @@ from garnet_guard.models import (
     Verdict,
 )
 from garnet_guard.net import Http, NetError, Response
-from garnet_guard.workspace import merge_pins, other_index, pinned_versions
+from garnet_guard.workspace import installs_elsewhere, merge_pins, pinned_versions
 from tests.builders import prov, release, sdist, wheel
 
 UPLOADED = datetime(2026, 9, 1, tzinfo=UTC)
@@ -656,8 +656,8 @@ def test_engine_reads_nothing_when_the_lockfile_names_another_index() -> None:
     assert fetcher.calls == []
     (installs,) = got.dependency_installs
     assert installs.problem == (
-        "the lockfile sets --extra-index-url, so pip can install helper from somewhere other "
-        "than PyPI and Garnet can't tell which release that is"
+        "the lockfile has --extra-index-url, so helper can install from somewhere other "
+        "than the registry and Garnet can't tell which release that is"
     )
     f = _c008(PYPI, base, got, got.dependency_installs)
     assert f.severity == Severity.WARN and "can't tell which release" in f.evidence[0].summary
@@ -777,20 +777,44 @@ version = "2.0"
         ("--no-index", "--no-index"),
         ("--index-url https://private.invalid/simple", "--index-url"),
         ("-i https://private.invalid/simple", "-i"),
+        # pip takes abbreviated options and attached values
+        ("--extra-ind https://evil.invalid/simple", "--extra-ind"),
+        ("-ihttps://evil.invalid/simple", "-i"),
+        ("-f/tmp/wheels", "-f"),
+        ("--no-ind", "--no-ind"),
+        ("--find-l=/tmp/x", "--find-l"),
+        # files Garnet doesn't read here, and any other option
+        ("-r requirements-base.txt", "-r"),
+        ("--requirement=base.txt", "--requirement"),
+        ("-c constraints.txt", "-c"),
+        ("--constraint constraints.txt", "--constraint"),
+        ("-i https://pypi.org/simple", "-i"),
+        ("--require-hashes", "--require-hashes"),
+        ("--pre", "--pre"),
+        # a requirement with no name to pin
+        ("./vendor/helper", "a URL or path requirement"),
+        ("/abs/helper-1.0-py3-none-any.whl", "a URL or path requirement"),
+        ("https://example.invalid/helper-1.0.tar.gz", "a URL or path requirement"),
+        ("helper @ https://example.invalid/h.whl", "a URL or path requirement"),
+        ("-e ./src", "-e"),
+        ("--editable=git+https://example.invalid/r.git", "--editable"),
     ],
 )
 def test_a_requirements_file_naming_another_index_pins_nothing(line: str, option: str) -> None:
-    # anywhere in the file: pip applies the option to every line
+    # anywhere in the file: pip applies an option to every line
     body = f"helper==1.0.2\n{line}\nother==2\n".encode()
-    assert other_index("requirements.txt", body) == option
+    assert installs_elsewhere("requirements.txt", body) == option
     assert pinned_versions("requirements.txt", body) == {}
 
 
-def test_pypi_index_or_other_options_pin_as_before() -> None:
-    body = b"-i https://pypi.org/simple\n--require-hashes\nhelper==1.0.2\n"
-    assert other_index("requirements.txt", body) is None
+def test_a_plain_requirements_file_with_hashes_still_pins() -> None:
+    body = (
+        b"# a comment\nhelper==1.0.2 \\\n    --hash=sha256:" + b"a" * 64 + b"\n"
+        b"other>=2 ; python_version < '3.12'\n"
+    )
+    assert installs_elsewhere("requirements.txt", body) is None
     assert pinned_versions("requirements.txt", body) == {("pypi", "helper"): ("1.0.2",)}
-    assert other_index("uv.lock", b"version = 1\n") is None
+    assert installs_elsewhere("uv.lock", b"version = 1\n") is None
 
 
 def _package_lock(packages: dict[str, Any]) -> bytes:
@@ -813,31 +837,74 @@ def _npm_entry(pkg: str, version: str, **extra: Any) -> dict[str, Any]:
     }
 
 
-def test_npm_lockfile_versions_are_not_pins_but_outside_sources_are_flagged() -> None:
-    """npm: the range is read, never the lockfile's versions; a package the
-    lockfile installs from git, a URL, under another package's tarball or
-    bundled keeps GRN-C008 at warn."""
+def test_npm_lockfile_versions_are_never_pins() -> None:
     body = _package_lock(
         {
             "node_modules/helper": _npm_entry("helper", "1.0.2"),
             "node_modules/h2": _npm_entry("helper", "2.0.0", name="helper"),
-            "node_modules/gitdep": {
-                "version": "1.0.0",
-                "resolved": "git+ssh://git@github.com/x/gitdep.git#abc",
-            },
-            "node_modules/parent": _npm_entry("parent", "1.0.0"),
-            "node_modules/parent/node_modules/child": {"version": "2.0.0", "inBundle": True},
-            "node_modules/ms-alias": _npm_entry("evil", "2.1.1", name="ms"),
         }
     )
-    assert pinned_versions("package-lock.json", body) == {
-        ("npm", "child"): (),
-        ("npm", "gitdep"): (),
-        ("npm", "ms"): (),
-    }
+    assert pinned_versions("package-lock.json", body) == {}
+    assert installs_elsewhere("package-lock.json", body) is None
 
 
-def test_python_lockfile_package_from_outside_pypi_maps_to_nothing() -> None:
+@pytest.mark.parametrize(
+    "entry",
+    [
+        # installed under the helper's name, from another package's tarball
+        {
+            "name": "other",
+            "version": "1.0.0",
+            "resolved": "https://evil.invalid/other-1.0.0.tgz",
+            "integrity": "sha512-BBBB",
+        },
+        {"version": "1.0.0", "resolved": "git+ssh://git@github.com/x/helper.git#abc"},
+        {"version": "1.0.0", "resolved": "file:../helper"},
+    ],
+)
+def test_any_npm_entry_from_outside_the_registry_reads_nothing(entry: dict[str, Any]) -> None:
+    """Which name such an entry installs under, or which dependency it
+    serves, isn't modelled: any one keeps a young helper at warn."""
+    body = _package_lock(
+        {
+            "node_modules/x": _npm_entry("x", "2.0.0", dependencies={"helper": "^1.0.0"}),
+            "node_modules/helper": entry,
+        }
+    )
+    assert pinned_versions("package-lock.json", body) == {}
+    assert installs_elsewhere("package-lock.json", body) == "an entry from outside the registry"
+    yarn = b"""# yarn lockfile v1
+
+
+x@2.0.0:
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/x/-/x-2.0.0.tgz#abc"
+  dependencies:
+    helper "^1.0.0"
+
+"helper@^1.0.0", "helper@npm:other@1.0.0":
+  version "1.0.0"
+  resolved "https://evil.invalid/other-1.0.0.tgz"
+"""
+    assert installs_elsewhere("yarn.lock", yarn) == "an entry from outside the registry"
+
+
+@pytest.mark.parametrize(
+    ("name", "fixture"),
+    [
+        ("pnpm-lock.yaml", "pnpm-lock-base.yaml"),
+        ("yarn.lock", "yarn-berry-base.lock"),
+        ("package-lock.json", "package-lock-sources.json"),
+    ],
+)
+def test_pnpm_and_berry_entries_from_outside_the_registry_read_nothing(
+    name: str, fixture: str
+) -> None:
+    data = (Path(__file__).parent / "fixtures" / "npm" / fixture).read_bytes()
+    assert installs_elsewhere(name, data) == "an entry from outside the registry"
+
+
+def test_python_lockfile_entry_from_outside_pypi_reads_nothing() -> None:
     uv = b"""version = 1
 [[package]]
 name = "helper"
@@ -849,12 +916,10 @@ name = "other"
 version = "2.0"
 source = { registry = "https://pypi.org/simple" }
 """
-    assert pinned_versions("uv.lock", uv) == {("pypi", "helper"): (), ("pypi", "other"): ("2.0",)}
+    assert pinned_versions("uv.lock", uv) == {}
+    assert installs_elsewhere("uv.lock", uv) == "an entry from outside the registry"
     # one lockfile installing it from elsewhere wins over another's pin
     assert merge_pins([{("pypi", "helper"): ("1.0.2",)}, {("pypi", "helper"): ()}]) == {
-        ("pypi", "helper"): ()
-    }
-    assert merge_pins([{("pypi", "x"): ("1",)}, {("pypi", "helper"): ()}]) == {
         ("pypi", "helper"): ()
     }
 
@@ -867,10 +932,13 @@ def test_engine_reads_nothing_for_a_package_installed_from_outside(ecosystem: st
     got = with_dependency_profiles(cast(Any, fetcher), base, cand, {(ecosystem, "helper"): ()})
     assert fetcher.calls == []
     (installs,) = got.dependency_installs
-    assert installs.problem is not None and "from outside the registry" in installs.problem
+    assert installs.problem == (
+        "what installs helper isn't a registry release Garnet can read (a file from another "
+        "index, or a copy already installed, whose index isn't known)"
+    )
     change = NPM if ecosystem == "npm" else PYPI
     f = _c008(change, base, got, got.dependency_installs)
-    assert f.severity == Severity.WARN and "no release Garnet can read" in f.evidence[0].summary
+    assert f.severity == Severity.WARN and "isn't a registry release" in f.evidence[0].summary
 
 
 def test_check_takes_pins_from_the_lockfiles_each_change_is_in(
@@ -902,7 +970,7 @@ def test_check_takes_pins_from_the_lockfiles_each_change_is_in(
 
     def fake_evaluate(changes: Any, *, policy: Any = None, options: Any = None) -> list[Any]:
         seen.update(options.pins)
-        elsewhere.update(options.other_index)
+        elsewhere.update(options.installs_elsewhere)
         return []
 
     monkeypatch.setattr(cli, "evaluate", fake_evaluate)

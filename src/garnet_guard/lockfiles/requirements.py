@@ -32,23 +32,26 @@ def logical_lines(text: str) -> list[tuple[int, str]]:
     return out
 
 
-_FIND_ELSEWHERE = re.compile(r"^(--extra-index-url|--find-links|-f|--no-index)(?=$|[\s=])")
-_INDEX_URL = re.compile(r"^(--index-url|-i)(?:\s*=\s*|\s+)(\S+)")
+_OPTION = re.compile(r"^(--[A-Za-z][A-Za-z-]*|-[A-Za-z])")
 
 
-def other_index(text: str) -> str | None:
-    """The first option, anywhere in the file, that makes pip look for
-    packages somewhere other than PyPI (``--index-url`` naming another index,
-    ``--extra-index-url``, ``--find-links``, ``--no-index``), or None."""
+def unsure_source(text: str) -> str | None:
+    """The first line, anywhere in the file, after which Garnet can't tell
+    where pip installs a package from, said without its value (which can
+    hold credentials), or None. That is any option line but ``--hash``
+    (pip accepts abbreviated options and attached values, ``-ihttps://…``,
+    ``--extra-ind``, and ``-r``/``-c`` bring in files Garnet doesn't read
+    here), and any URL, path or editable requirement."""
     for _, line in logical_lines(text):
-        m = _FIND_ELSEWHERE.match(line)
-        if m is not None:
-            return m.group(1)
-        m2 = _INDEX_URL.match(line)
-        if m2 is not None and m2.group(2).rstrip("/") + "/" not in {
-            s.rstrip("/") + "/" for s in PYPI_INDEXES
-        }:
-            return m2.group(1)
+        if line.startswith("-"):
+            if line.startswith("--hash"):
+                continue
+            m = _OPTION.match(line)
+            return m.group(1) if m else "an option"
+        if "://" in line or line.startswith((".", "/", "~")) or " @ " in line:
+            return "a URL or path requirement"
+        if _NAMED.match(line) is None:
+            return "a line Garnet can't read"
     return None
 
 

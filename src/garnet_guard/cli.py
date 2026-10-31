@@ -42,8 +42,8 @@ from .workspace import (
     dedupe,
     discover,
     git_show,
+    installs_elsewhere,
     merge_pins,
-    other_index,
     pinned_versions,
     plain_file,
     read_lockfile,
@@ -332,7 +332,7 @@ def _check(args: argparse.Namespace) -> int:
         changes += found
         unchecked += skipped
         table = pinned_versions(name, body, registries=registries)
-        index = other_index(name, body)
+        index = installs_elsewhere(name, body, registries=registries)
         for c in found:
             key = (c.ecosystem, c.package, c.baseline, c.candidate)
             tables.setdefault(key, []).append(table)
@@ -341,7 +341,7 @@ def _check(args: argparse.Namespace) -> int:
 
     token = os.environ.get(args.github_token_env) or None
     pins = {key: merge_pins(ts) for key, ts in tables.items()}
-    options = Options(github_token=token, today=today, pins=pins, other_index=elsewhere)
+    options = Options(github_token=token, today=today, pins=pins, installs_elsewhere=elsewhere)
     results = evaluate(dedupe(changes), policy=policy, options=options)
     results += [
         unchecked_result(u.change, u.rule_id, u.detail, policy=policy, today=today)

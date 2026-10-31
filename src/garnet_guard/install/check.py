@@ -45,7 +45,15 @@ from ..models import (
 )
 from ..policy import load_policy
 from ..report import escape, to_text
-from ..workspace import PinTable, Unchecked, changes_for, dedupe, git_show, pinned_versions
+from ..workspace import (
+    PinTable,
+    Unchecked,
+    changes_for,
+    dedupe,
+    git_show,
+    installs_elsewhere,
+    pinned_versions,
+)
 from . import pip, uv
 from .runner import Ran, Registry, Runner, TimedOut
 from .runner import run as run_program
@@ -242,12 +250,18 @@ def _finish(
     cwd: Path,
     deps: Deps,
     pins: PinTable,
+    elsewhere: str | None = None,
 ) -> tuple[Report, Severity]:
     """Check the changes. ``pins`` is what the resolution installs, which
-    GRN-C008 reads for a young dependency instead of its range."""
+    GRN-C008 reads for a young dependency instead of its range; ``()``, or
+    ``elsewhere`` for the whole resolution, means nothing it can read."""
     policy = load_policy(cwd=cwd, today=deps.today)
     keys = {(c.ecosystem, c.package, c.baseline, c.candidate) for c in changes}
-    options = replace(deps.options(), pins=dict.fromkeys(keys, pins))
+    options = replace(
+        deps.options(),
+        pins=dict.fromkeys(keys, pins),
+        installs_elsewhere=dict.fromkeys(keys, elsewhere) if elsewhere else {},
+    )
     results = deps.evaluate(dedupe(changes), policy, options) if changes else []
     results += [
         unchecked_result(u.change, u.rule_id, u.detail, policy=policy, today=deps.today)
@@ -409,9 +423,10 @@ def check_pip(
             )
     found, more = changes_for("requirements.txt", _pins_lines(head), _pins_lines(installed.pins))
     changes = [replace(c, lockfile=None, line=None) for c in found]
-    # What installs: the resolution, else what is installed already; a
-    # package from a URL, a path or another index is no release Garnet reads.
-    resolution: PinTable = {("pypi", n): (v,) for n, v in installed.pins.items()}
+    # What installs: the resolution's files from PyPI. Anything else (a file
+    # from another index, or a package already installed, whose index pip
+    # inspect doesn't show) is no release Garnet reads.
+    resolution: PinTable = {("pypi", n): () for n in installed.pins}
     resolution.update({("pypi", n): () for n in installed.other})
     resolution.update({("pypi", r.name): (r.version,) if r.from_pypi else () for r in resolved})
     rep, fail_on = _finish(
@@ -598,6 +613,7 @@ def check_uv(
         cwd=cwd,
         deps=deps,
         pins=pinned_versions("uv.lock", head),
+        elsewhere=installs_elsewhere("uv.lock", head),
     )
 
     names = ("pyproject.toml", "uv.lock") if subcommand in ("add", "remove") else ("uv.lock",)

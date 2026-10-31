@@ -246,52 +246,52 @@ def pinned_versions(
     For a Python lockfile, the versions it pins from PyPI, read instead of
     the dependency's whole range. A package with an entry under an
     environment marker, or that isn't pinned with ``==``, is left out, so
-    the range is read. A package the lockfile installs from somewhere else
-    (a URL, a path, git, another index, bundled in a package) maps to ``()``:
-    no release Garnet can read is what installs, so GRN-C008 keeps its
-    severity. A requirements file that names another index
-    (``other_index``) gives nothing here; the change carries that instead.
-
-    An npm lockfile's versions aren't used: only its packages from outside
-    the registry, as ``()``.
+    the range is read. An npm lockfile's versions aren't used: a package can
+    sit in its tree several times, aliased or bundled. A lockfile that
+    ``installs_elsewhere`` gives nothing; the change carries that instead.
     """
     try:
         fmt = detect(head_name, head)
+        if fmt not in _PIN_FORMATS or installs_elsewhere(head_name, head, registries=registries):
+            return {}
         pins = parse(head_name, head, registries=registries)
     except LockfileError:
         return {}  # changes_for reports it
-    if fmt not in _PIN_FORMATS:
-        return {(p.ecosystem, p.package): () for p in pins if p.source == "unsupported"}
-    if other_index(head_name, head) is not None:
-        return {}
     out: dict[tuple[str, str], set[str]] = {}
     unsure: set[str] = set()
-    outside: set[str] = set()
     for p in pins:
-        if p.ecosystem != "pypi":
-            continue
-        if p.source == "unsupported":
-            outside.add(p.package)
-        elif p.source == "registry" and p.version and not p.marker:
+        if p.ecosystem == "pypi" and p.source == "registry" and p.version and not p.marker:
             out.setdefault(("pypi", p.package), set()).add(p.version)
         else:
             unsure.add(p.package)
-    table: PinTable = {k: tuple(sorted(v)) for k, v in out.items() if k[1] not in unsure | outside}
-    table.update({("pypi", name): () for name in outside})
-    return table
+    return {k: tuple(sorted(v)) for k, v in out.items() if k[1] not in unsure}
 
 
-def other_index(head_name: str, head: bytes) -> str | None:
-    """The option in a requirements file that lets pip install from somewhere
-    other than PyPI (``--extra-index-url``, ``--find-links``, ``--no-index``,
-    or ``--index-url`` naming another index), or None. GRN-C008 can't tell
-    which index serves a young dependency of a change from such a file."""
+def installs_elsewhere(
+    head_name: str, head: bytes, *, registries: Registries | None = None
+) -> str | None:
+    """What in a lockfile means a package may install from somewhere other
+    than the registry, or None. GRN-C008 then reads nothing for a young
+    dependency of a change from that lockfile and keeps its severity.
+
+    In a requirements file, any option line but ``--hash`` and any URL,
+    path or editable line (``requirements.unsure_source``). In any lockfile,
+    any entry from outside the registry (git, a URL, a path, another index,
+    an npm alias whose tarball is another package, a bundled copy): which
+    name it installs under, or which dependency it serves, isn't modelled.
+    """
     try:
-        if detect(head_name, head) != "requirements.txt":
-            return None
+        fmt = detect(head_name, head)
+        if fmt == "requirements.txt":
+            found = requirements.unsure_source(head.decode("utf-8", "replace"))
+            if found is not None:
+                return found
+        pins = parse(head_name, head, registries=registries)
     except LockfileError:
-        return None
-    return requirements.other_index(head.decode("utf-8", "replace"))
+        return None  # changes_for reports it
+    if any(p.source == "unsupported" for p in pins):
+        return "an entry from outside the registry"
+    return None
 
 
 def merge_pins(tables: list[PinTable]) -> PinTable:

@@ -92,18 +92,19 @@ that depends on dist-tags, deprecations, `engines`, yanks, resolution strategy (
 - Under `garnet check`, when the dependency is pinned in every lockfile the change comes from,
   with no environment marker on the pin (a `;` marker in a requirements file, `marker` in
   `pylock.toml`, `resolution-markers` in `uv.lock`), the pinned versions. Pins in other
-  lockfiles of the repository aren't used. A requirements file with `--extra-index-url`,
-  `--find-links` (`-f`), `--no-index` or an `--index-url` (`-i`) other than PyPI, anywhere in
-  it, pins nothing, and a change from such a file keeps `warn` without a read: pip can install
-  the helper from somewhere Garnet doesn't look. npm lockfiles (package-lock.json, yarn.lock,
+  lockfiles of the repository aren't used. npm lockfiles (package-lock.json, yarn.lock,
   pnpm-lock.yaml) aren't used for versions, since a package can sit in the tree several times,
   aliased or bundled; the range is read instead.
-- When a lockfile the change comes from installs the dependency from outside the registry (git,
-  a URL, a path, another index, or bundled inside another package), nothing is read and the
-  dependency keeps `warn`: no registry release is the one that installs.
-- `garnet pip install` and `garnet uv` read the versions their resolution installs (pip's
-  report and what is installed already, or the new `uv.lock`), with the same rule for packages
-  from outside PyPI.
+- Nothing is read, and the dependency keeps `warn`, when a lockfile the change comes from has
+  anything that could install a package from somewhere Garnet doesn't look: in a requirements
+  file, any option line but `--hash` (pip accepts abbreviated options and attached values, such
+  as `--extra-ind` or `-ihttps://…`, and `-r` or `-c` bring in files) or any URL, path or
+  editable requirement; in any lockfile, any entry from outside the registry (git, a URL, a
+  path, another index, an npm alias whose tarball is another package, a bundled copy). Garnet
+  doesn't work out which name such an entry installs under or which dependency it serves.
+- `garnet pip install` reads the versions its resolution installs from PyPI files; a file from
+  another index, or a package already installed (pip doesn't record which index it came from),
+  keeps `warn`. `garnet uv` reads the new `uv.lock` by the same rules as `garnet check`.
 - Otherwise, every version the registry lists that the requirement admits, whenever it was
   published, up to the time of the lookup. On npm the range follows node-semver's rules, with
   prereleases only when the range names one. A spec that admits any version (`*`, `x`, an

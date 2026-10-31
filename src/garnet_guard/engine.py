@@ -65,11 +65,12 @@ class Options:
     pins: Mapping[ChangeKey, Mapping[tuple[str, str], tuple[str, ...]]] = field(
         default_factory=dict
     )
-    # Per change: the option (``--extra-index-url``, ``--find-links``, ...)
-    # in a lockfile it came from that lets pip install from somewhere other
-    # than PyPI. GRN-C008 then can't tell which index serves a young
-    # dependency, so it doesn't read one and keeps its severity.
-    other_index: Mapping[ChangeKey, str] = field(default_factory=dict)
+    # Per change: what in a lockfile it came from means a package may install
+    # from somewhere other than the registry (an option line in a
+    # requirements file, an entry from git, a URL or another index;
+    # ``workspace.installs_elsewhere``). GRN-C008 then reads nothing for a
+    # young dependency and keeps its severity.
+    installs_elsewhere: Mapping[ChangeKey, str] = field(default_factory=dict)
 
 
 ECOSYSTEMS = ("pypi", "npm")
@@ -157,7 +158,7 @@ def with_dependency_profiles(
     base: ReleaseFacts | None,
     cand: ReleaseFacts,
     pins: Mapping[tuple[str, str], tuple[str, ...]] | None = None,
-    other_index: str | None = None,
+    installs_elsewhere: str | None = None,
 ) -> ReleaseFacts:
     """The candidate with a registry profile for each dependency the baseline
     didn't declare (GRN-C008). A lookup that fails is a GRN-E001 on the
@@ -168,7 +169,7 @@ def with_dependency_profiles(
     known = {p.name for p in cand.dependencies}
     names = [n for n in new_requirement_names(base, cand) if n not in known]
     if not names:
-        return with_dependency_installs(fetcher, base, cand, pins, other_index)
+        return with_dependency_installs(fetcher, base, cand, pins, installs_elsewhere)
     profiles: list[DependencyProfile] = []
     errors: list[FactError] = []
     for name in names:
@@ -185,7 +186,7 @@ def with_dependency_profiles(
         dependencies=cand.dependencies + tuple(profiles),
         errors=cand.errors + tuple(errors),
     )
-    return with_dependency_installs(fetcher, base, cand, pins, other_index)
+    return with_dependency_installs(fetcher, base, cand, pins, installs_elsewhere)
 
 
 def install_lookup_error(err: Exception, package: str, version: str) -> FactError:
@@ -204,18 +205,17 @@ def with_dependency_installs(
     base: ReleaseFacts | None,
     cand: ReleaseFacts,
     pins: Mapping[tuple[str, str], tuple[str, ...]] | None = None,
-    other_index: str | None = None,
+    installs_elsewhere: str | None = None,
 ) -> ReleaseFacts:
     """The candidate with the releases GRN-C008 reads for each young
     dependency that shares an owner with the trusted package, read after the
     profiles: the versions ``pins`` (the lockfiles this change came from)
-    gives for it, else every published version its range allows. One the
-    pins map to ``()`` installs from outside the registry: nothing is read,
-    and its ``problem`` says so. A read
+    gives for it, else every published version its range allows. A read
     that fails is a GRN-E001 naming GRN-C008, and the rule keeps its
     severity for that dependency. Releases the facts already carry are kept.
-    When a lockfile the change came from lets pip use another index
-    (``other_index``), nothing is read: each gets a ``problem`` saying so.
+    Nothing is read, and each dependency's ``problem`` says why, when the
+    pins map it to ``()`` (the install wrapper: not a PyPI file it resolved)
+    or a lockfile the change came from ``installs_elsewhere``.
     """
     known = {d.name for d in cand.dependency_installs}
     wanted = [r for r in owned_young_dependencies(base, cand) if r.package not in known]
@@ -224,19 +224,18 @@ def with_dependency_installs(
     got: list[DependencyInstalls] = []
     errors: list[FactError] = []
     for r in wanted:
-        if other_index is not None:
+        if installs_elsewhere is not None:
             why = (
-                f"the lockfile sets {other_index}, so pip can install {r.package} from "
-                "somewhere other than PyPI and Garnet can't tell which release that is"
+                f"the lockfile has {installs_elsewhere}, so {r.package} can install from "
+                "somewhere other than the registry and Garnet can't tell which release that is"
             )
             got.append(DependencyInstalls(r.package, r.spec, problem=why))
             continue
         pinned = (pins or {}).get((cand.ecosystem, normalize(cand.ecosystem, r.package)))
         if pinned == ():
             why = (
-                f"the lockfile installs {r.package} from outside the registry (a URL, a path, "
-                "git, another index or a bundled copy), so no release Garnet can read is the "
-                "one that installs"
+                f"what installs {r.package} isn't a registry release Garnet can read (a file "
+                "from another index, or a copy already installed, whose index isn't known)"
             )
             got.append(DependencyInstalls(r.package, r.spec, problem=why))
             continue
@@ -493,7 +492,7 @@ def evaluate(
                             b,
                             cand.result(),
                             opts.pins.get(key),
-                            opts.other_index.get(key),
+                            opts.installs_elsewhere.get(key),
                         ),
                         policy=policy,
                         today=opts.today,
