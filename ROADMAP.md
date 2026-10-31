@@ -18,7 +18,7 @@ Months count from the repository going live. Version numbers are targets, not pr
 - [x] Create `orca-solutions/garnet-guard` **public from day one** (ADR-0011) and seed it from the founding documents
 - [x] Turn on GitHub private vulnerability reporting
 - [ ] Branch protection and required signed commits
-- [x] Reserve `garnet-guard` on PyPI with Trusted Publishing configured (ADR-0007); 0.1.0a1 is published
+- [x] Reserve `garnet-guard` on PyPI with Trusted Publishing configured (ADR-0007); 0.1.0a1 and 0.2.0 are published
 - [ ] GitHub Sponsors and `.github/FUNDING.yml`
 - [ ] Enable GitHub Discussions as the community space (off for now; questions go to issues)
 

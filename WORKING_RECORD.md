@@ -2,6 +2,12 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-31: 0.2.0 released
+
+**State.** 0.2.0 is on PyPI, tagged `v0.2.0` at `e6e9f44`, the merge of #100. The release workflow passed, Verify included. The changelog date is now 2026-10-31, the day of the tag. The Action examples in the README, docs/action.md and `action/examples/` pin `e6e9f44`. The dogfood workflow still pins `69c8e01` on main.
+
+**Open tasks.** Publish the Marketplace listing from the `v0.2.0` release (docs/marketplace.md, Publishing).
+
 ## 2026-10-31: 0.2.0 prepared
 
 **State.** The version is `0.2.0`, the release for launch. The changelog's Unreleased entries are now under `0.2.0 (2026-12-01)`; change the date if the tag goes out on another day. It holds everything merged through #99. Held by the maintainer and not in it: #97 (npm lockfiles) and #98 (GRN-C006). The README's install lines drop `--pre`, and its status line and badge say alpha, with the `3 - Alpha` classifier, because PyPI keeps 0.2.0's README through launch week (the plan had been to drop "pre-alpha" on Dec 8). docs/marketplace.md now says to publish to PyPI first, then the listing.
