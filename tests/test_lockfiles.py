@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from garnet_guard.lockfiles import LockfileError, Pin, detect, diff_pins, parse
+from garnet_guard.lockfiles.requirements import logical_lines
 from garnet_guard.workspace import changes_for, discover, git_show, plain_file
 
 UV = b"""version = 1
@@ -104,7 +105,6 @@ requests==2.32.5 \\
 flask>=2
 foo[bar]==1.0 ; python_version < "3.12"  # trailing
 -e ./local
--r other.txt
 baz @ https://example.com/baz.whl
 """
     pins = parse("requirements.txt", text)
@@ -113,13 +113,182 @@ baz @ https://example.com/baz.whl
         ("flask", None, 4, "unpinned"),
         ("foo", "1.0", 5, "registry"),
         ("(editable)", None, 6, "unsupported"),
-        ("baz", None, 8, "unsupported"),
+        ("baz", None, 7, "unsupported"),
+    ]
+    # An included file can set another index for this one, and Garnet
+    # doesn't follow it, so the == pins aren't checked against PyPI.
+    pins = parse("requirements.txt", text + b"-r other.txt\n")
+    assert [(p.package, p.version, p.line, p.source, p.detail) for p in pins] == [
+        ("requests", "2.32.5", 2, "unsupported", INCLUDE),
+        ("flask", None, 4, "unpinned", ">=2"),
+        ("foo", "1.0", 5, "unsupported", INCLUDE),
+        ("(editable)", None, 6, "unsupported", "editable install"),
+        ("baz", None, 7, "unsupported", "direct URL or path"),
     ]
 
 
 def test_requirements_private_index() -> None:
     pins = parse("requirements.txt", b"--index-url https://nexus.example/simple\nx==1\n")
     assert pins[0].source == "unsupported"
+
+
+INCLUDE = "-r in this file brings in a file Garnet doesn't follow, which can set another index"
+SECRET = "https://user:s3cret@nexus.example/simple"
+
+
+@pytest.mark.parametrize(
+    ("line", "detail"),
+    [
+        (f"--index-url {SECRET}", "private index, set with --index-url in this file"),
+        (f"--index-url={SECRET}", "private index, set with --index-url in this file"),
+        (f"-i {SECRET}", "private index, set with --index-url in this file"),
+        (f"-i{SECRET}", "private index, set with --index-url in this file"),
+        (f"--index={SECRET}", "private index, set with --index-url in this file"),
+        (f"--ind {SECRET}", "private index, set with --index-url in this file"),
+        (f"--pypi-url {SECRET}", "private index, set with --pypi-url in this file"),
+        ("-i ${PRIVATE_INDEX}", "private index, set with --index-url in this file"),
+        (f"--extra-index-url {SECRET}", "extra index, set with --extra-index-url in this file"),
+        (f"--extra-ind {SECRET}", "extra index, set with --extra-index-url in this file"),
+        (f"--extra={SECRET}", "extra index, set with --extra-index-url in this file"),
+        ("-f/srv/wheels", "--find-links in this file, so pip can install it from elsewhere"),
+        ("-f /srv/wheels", "--find-links in this file, so pip can install it from elsewhere"),
+        ("--find-l=/x", "--find-links in this file, so pip can install it from elsewhere"),
+        ("--no-ind", "--no-index in this file, so pip doesn't install it from PyPI"),
+        ("--no-index", "--no-index in this file, so pip doesn't install it from PyPI"),
+        ("-r base.txt", INCLUDE),
+        ("-rbase.txt", INCLUDE),
+        ("--requirem=base.txt", INCLUDE),
+        (
+            "-c constraints.txt",
+            "-c in this file brings in a file Garnet doesn't follow, which can set another index",
+        ),
+        (
+            "--constr constraints.txt",
+            "-c in this file brings in a file Garnet doesn't follow, which can set another index",
+        ),
+        (
+            f"--nonsense={SECRET}",
+            "an option Garnet can't read (--nonsense), so the index is unknown",
+        ),
+        ("--req=base.txt", "an option Garnet can't read (--req), so the index is unknown"),
+        ("--no x", "an option Garnet can't read (--no), so the index is unknown"),
+        ("-x secret", "an option Garnet can't read (-x), so the index is unknown"),
+        ("--no-index=yes", "an option Garnet can't read (--no-index), so the index is unknown"),
+        ("--index-url", "an option Garnet can't read (--index-url), so the index is unknown"),
+        (
+            "--trusted-host 'unclosed",
+            "an option Garnet can't read (an option line), so the index is unknown",
+        ),
+    ],
+)
+def test_requirements_index_options_apply_to_the_whole_file(line: str, detail: str) -> None:
+    # pip applies index options to every requirement in the file, before or
+    # after the option line, and reads them with optparse: unambiguous long
+    # prefixes and attached short values count.
+    text = f"before==1.0\n{line}\nafter==2.0 --hash=sha256:abc\nloose>=1\n".encode()
+    pins = parse("requirements.txt", text)
+    assert [(p.package, p.version, p.source, p.detail) for p in pins] == [
+        ("before", "1.0", "unsupported", detail),
+        ("after", "2.0", "unsupported", detail),
+        ("loose", None, "unpinned", ">=1"),
+    ]
+    # The value can hold credentials: it's never in what a report shows.
+    assert all("s3cret" not in (p.detail or "") and "secret" not in (p.detail or "") for p in pins)
+
+
+@pytest.mark.parametrize(
+    ("line", "shown"),
+    [
+        ("--extra-index-urlhttps://bob:s3cret@evil.example/simple", "--extra-index-url…"),
+        ("--index-urlbobs3cret@evil.example", "--index-url…"),
+        ("--weirdbobsecret:hunter2@evil", "--weirdbobsecret…"),
+        ("--abcdefghijklmnopqrstuvwxyzsecret", "--abcdefghijklmnopqrstuv…"),
+        ("-/user:s3cret@evil", "-…"),
+    ],
+)
+def test_requirements_unreadable_option_never_shows_its_value(line: str, shown: str) -> None:
+    (pin,) = parse("requirements.txt", f"x==1\n{line}\n".encode())
+    assert pin.detail == f"an option Garnet can't read ({shown}), so the index is unknown"
+    assert "s3cret" not in pin.detail and "hunter2" not in pin.detail
+
+
+@pytest.mark.parametrize(
+    ("text", "lines"),
+    [
+        # pip 24.0's join_lines and ignore_comments
+        (b"a==1 \\\n  --hash=sha256:x\n", [(1, "a==1   --hash=sha256:x")]),
+        (b"--\\\nindex-url u\n", [(1, "--index-url u")]),
+        (b"\\--index-url u\\\n\n", [(1, "--index-url u")]),
+        (b"# note \\\na==1\n", [(2, "a==1")]),  # a comment line doesn't continue
+        (b"a==1 # note \\\nb==2\n", [(1, "a==1")]),  # the comment eats the join
+        (b"a==1 \\ \nb==2\n", [(1, "a==1 \\"), (2, "b==2")]),  # space after \\
+        (b"a==1#x\n", [(1, "a==1#x")]),  # no space before #: not a comment
+    ],
+)
+def test_logical_lines_match_pip(text: bytes, lines: list[tuple[int, str]]) -> None:
+    assert logical_lines(text.decode()) == lines
+
+
+def test_requirements_index_option_on_a_requirement_line_counts() -> None:
+    pins = parse("requirements.txt", f"a==1\nb==2 --extra-index-url {SECRET}\n".encode())
+    assert {p.source for p in pins} == {"unsupported"}
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "--index-url https://pypi.org/simple",
+        "-ihttps://pypi.org/simple/",
+        "--extra-index-url https://pypi.python.org/simple",
+        "--hash=sha256:abc",
+        "--hash sha256:abc",
+        "--require-hashes",
+        "--prefer-binary",
+        "--pre",
+        "--only-binary :all:",
+        "--only-b=:all:",
+        "--no-binary :none:",
+        "--trusted-host internal.example",
+        "--use-feature=truststore",
+        "-C key=value",
+        "--config-settings=key=value",
+        "--global-option=--quiet",
+        "-- -r ignored.txt",
+    ],
+)
+def test_requirements_harmless_options_keep_pins_checked(line: str) -> None:
+    text = f"before==1.0\n{line}\nafter==2.0 \\\n    --hash=sha256:abc \\\n    --hash=sha256:def\n"
+    pins = parse("requirements.txt", text.encode())
+    assert [(p.package, p.version, p.source) for p in pins] == [
+        ("before", "1.0", "registry"),
+        ("after", "2.0", "registry"),
+    ]
+
+
+def test_requirements_attached_editable_is_unsupported() -> None:
+    pins = parse("requirements.txt", b"-e.\n--editable=./x\nok==1\n")
+    assert [(p.package, p.source, p.detail) for p in pins] == [
+        ("(editable)", "unsupported", "editable install"),
+        ("(editable)", "unsupported", "editable install"),
+        ("ok", "registry", None),
+    ]
+
+
+def test_requirements_new_index_reports_unchanged_pins() -> None:
+    # Adding an extra index to a file moves every pin in it off PyPI, so the
+    # unchanged pins are reported as not checked.
+    base = b"requests==2.32.5\n"
+    head = b"requests==2.32.5\n--extra-index-url https://nexus.example/simple\n"
+    changes, unchecked = changes_for("requirements.txt", head, base)
+    assert changes == []
+    assert [(u.change.package, u.rule_id, u.detail) for u in unchecked] == [
+        ("requests", "GRN-E005", "extra index, set with --extra-index-url in this file")
+    ]
+    # and a change of index value counts as a change, though it isn't shown
+    moved = head.replace(b"nexus", b"other")
+    _, unchecked = changes_for("requirements.txt", moved, head)
+    assert [u.rule_id for u in unchecked] == ["GRN-E005"]
+    assert all("other" not in u.detail for u in unchecked)
 
 
 def test_detect() -> None:
