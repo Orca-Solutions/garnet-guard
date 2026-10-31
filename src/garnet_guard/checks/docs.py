@@ -37,7 +37,7 @@ _DOCS: tuple[RuleDoc, ...] = (
         "The verified source repository differs between the trusted and new versions.",
         "Attestations name the repository whose CI built the release. A different repository means "
         "someone else's CI published this version: a fork, a new home, or an attacker's repository. "
-        "Renames are ignored when GitHub's repository id is unchanged.",
+        "Renames are ignored when the repository id on the same host is unchanged.",
         "Confirm the move from the old repository: an announcement or a commit there, or the "
         "project's page linking the new home. Don't rely on the release notes or on what the new "
         "repository says about itself; whoever published the release wrote them.",
@@ -357,7 +357,9 @@ _DOCS += (
         "absolute",
         Severity.INFO,
         "A dependency comes from a source Garnet doesn't check: git, a local path, a direct URL, a private "
-        "index or registry, or another npm package's tarball (a bundled dependency).",
+        "index or registry, or another npm package's tarball (a bundled dependency). In a requirements "
+        "file, an index, extra index or --find-links anywhere in the file, or in the files it is read "
+        "with through -r and -c, applies to every pin in them.",
         "Garnet compares releases published on PyPI and npm. Code from other sources wasn't checked, and "
         "it isn't passed either.",
         "Review the change to that dependency by hand. A bundled dependency changes only with the package "
