@@ -15,7 +15,7 @@ from garnet_guard.ecosystems.gittree import TreeLookup
 from garnet_guard.ecosystems.pypi import FetchContext, RegistryFile, ReplayRelease, release_facts
 from garnet_guard.ecosystems.sdist import match_sdist
 from garnet_guard.engine import run_checks
-from garnet_guard.facts.inventory import exec_lines, file_reader
+from garnet_guard.facts.inventory import exec_lines, file_reader, other_exec_lines
 from garnet_guard.models import (
     CallSite,
     Change,
@@ -222,15 +222,25 @@ def test_pth_lines_are_read_as_every_python_runs_them() -> None:
     line with a form feed runs whole; 3.13 and later split at the form feed and
     a vertical tab too, and drop a leading BOM."""
     line = "import os; os.getcwd()"
-    assert exec_lines(f"{line}\x0c;os.system('id')\n".encode()) == (
-        f"{line}\x0c;os.system('id')",
-        line,
+
+    def both(pth: bytes) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        return exec_lines(pth), other_exec_lines(pth)
+
+    assert both(f"{line}\x0c;os.system('id')\n".encode()) == (
+        (line,),
+        (f"{line}\x0c;os.system('id')",),
     )
-    assert exec_lines(b"\xef\xbb\xbfimport os; os.system('id')\nlib\n") == (
-        "import os; os.system('id')",
+    assert both(b"\xef\xbb\xbfimport os; os.system('id')\nlib\n") == (
+        (),
+        ("import os; os.system('id')",),
     )
-    assert exec_lines(b"lib\x0bimport os\n") == ("import os",)
-    assert exec_lines(b"import a\r\nlib\rimport\tb\n\nimport a\n") == ("import a", "import\tb")
+    assert both(b"lib\x0bimport os\n") == (("import os",), ())
+    # exec_lines keeps a line each time it appears, as GRN-C001 has always
+    # compared them; the other readings add each line once.
+    assert both(b"import a\r\nlib\rimport\tb\n\nimport a\n") == (
+        ("import a", "import\tb", "import a"),
+        (),
+    )
     # Hidden behind a form feed or a BOM, a line the sdist's copy lacks is recorded.
     hidden = f"{line}\x0c;os.system('id')"
     match, _, _ = _matched({**PAIRED, "demo.pth": hidden + "\n"}, {**PAIRED, "demo.pth": line})

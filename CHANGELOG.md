@@ -10,7 +10,7 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 
 ### Fixed
 
-- GRN-C001 missed `.pth` lines that Python runs. Python 3.11 and 3.12 end a `.pth` line only at a line break, so the text after a form feed runs as part of the line, and Python 3.13 and later skip a leading UTF-8 BOM and run the line behind it. Garnet split lines with `str.splitlines()`, which ends a line at a form feed, and kept the BOM, so it recorded neither. It now reads a `.pth` file both ways and counts each `import` line either reading gives. GRN-C006 reads `.pth` files the same way.
+- GRN-C001 missed `.pth` lines that Python runs. Python 3.11 and 3.12 end a `.pth` line only at a line break, so the text after a form feed runs as part of the line, and Python 3.13 and later skip a leading UTF-8 BOM and run the line behind it. Garnet split lines with `str.splitlines()`, which ends a line at a form feed, and kept the BOM, so it recorded neither. It now also reads a `.pth` file both of those ways and reports, in its own evidence line, each `import` line that only one of those readings gives and that the trusted file never ran. The lines `str.splitlines()` gives are compared as before, repeats included, so every finding GRN-C001 gave before still appears. GRN-C006 compares every line any of the readings gives.
 
 ## 0.2.0 (2026-12-01)
 

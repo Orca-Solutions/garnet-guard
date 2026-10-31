@@ -17,15 +17,18 @@ status: implemented
 ## What it checks
 
 The new version contains a `.pth` file at a path the trusted version didn't have, or an
-existing `.pth` file gained executable lines (lines starting with `import`). Lines are read
-the way each supported Python reads them: Python 3.11 and 3.12 end a line only at a line
-break, so a line with a form feed in it runs whole, and 3.13 and later skip a leading UTF-8
-BOM and also end a line at a form feed. A line either reading gives counts.
+existing `.pth` file gained executable lines (lines starting with `import`). Lines are
+compared as `str.splitlines()` splits the file, each time a line appears. Some Pythons read
+a line that list misses: Python 3.11 and 3.12 end a line only at a line break, so a line with
+a form feed in it runs whole, and 3.13 and later skip a leading UTF-8 BOM and run the line
+behind it. Such a line gets its own evidence line when the trusted file at the same path,
+or any trusted `.pth` for a new path, never ran it on any Python.
 
 In a wheel, only a `.pth` that lands in `site-packages` itself counts: at the wheel's root
 or at the root of its `<name>-<version>.data/purelib/` or `platlib/` folder (the folder's
 version is ignored when comparing releases). A `.pth` deeper in the package is never read by
-Python. A `.pth` that was only renamed, with the same `import` lines as before, is not new.
+Python. A `.pth` that was only renamed, with the same `import` lines as before, in the same
+order and as many times, is not new.
 
 ## Why it matters
 

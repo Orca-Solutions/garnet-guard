@@ -166,7 +166,13 @@ def _compare_note(b: ArtifactFacts, c: ArtifactFacts) -> tuple[Evidence, ...]:
 def new_pth_file(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
-    """GRN-C001: a new .pth file, or new executable lines in an existing one."""
+    """GRN-C001: a new .pth file, or new executable lines in an existing one.
+
+    The lines ``str.splitlines()`` gives are compared first. A line that only
+    some Pythons read as one (``PthFile.other_lines``) is then reported when
+    the trusted file at the same path, or any trusted ``.pth`` for a new
+    path, never ran it on any Python. That second pass only adds evidence.
+    """
     if base is None:
         return
     b, c = _pair(base, cand)
@@ -174,10 +180,23 @@ def new_pth_file(
         return
     old = {_site_name(_installed(b, p.path)): p for p in b.pth_files}
     old_lines = {p.exec_lines for p in b.pth_files if p.exec_lines}
+    every_old = {x for p in b.pth_files for x in p.all_lines}
     evidence: list[Evidence] = []
+    hidden_evidence: list[Evidence] = []  # listed after, so the first pass reads as before
     for p in c.pth_files:
         size = next((f.size for f in c.files if f.path == p.path), 0)
         name = _site_name(_installed(c, p.path))
+        ran = set(old[name].all_lines) if name in old else every_old
+        hidden = [x for x in p.other_lines if x not in ran]
+        if hidden:
+            hidden_evidence.append(
+                Evidence(
+                    "file",
+                    f"{p.path} has {len(hidden)} executable line(s) that only some Python "
+                    f"versions read as a line: {_clip(hidden[0])}",
+                    path=p.path,
+                )
+            )
         if name not in old:
             if p.exec_lines in old_lines:
                 continue  # renamed (protobuf-<version>-nspkg.pth), same lines
@@ -200,6 +219,7 @@ def new_pth_file(
                         path=p.path,
                     )
                 )
+    evidence += hidden_evidence
     if evidence:
         yield RawFinding(
             "GRN-C001",

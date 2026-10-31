@@ -263,7 +263,16 @@ class PthFile:
     """A ``.pth`` file and the lines in it that Python runs at every startup."""
 
     path: str
+    # As ``str.splitlines()`` splits the file, each time a line appears
     exec_lines: tuple[str, ...]
+    # Lines Python 3.11 and 3.12 (a form feed inside a line) or 3.13 and later
+    # (a line behind a BOM) run that ``exec_lines`` lacks, each once
+    other_lines: tuple[str, ...] = ()
+
+    @property
+    def all_lines(self) -> tuple[str, ...]:
+        """Every line some Python runs, each once."""
+        return tuple(dict.fromkeys((*self.exec_lines, *self.other_lines)))
 
 
 @dataclass(frozen=True)

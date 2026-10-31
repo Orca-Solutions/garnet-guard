@@ -8,7 +8,7 @@ import hashlib
 import re
 import sys
 import tomllib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from email.message import Message
 from email.parser import BytesHeaderParser
@@ -183,21 +183,39 @@ def site_path(path: str) -> str:
     return _SITE_PREFIX.sub("", path)
 
 
+def _imports(lines: Iterable[str]) -> Iterator[str]:
+    """The lines the site module executes: those that start with ``import``."""
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith(("import ", "import\t")):
+            yield line
+
+
 def exec_lines(pth: bytes) -> tuple[str, ...]:
-    """Lines of a .pth file that the site module executes, on any Python.
+    """Lines of a .pth file that the site module executes, in order and each
+    time it appears, split with ``str.splitlines()``. GRN-C001 compares these
+    between versions; ``other_exec_lines`` adds what some Pythons read
+    differently."""
+    return tuple(_imports(pth.decode("utf-8", "replace").splitlines()))
+
+
+def other_exec_lines(pth: bytes) -> tuple[str, ...]:
+    """Lines of a .pth file that some Python executes and ``exec_lines``
+    doesn't give, each once.
 
     Python 3.11 and 3.12 read the file with universal newlines, which end a
     line only at ``\\n``, ``\\r`` or ``\\r\\n``, so a line with a form feed in
-    it runs whole. Python 3.13 and later drop a leading UTF-8 BOM and split
-    with ``str.splitlines()``, which also ends a line at a form feed or a
-    vertical tab. The lines of both readings are kept, the first reading's
-    first, each line once.
+    it runs whole. Python 3.13 and later drop a leading UTF-8 BOM before
+    splitting with ``str.splitlines()``, so a line behind a BOM runs.
+    ``exec_lines`` is kept as it was, so the comparisons built on it don't
+    change; these lines are compared on their own.
     """
-    text = pth.decode("utf-8", "replace").removeprefix("﻿")
+    text = pth.decode("utf-8", "replace")
+    seen = set(exec_lines(pth))
     out: dict[str, None] = {}
-    for raw in (*_UNIVERSAL_NEWLINE.split(text), *text.splitlines()):
-        line = raw.strip()
-        if line.startswith(("import ", "import\t")):
+    readings = (_UNIVERSAL_NEWLINE.split(text), text.removeprefix("\ufeff").splitlines())
+    for line in _imports(x for reading in readings for x in reading):
+        if line not in seen:
             out.setdefault(line)
     return tuple(out)
 
@@ -279,7 +297,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                 # In a wheel only a .pth that lands in site-packages itself runs:
                 # at the wheel root or at the root of .data/purelib or platlib.
                 if sdist or "/" not in site:
-                    result.pth_files.append(PthFile(rel, exec_lines(body)))
+                    result.pth_files.append(PthFile(rel, exec_lines(body), other_exec_lines(body)))
             elif kind == "py":
                 if len(body) > limits.max_py_file_bytes:
                     result.errors.append(

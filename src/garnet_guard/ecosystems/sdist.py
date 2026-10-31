@@ -175,9 +175,9 @@ def _pth_code(
             None,
         ) or next(iter(by_name.get(site, ())), None)
         if copy is None:
-            out.append(WheelOnlyCode(site, None, lines=p.exec_lines))
+            out.append(WheelOnlyCode(site, None, lines=p.all_lines))
             continue
-        lines = tuple(x for x in p.exec_lines if x not in copy.exec_lines)
+        lines = tuple(x for x in p.all_lines if x not in copy.all_lines)
         if lines:
             out.append(WheelOnlyCode(site, copy.path, lines=lines))
     return out
