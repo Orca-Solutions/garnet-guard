@@ -21,7 +21,9 @@ stdout and always exits 0 (diagnostics go to stderr):
   its virtual environment: the hook doesn't start those before the user
   approves the command;
 - ``npm install|ci|update``: checked like the wrapper checks them, and can't
-  check when the command sets a loader preload or the npm is committed;
+  check when the command sets a loader preload, GCONV_PATH, LOCPATH or PATH,
+  or runs an npm that is committed, or isn't the one the hook's PATH finds
+  (or the npm installed with that node);
 - pnpm, yarn, npx, ``npm exec`` and ``uv pip``, which Garnet doesn't check
   yet: a note, no decision;
 - ``uv run``: checked as the ``uv sync`` it starts with, and no answer when
@@ -55,7 +57,7 @@ from typing import Any, TextIO
 
 from ..policy import PolicyError
 from ..report import escape
-from . import check, gate, pip, shellwords, uv
+from . import check, gate, npm, pip, shellwords, uv
 from .check import Deps, Outcome
 from .runner import LIBC_MODULE_PATHS, loader_preload
 
@@ -199,7 +201,12 @@ def _one(
         if skip:
             return
     if isinstance(item, shellwords.NpmCommand):
-        why = _npm_preload_why(item, env) or _committed_why(item)
+        why = (
+            _npm_preload_why(item, env)
+            or _npm_discovery_why(item, env)
+            or _committed_why(item)
+            or _npm_chosen_why(item, env)
+        )
     else:
         why = (
             _preload_why(item, env)
@@ -296,17 +303,102 @@ def _uv_run_scope(item: shellwords.UvCommand) -> tuple[bool, str | None]:
 
 def _npm_preload_why(item: shellwords.NpmCommand, env: Mapping[str, str]) -> str | None:
     """Why the hook asks when an npm command sets a loader preload
-    (runner.LOADER_PRELOAD): the library it names loads into npm, node and
-    every program they start, as ``_preload_why`` says for pip and uv."""
+    (runner.LOADER_PRELOAD) or a C library module path (LIBC_MODULE_PATHS):
+    code they name loads into npm, node and every program they start, as
+    ``_preload_why`` says for pip and uv."""
     names = sorted(n for n, v in item.env.items() if loader_preload(n) and env.get(n) != v)
-    if not names:
+    if names:
+        which = ", ".join(names)
+        return (
+            f"{item.text}: not checked. The command sets {which}, which makes the system's "
+            "loader load a library of its choosing into npm, node and every program they "
+            "start. That library can change what npm installs, so a check without it wouldn't "
+            "describe this command, and Garnet Guard doesn't start npm with it before you "
+            "approve the command."
+        )
+    names = [n for n in sorted(LIBC_MODULE_PATHS) if item.env.get(n) != env.get(n)]
+    if names:
+        which = ", ".join(names)
+        return (
+            f"{item.text}: not checked. The command sets {which}, which tells the C library "
+            "where to load character-set conversion modules and locale files from, so code of "
+            "the command's choosing could load into npm or node when they start. Garnet Guard "
+            "doesn't start npm with it before you approve the command."
+        )
+    return None
+
+
+# npm, and the node its ``#!/usr/bin/env node`` line names, are found on PATH.
+NPM_DISCOVERY = ("PATH",)
+# What a virtual environment's bin folder mustn't hold for its activation to
+# leave npm and node as they were.
+_NPM_PROGRAMS = ("npm", "npx", "node", "nodejs", "corepack")
+
+
+def _npm_discovery_why(item: shellwords.NpmCommand, env: Mapping[str, str]) -> str | None:
+    """Why the hook asks when an npm command changes where npm and node are
+    found, as ``_discovery_why`` does for pip and uv. ``source
+    <venv>/bin/activate`` stays allowed when that bin folder holds no npm,
+    npx, node or corepack (nodeenv's environments do)."""
+    venv = _activated(item, env)
+    if venv and any(
+        os.path.lexists(os.path.join(venv, d, p)) for d in ("bin", "Scripts") for p in _NPM_PROGRAMS
+    ):
+        venv = None
+    changed = []
+    for name in NPM_DISCOVERY:
+        value, before = item.env.get(name), env.get(name)
+        if value == before or (venv and _activation(name, value, before, venv)):
+            continue
+        changed.append(name)
+    if changed:
+        which = ", ".join(changed)
+        return (
+            f"{item.text}: not checked. The command sets {which}, which changes which npm runs "
+            "and which node npm starts, so Garnet Guard doesn't start npm with it before you "
+            "approve the command."
+        )
+    path = item.env.get("PATH", "")
+    relative = [e for e in path.split(os.pathsep) if not os.path.isabs(e)] if path else []
+    if relative:
+        entry = relative[0] or "an empty entry"
+        return (
+            f"{item.text}: not checked. PATH has a relative entry ({entry}), so npm could start "
+            "a node from the folder the command runs in. Garnet Guard doesn't start npm with it "
+            "before you approve the command."
+        )
+    return None
+
+
+def _npm_chosen_why(item: shellwords.NpmCommand, env: Mapping[str, str]) -> str | None:
+    """Why the hook asks before starting an npm it can't place, as
+    ``_chosen_why`` does for pip and uv.
+
+    The npm must be the one the hook's own PATH finds (compared by real
+    path), or the npm installed with the node that PATH finds: node's own
+    layout, ``<prefix>/bin/npm`` linked to
+    ``<prefix>/lib/node_modules/npm/bin/npm-cli.js`` beside
+    ``<prefix>/bin/node``. Anything else (``/tmp/x/npm i left-pad``) is a
+    program the command chose, which may have been written just before it.
+    The node it starts is found on that same PATH (``_npm_discovery_why``).
+    """
+    if item.npm is None:
+        return None  # check_npm says npm wasn't found
+    path = env.get("PATH", "")
+    real = _real(item.npm)
+    found = shutil.which("npm", path=path) if path else None
+    if found and _real(found) == real:
         return None
-    which = ", ".join(names)
+    node = shutil.which("node", path=path) if path else None
+    program = Path(os.path.normpath(item.npm))
+    beside = program.parent / "node"
+    if node and npm.installed_npm(program, Path(real)) and _real(str(beside)) == _real(node):
+        return None
+    finds = f"PATH finds {found}" if found else "PATH has no npm"
     return (
-        f"{item.text}: not checked. The command sets {which}, which makes the system's loader "
-        "load a library of its choosing into npm, node and every program they start. That "
-        "library can change what npm installs, so a check without it wouldn't describe this "
-        "command, and Garnet Guard doesn't start npm with it before you approve the command."
+        f"{item.text}: not checked. {program} isn't the npm your PATH finds ({finds}) or the "
+        "npm installed with the node it finds, so it is a program this command chose, which "
+        "Garnet Guard doesn't start before you approve the command."
     )
 
 
@@ -409,7 +501,8 @@ def _discovery_why(
 
 
 def _activated(
-    item: shellwords.PipCommand | shellwords.UvCommand, env: Mapping[str, str]
+    item: shellwords.PipCommand | shellwords.UvCommand | shellwords.NpmCommand,
+    env: Mapping[str, str],
 ) -> str | None:
     """The virtual environment the command activates, if it is one: an
     absolute ``VIRTUAL_ENV`` with a ``pyvenv.cfg``, and its bin folder put

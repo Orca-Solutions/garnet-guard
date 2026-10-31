@@ -563,7 +563,7 @@ def _interpreter(program: Path, path: str) -> Path | None:
     return Path(parts[0])
 
 
-def _installed_npm(program: Path, real: Path) -> bool:
+def installed_npm(program: Path, real: Path) -> bool:
     """True when ``program`` is the link node's installers make for npm
     (node's tarballs, nvm, Homebrew): ``<prefix>/bin/npm`` to
     ``<prefix>/lib/node_modules/npm/bin/npm-cli.js``."""
@@ -598,7 +598,7 @@ def program_refusal(npm_exe: str, project: Path, cwd: Path, path: str) -> str | 
                 f"{what} on PATH is corepack's shim, which runs the npm version the project's "
                 "packageManager names; Garnet Guard runs npm itself"
             )
-        if "node_modules" in real.parts and not (what == "npm" and _installed_npm(program, real)):
+        if "node_modules" in real.parts and not (what == "npm" and installed_npm(program, real)):
             return f"{what} on PATH is {program}, a link to {real}, in a node_modules folder"
         for place in places:
             if real == place or place in real.parents:

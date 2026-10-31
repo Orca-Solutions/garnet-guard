@@ -1136,3 +1136,180 @@ def test_hook_asks_for_node_running_npms_files(
     assert inner["permissionDecision"] == ("ask" if agent == "claude-code" else "deny")
     assert "can't tell which npm this runs" in inner["permissionDecisionReason"]
     assert not run.calls
+
+
+# --- npm and the hooks' discovery checks (ported from the pip/uv change) -----
+
+
+def _hook(agent: str, command: str, cwd: Path, env: dict[str, str], run: FakeRunner) -> Any:
+    stdout, stderr = io.StringIO(), io.StringIO()
+    hooks.handle(
+        agent,
+        event(command, str(cwd)),
+        stdout=stdout,
+        stderr=stderr,
+        env=env,
+        deps=deps(run),
+        exit_now=lambda code: None,
+    )
+    return json.loads(stdout.getvalue()) if stdout.getvalue().strip() else None
+
+
+def _runs(program: str) -> FakeRunner:
+    """npm's recorded answers, for an npm that must be ``program``."""
+
+    def answers(argv: list[str], cwd: Path, env: dict[str, str]) -> Ran:
+        assert argv[0] == program
+        return npm_answers()([NPM, *argv[1:]], cwd, env)
+
+    return FakeRunner(answers)
+
+
+def _asks(agent: str, out: Any, *words: str) -> None:
+    inner = spec(out)
+    assert inner["permissionDecision"] == ("ask" if agent == "claude-code" else "deny")
+    for w in words:
+        assert w in inner["permissionDecisionReason"]
+
+
+def _checked(out: Any) -> None:
+    inner = spec(out)
+    assert "permissionDecision" not in inner
+    assert "left-pad 1.2.0 -> 1.3.0" in inner["additionalContext"]
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+@pytest.mark.parametrize(
+    ("command", "word"),
+    [
+        ("{other}/npm i left-pad@1.3.0", "isn't the npm your PATH finds"),
+        ("PATH={other}:{path} npm i left-pad@1.3.0", "sets PATH"),
+        ("env PATH={other}:{path} npm ci", "sets PATH"),
+        ("export PATH={other}:{path}; npm i left-pad@1.3.0", "sets PATH"),
+        ("PATH=.:{path} npm i left-pad@1.3.0", "sets PATH"),
+        ("GCONV_PATH={other} npm i left-pad@1.3.0", "sets GCONV_PATH"),
+        ("LOCPATH={other} npm ci", "sets LOCPATH"),
+        ("declare -x PATH={other}; npm i left-pad@1.3.0", "declare"),
+        ("typeset -x PATH={other}; npm i left-pad@1.3.0", "typeset"),
+        ("set -a; PATH={other}; npm i left-pad@1.3.0", "set -a"),
+    ],
+)
+def test_hook_asks_when_an_npm_command_picks_another_npm_or_node(
+    agent: str,
+    command: str,
+    word: str,
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    root = project(Path(where["cwd"]) / "demo")
+    other = Path(where["cwd"]) / "x"
+    _program(other / "npm")
+    _program(other / "node")
+    run = FakeRunner(npm_answers())
+    text = command.format(other=other, path=where["PATH"])
+    out = _hook(agent, text, root, {"PATH": where["PATH"], "HOME": where["HOME"]}, run)
+    _asks(agent, out, word)
+    assert not run.calls  # nothing started before approval
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_hook_asks_when_its_own_path_has_a_relative_entry(
+    agent: str,
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    root = project(Path(where["cwd"]) / "demo")
+    run = FakeRunner(npm_answers())
+    env = {"PATH": f"{where['PATH']}{os.pathsep}node_modules/.bin", "HOME": where["HOME"]}
+    out = _hook(agent, "npm i left-pad@1.3.0", root, env, run)
+    _asks(agent, out, "relative entry (node_modules/.bin)")
+    assert not run.calls
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "npm i left-pad@1.3.0",
+        "{bin}/npm i left-pad@1.3.0",  # the npm PATH finds, spelled out
+        "{link} i left-pad@1.3.0",  # another link to it
+        "GCONV_PATH=/usr/lib/gconv npm i left-pad@1.3.0",  # the hook's own value, unchanged
+    ],
+)
+def test_hook_checks_the_npm_its_own_path_finds(
+    command: str,
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    root = project(Path(where["cwd"]) / "demo")
+    npm_exe = str(Path(where["PATH"]) / "npm")
+    link = _link(Path(where["cwd"]) / "links" / "npm", Path(npm_exe))
+    env = {"PATH": where["PATH"], "HOME": where["HOME"], "GCONV_PATH": "/usr/lib/gconv"}
+    expected = link if command.startswith("{link}") else npm_exe
+    run = _runs(expected)
+    text = command.format(bin=where["PATH"], link=link)
+    _checked(_hook("claude-code", text, root, env, run))
+    assert run.calls
+
+
+def _layout(prefix: Path) -> str:
+    """An npm installed the way node's tarballs, nvm and Homebrew install it."""
+    _program(prefix / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js")
+    _program(prefix / "bin" / "node")
+    return _link(prefix / "bin" / "npm", Path("../lib/node_modules/npm/bin/npm-cli.js"))
+
+
+def test_hook_checks_the_npm_installed_with_the_node_path_finds(
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    # PATH finds another npm first, and this prefix's node: its own npm counts.
+    root = project(Path(where["cwd"]) / "demo")
+    exe = _layout(Path(where["cwd"]) / "nvm" / "v22")
+    env = {"PATH": f"{where['PATH']}{os.pathsep}{Path(exe).parent}", "HOME": where["HOME"]}
+    run = _runs(exe)
+    _checked(_hook("claude-code", f"{exe} i left-pad@1.3.0", root, env, run))
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_hook_asks_for_an_installed_npm_whose_node_path_doesnt_find(
+    agent: str,
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    root = project(Path(where["cwd"]) / "demo")
+    exe = _layout(Path(where["cwd"]) / "elsewhere")
+    run = FakeRunner(npm_answers())
+    env = {"PATH": where["PATH"], "HOME": where["HOME"]}
+    _asks(agent, _hook(agent, f"{exe} i left-pad@1.3.0", root, env, run), "npm your PATH finds")
+    assert not run.calls
+
+
+def _venv(folder: Path, *programs: str) -> Path:
+    (folder / "bin").mkdir(parents=True)
+    (folder / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    for p in programs:
+        _program(folder / "bin" / p)
+    return folder
+
+
+def test_hook_checks_npm_after_activating_a_venv_without_node(
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    root = project(Path(where["cwd"]) / "demo")
+    venv = _venv(Path(where["cwd"]) / "venv", "python")
+    run = _runs(str(Path(where["PATH"]) / "npm"))
+    command = f"source {venv}/bin/activate && npm i left-pad@1.3.0"
+    env = {"PATH": where["PATH"], "HOME": where["HOME"]}
+    _checked(_hook("claude-code", command, root, env, run))
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+@pytest.mark.parametrize("program", ["node", "npm"])
+def test_hook_asks_after_activating_a_venv_with_node_or_npm(
+    agent: str,
+    program: str,
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    # nodeenv's environments have an activate script and their own node and npm.
+    root = project(Path(where["cwd"]) / "demo")
+    venv = _venv(Path(where["cwd"]) / "nodeenv", program)
+    run = FakeRunner(npm_answers())
+    command = f"source {venv}/bin/activate && npm i left-pad@1.3.0"
+    env = {"PATH": where["PATH"], "HOME": where["HOME"]}
+    _asks(agent, _hook(agent, command, root, env, run), "sets PATH")
+    assert not run.calls
