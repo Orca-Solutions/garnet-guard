@@ -31,6 +31,8 @@ Add `pyyaml>=6.0.2` as a runtime dependency, and `types-pyyaml` as a development
 - a key that isn't a scalar, nesting deeper than 32 levels, and a second document;
 - NEL, LS and PS anywhere in the file, and a quoted string that isn't valid text (a lone surrogate).
 
+In pnpm-workspace.yaml and `.yarnrc.yml`, which people write by hand, these rules hold for the keys Garnet reads (`registries`; `npmRegistryServer` and `npmScopes`) and for the names of the top-level keys. The values of other top-level keys, such as a pnpm catalog with anchors and aliases, are passed over without being built, as long as the file parses; NEL, LS and PS, nesting and a second document are still refused anywhere.
+
 Plain scalars are typed the way the tool reads them: as js-yaml's default schema does for pnpm (`core`), and as text for Yarn and `.yarnrc.yml` (`failsafe`, js-yaml's `FAILSAFE_SCHEMA`, which Yarn uses). A plain scalar either YAML version reads as something other than text becomes an opaque `Scalar`, which the parsers refuse wherever they need text. Errors give a line and, from the parser, a column, never the file's text, because a report may be posted publicly and `.yarnrc.yml` can hold tokens. Lockfiles over 64 MiB are refused before parsing, as every format is, and registry settings files over 1 MiB.
 
 The lower bound is 6.0.2, the oldest release the test suite was run against here and the first with Python 3.13 wheels; `uv.lock` pins 6.0.3, the first with 3.14 wheels. There is no upper bound: only the documented event API (`yaml.parse` and the event classes) is used.

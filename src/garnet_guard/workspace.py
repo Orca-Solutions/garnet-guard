@@ -26,7 +26,7 @@ from .lockfiles.registries import (
     pnpm_workspace,
     yarnrc,
 )
-from .lockfiles.yarn import is_berry
+from .lockfiles.yarn import is_berry_text
 from .models import Change
 
 _DIRECT = ("uv.lock", "poetry.lock", "pylock.toml")
@@ -111,7 +111,7 @@ def registry_settings(lockfile: Path, data: bytes, root: Path) -> Registries:
         return NONE  # parse reports it
     if fmt == "pnpm-lock.yaml":
         files = [(NPMRC, npmrc), (PNPM_WORKSPACE, pnpm_workspace)]
-    elif fmt == "yarn.lock" and is_berry(data[:65536]):
+    elif fmt == "yarn.lock" and _berry(data):
         files = [(YARNRC, yarnrc)]
     else:
         return NONE
@@ -124,6 +124,14 @@ def registry_settings(lockfile: Path, data: bytes, root: Path) -> Registries:
         return NONE
     first, *rest = found
     return replace(first, also=rest[0]) if rest else first
+
+
+def _berry(data: bytes) -> bool:
+    """True if ``yarn.parse`` reads ``data`` as a Yarn 2+ lockfile."""
+    try:
+        return is_berry_text(data.decode("utf-8"))
+    except UnicodeDecodeError:
+        return False  # parse reports it
 
 
 def _settings_file(

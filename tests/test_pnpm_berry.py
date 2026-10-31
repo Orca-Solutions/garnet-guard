@@ -28,7 +28,7 @@ from garnet_guard.lockfiles import LockfileError, Pin, berry, detect, parse, pnp
 from garnet_guard.lockfiles import base as lock_base
 from garnet_guard.lockfiles.npm import INVALID_NAME
 from garnet_guard.lockfiles.registries import NONE, Registries, npmrc, pnpm_workspace, yarnrc
-from garnet_guard.lockfiles.yarn import is_berry
+from garnet_guard.lockfiles.yarn import is_berry, is_berry_text
 from garnet_guard.models import Change
 from garnet_guard.report import to_json, to_text
 from garnet_guard.workspace import changes_for, discover, registry_settings
@@ -207,6 +207,27 @@ def test_a_key_longer_than_1024_characters_reads_as_js_yaml_writes_it(yaml_parse
 def test_an_empty_document_is_none() -> None:
     assert yamldoc.load("", schema="core") is None
     assert yamldoc.load("# only a comment\n", schema="failsafe") is None
+
+
+def test_a_settings_file_is_held_to_the_rules_only_in_the_keys_read(yaml_parser: str) -> None:
+    read = frozenset({"registries"})
+    text = (
+        "catalog: &c\n  a: !!binary aGk=\n  a: 2\nother: *c\nscalar: &s x\n"
+        "registries:\n  default: x\n"
+        "deep: " + "[" * 31 + "]" * 31 + "\nlast: 1\nlast: 2\n"
+    )
+    doc = yamldoc.load(text, schema="core", read=read)
+    assert isinstance(doc, yamldoc.Mapping)
+    assert doc == {"registries": {"default": "x"}} and doc.lines == {"registries": 6}
+    with pytest.raises(LockfileError, match="line 1: nested deeper than Garnet reads"):
+        yamldoc.load("deep: " + "[" * 32 + "]" * 32 + "\n", schema="core", read=read)
+    with pytest.raises(LockfileError, match="line 1: a NEL, LS or PS"):
+        yamldoc.load("catalog: 'a\u2028b'\n", schema="core", read=read)
+    with pytest.raises(LockfileError, match="line 2: a YAML anchor"):
+        yamldoc.load("catalog: 1\n&k registries: x\n", schema="core", read=read)
+    # Without read, every key is held to them.
+    with pytest.raises(LockfileError, match="line 1: a YAML anchor"):
+        yamldoc.load(text, schema="core")
 
 
 # --- pnpm-lock.yaml: the generated fixtures ----------------------------------------------
@@ -441,6 +462,91 @@ def test_a_new_pnpm_tarball_behind_the_same_url_is_reported() -> None:
     ]
 
 
+# Written by pnpm 10.28.0 (pnpm install --lockfile-only --ignore-scripts) for
+# "pnpm": {"patchedDependencies": {"lodash@4.17.21": "../outside-lodash.patch"}}.
+OUTSIDE_PATCH_LOCK = """lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+patchedDependencies:
+  lodash@4.17.21:
+    hash: 3915e3468fb28e75d74657df0f51fd6084c8cce7eca09ee4cd46b0f10f6e581a
+    path: ../outside-lodash.patch
+
+importers:
+
+  .:
+    dependencies:
+      lodash:
+        specifier: 4.17.21
+        version: 4.17.21(patch_hash=3915e3468fb28e75d74657df0f51fd6084c8cce7eca09ee4cd46b0f10f6e581a)
+
+packages:
+
+  lodash@4.17.21:
+    resolution: {integrity: sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==}
+
+snapshots:
+
+  lodash@4.17.21(patch_hash=3915e3468fb28e75d74657df0f51fd6084c8cce7eca09ee4cd46b0f10f6e581a): {}
+"""
+LODASH = "    path: ../outside-lodash.patch\n"
+
+
+def _patched(key: str = "lodash@4.17.21", path: str = "../outside-lodash.patch") -> bytes:
+    return (
+        OUTSIDE_PATCH_LOCK.replace("  lodash@4.17.21:\n    hash", f"  '{key}':\n    hash", 1)
+        .replace(LODASH, f"    path: '{path}'\n")
+        .encode()
+    )
+
+
+@pytest.mark.parametrize(
+    ("key", "path", "expected"),
+    [
+        ("lodash@4.17.21", "../outside-lodash.patch", ("unsupported", pnpm.OUTSIDE_PATCH)),
+        ("lodash@4.17.21", "patches/lodash.patch", ("registry", None)),
+        ("lodash@4.17.21", "./patches/../lodash.patch", ("registry", None)),
+        ("lodash@4.17.21", "patches/../../lodash.patch", ("unsupported", pnpm.OUTSIDE_PATCH)),
+        ("lodash@4.17.21", "/tmp/lodash.patch", ("unsupported", pnpm.OUTSIDE_PATCH)),
+        ("lodash@4.17.21", "C:/x/lodash.patch", ("unsupported", pnpm.OUTSIDE_PATCH)),
+        ("lodash@4.17.21", "..\\lodash.patch", ("unsupported", pnpm.OUTSIDE_PATCH)),
+        # A bare name or a range patches every version pnpm matches it with.
+        ("lodash", "../x.patch", ("unsupported", pnpm.OUTSIDE_PATCH)),
+        ("lodash@^4.0.0", "../x.patch", ("unsupported", pnpm.OUTSIDE_PATCH)),
+        ("lodash@4.17.20", "../x.patch", ("registry", None)),
+        ("other", "../x.patch", ("registry", None)),
+    ],
+)
+def test_a_pnpm_patch_file_outside_the_project_is_reported(
+    key: str, path: str, expected: tuple[str, str | None]
+) -> None:
+    (pin,) = parse("pnpm-lock.yaml", _patched(key, path))
+    assert (pin.package, pin.version, pin.line) == ("lodash", "4.17.21", 22)
+    assert (pin.source, pin.detail) == expected
+
+
+def test_a_new_patch_file_outside_the_project_is_reported_each_time() -> None:
+    inside, outside = _patched(path="patches/lodash.patch"), _patched()
+    _, unchecked = changes_for("pnpm-lock.yaml", outside, inside)
+    assert [(u.change.package, u.change.line, u.rule_id, u.detail) for u in unchecked] == [
+        ("lodash", 22, "GRN-E005", pnpm.OUTSIDE_PATCH)
+    ]
+    assert changes_for("pnpm-lock.yaml", outside, outside) == ([], [])
+    rehashed = outside.replace(b"hash: 3915e3", b"hash: 000000", 1)
+    assert len(changes_for("pnpm-lock.yaml", rehashed, outside)[1]) == 1
+
+
+def test_a_pnpm_8_patch_file_outside_the_project_is_reported() -> None:
+    data = fixture("pnpm-lock-v6.yaml").replace(
+        b"path: patches/left-pad@1.3.0.patch", b"path: ../left-pad.patch"
+    )
+    (pin,) = [p for p in parse("pnpm-lock.yaml", data) if p.package == "left-pad"]
+    assert (pin.version, pin.source, pin.detail) == ("1.3.0", "unsupported", pnpm.OUTSIDE_PATCH)
+
+
 @pytest.mark.parametrize(
     ("data", "message"),
     [
@@ -470,6 +576,18 @@ def test_a_new_pnpm_tarball_behind_the_same_url_is_reported() -> None:
         ),
         (b"lockfileVersion: '9.0'\npackages: []\n", "line 2: packages isn't a mapping"),
         (b"lockfileVersion: '9.0'\nimporters: x\n", "line 2: importers isn't a mapping"),
+        (
+            OUTSIDE_PATCH_LOCK.replace(LODASH, "").encode(),
+            "line 8: a patchedDependencies entry with no path",
+        ),
+        (
+            OUTSIDE_PATCH_LOCK.replace(LODASH, "    path: [hunter2]\n").encode(),
+            "line 8: a path that isn't text",
+        ),
+        (
+            b"lockfileVersion: '9.0'\npatchedDependencies:\n  x@1.0.0: hunter2\n",
+            "line 3: a patchedDependencies entry pnpm doesn't write",
+        ),
         (b"- lockfileVersion\n", "the top level isn't a mapping"),
         (b"packages: {}\n", "no lockfileVersion; Garnet reads lockfileVersion 9.0 and 6.x"),
         (
@@ -480,6 +598,9 @@ def test_a_new_pnpm_tarball_behind_the_same_url_is_reported() -> None:
         (b"lockfileVersion: '5.3'\n", "lockfileVersion 5.3 is from pnpm 7 or earlier"),
         (b"lockfileVersion: '10.0'\n", "lockfileVersion 10.0 isn't one Garnet reads (9.0 or 6.x)"),
         (b"lockfileVersion: 'hunter2'\n", "a lockfileVersion isn't one Garnet reads"),
+        ("lockfileVersion: '\u00b2.0'\n".encode(), "a lockfileVersion isn't one Garnet reads"),
+        ("lockfileVersion: '\u0663.0'\n".encode(), "a lockfileVersion isn't one Garnet reads"),
+        (b"lockfileVersion: '" + b"9" * 5000 + b".0'\n", "a lockfileVersion isn't one Garnet"),
         (b"lockfileVersion: '9.0'\npackages:\n  a@1.0.0: &x\n", "line 3: a YAML anchor"),
     ],
 )
@@ -565,7 +686,45 @@ def test_pnpm_v6_entries_pnpm_8_doesnt_write_are_refused() -> None:
         ("; registry=https://npm.corp.example/\n# registry=x\n", None, {}),
         ("[section]\nregistry=https://npm.corp.example/\n", None, {}),
         ("@corp/x:registry=https://npm.corp.example/\n", None, {}),
-        ("registry\n", None, {}),
+        # A registry that isn't text: pnpm stops ("`registry` should be a string").
+        ("registry\n", False, {}),
+        ("registry=null\n", False, {}),
+        ("registry[]=https://registry.npmjs.org/\n", False, {}),
+        # Read as pnpm 10.28.0 reads them (its ini 1.x parser): each line below
+        # was given to pnpm, and it fetched from the registry the line names.
+        # A section header only when the line is exactly [name] ...
+        (" [x]\nregistry=https://npm.corp.example/\n", False, {}),
+        ("\t[x]\nregistry=https://npm.corp.example/\n", False, {}),
+        ("[x] \nregistry=https://npm.corp.example/\n", False, {}),
+        ("[x]]\nregistry=https://npm.corp.example/\n", False, {}),
+        ("[x\\]]\nregistry=https://npm.corp.example/\n", False, {}),
+        ("\ufeff[x]\nregistry=https://npm.corp.example/\n", False, {}),
+        # ... a byte order mark is trimmed from a key, and a line ends only at
+        # CR or LF ...
+        ("\ufeffregistry=https://npm.corp.example/\n", False, {}),
+        ("\u00a0registry\u00a0=https://npm.corp.example/\n", False, {}),
+        ("foo=bar\x0b[x]\nregistry=https://npm.corp.example/\n", False, {}),
+        ("[x]\r\nregistry=https://npm.corp.example/\r\n", None, {}),
+        # ... a line whose value holds a line separator is skipped ...
+        (
+            "registry=https://npm.corp.example/\nregistry=https://registry.npmjs.org/\u2028\n",
+            False,
+            {},
+        ),
+        ("registry=https://npm.corp.example/\u2028\n", None, {}),
+        # ... a backslash before anything but \\, ; or # is kept ...
+        ("registry=https://registry.npmjs\\.org/\n", False, {}),
+        # ... a quoted key is decoded, a JSON list to its JavaScript name ...
+        ("'registry'=https://npm.corp.example/\n", False, {}),
+        ('"registry"=https://npm.corp.example/\n', False, {}),
+        ("'[\"registry\"]'=https://npm.corp.example/\n", False, {}),
+        # ... and these are a comment, and a key that isn't registry.
+        ("\ufeff#registry=https://npm.corp.example/\n", None, {}),
+        ("\x1fregistry=https://npm.corp.example/\n", None, {}),
+        ("REGISTRY=https://npm.corp.example/\n", None, {}),
+        # A scope runs to the first colon, as in pnpm's getNetworkConfigs.
+        ("@corp:x:registry=https://npm.corp.example/\n", None, {"@corp": False}),
+        ("@corp:x/y:registry=https://npm.corp.example/\n", None, {"@corp": False}),
     ],
 )
 def test_npmrc_registry_settings(text: str, default: bool | None, scopes: dict[str, bool]) -> None:
@@ -606,11 +765,28 @@ def test_an_npmrc_registry_reports_the_packages_it_serves() -> None:
         ("npmRegistryServer: ${NPM_REGISTRY_SERVER}\n", False, {}),
         (
             "npmScopes:\n  corp:\n    npmRegistryServer: https://npm.corp.example\n"
-            "  '@pub':\n    npmAlwaysAuth: true\n",
+            "  pub:\n    npmAlwaysAuth: true\n",
             None,
             {"@corp": False, "@pub": None},
         ),
+        # Yarn 4.9.2 and 3.8.7 look scopes up without the @: Yarn 4.9.2 fetched
+        # @isaacs/string-locale-compare from npm's registry with this entry.
+        (
+            "npmRegistryServer: https://npm.corp.example\n"
+            "npmScopes:\n  '@corp':\n    npmRegistryServer: https://registry.npmjs.org\n",
+            False,
+            {},
+        ),
         ("yarnPath: .yarn/releases/yarn-4.9.2.cjs\nnodeLinker: node-modules\n", None, {}),
+        # Keys Garnet doesn't read may use anything YAML has, and repeat, as
+        # Yarn's js-yaml (json: true) lets them; only their names are checked.
+        (
+            "packageExtensions: &ext\n  'x@*': {dependencies: {y: '*'}}\nother: *ext\n"
+            "nodeLinker: pnp\nnodeLinker: node-modules\ntag: !custom {a: 1}\n"
+            "npmRegistryServer: https://npm.corp.example\n",
+            False,
+            {},
+        ),
     ],
 )
 def test_yarnrc_registry_settings(text: str, default: bool | None, scopes: dict[str, bool]) -> None:
@@ -634,7 +810,16 @@ def test_yarnrc_registry_settings(text: str, default: bool | None, scopes: dict[
         ),
         ("- hunter2\n", "the top level isn't a mapping"),
         ("npmAuthToken: 'hunter2\n", "invalid YAML at line 2"),
-        ("npmAuthToken: &a hunter2\n", "line 1: a YAML anchor"),
+        ("npmRegistryServer: &a hunter2\n", "line 1: a YAML anchor"),
+        ("x: &a hunter2\nnpmRegistryServer: *a\n", "line 2: a YAML alias"),
+        (
+            "npmScopes:\n  corp: &a {npmRegistryServer: hunter2}\n",
+            "line 2: a YAML anchor",
+        ),
+        ("npmRegistryServer: x\nnpmRegistryServer: hunter2\n", "line 2: a key repeated"),
+        ("&a npmRegistryServer: hunter2\n", "line 1: a YAML anchor"),
+        ("*a : hunter2\n", "line 1: a YAML alias"),
+        ("--- &a\nnpmAuthToken: hunter2\n", "a YAML anchor"),
     ],
 )
 def test_unreadable_yarnrc_files_are_lockfile_errors(text: str, message: str) -> None:
@@ -657,7 +842,17 @@ def test_unreadable_yarnrc_files_are_lockfile_errors(text: str, message: str) ->
             False,
             {"@pub": True},
         ),
-        ("registries:\n  '@corp': https://npm.corp.example/\n", False, {"@corp": False}),
+        # With no default, pnpm 10.28.0 installs unscoped packages from npm's
+        # public registry.
+        ("registries:\n  '@corp': https://npm.corp.example/\n", None, {"@corp": False}),
+        # A catalog with anchors, aliases and a merge key, as pnpm reads one.
+        (
+            "packages: [.]\ncatalogs:\n  a: &shared\n    debug: 4.3.6\n  b: *shared\n"
+            "  c:\n    <<: *shared\n    ms: 2.1.3\n"
+            "registries:\n  default: https://npm.corp.example/\n",
+            False,
+            {},
+        ),
     ],
 )
 def test_pnpm_workspace_registry_settings(
@@ -676,8 +871,12 @@ def test_pnpm_workspace_registry_settings(
     [
         ("registries: hunter2\n", "line 1: registries isn't a mapping"),
         ("registries:\n  default: [hunter2]\n", "line 2: a registries entry Garnet can't read"),
-        ("catalog:\n  react: &r 18.3.1\n", "line 2: a YAML anchor, which Garnet refuses"),
+        ("registries:\n  default: &r hunter2\n", "line 2: a YAML anchor, which Garnet refuses"),
+        ("catalog: &c {a: 1}\nregistries: *c\n", "line 2: a YAML alias, which Garnet refuses"),
+        ("catalog: &c {a: 1}\n<<: *c\n", "line 2: a YAML merge key, which Garnet refuses"),
+        ("registries: {}\nregistries: {default: hunter2}\n", "line 2: a key repeated"),
         ("- hunter2\n", "the top level isn't a mapping"),
+        ("catalog: '\n", "invalid YAML"),
     ],
 )
 def test_unreadable_pnpm_workspace_files_are_lockfile_errors(text: str, message: str) -> None:
@@ -741,6 +940,28 @@ def test_registry_settings_come_from_the_lockfile_folder(tmp_path: Path) -> None
     package_lock = sub / "package-lock.json"
     package_lock.write_bytes(fixture("package-lock-base.json"))
     assert registry_settings(package_lock, package_lock.read_bytes(), tmp_path) == NONE
+
+
+def test_registry_settings_follow_the_parser_on_a_long_comment_header(tmp_path: Path) -> None:
+    """The parser looks at the first 65,536 characters; 81,200 bytes of
+    comments in 41,200 characters still leave __metadata inside them."""
+    (tmp_path / ".yarnrc.yml").write_text("npmRegistryServer: https://npm.corp.example\n")
+    lock = tmp_path / "yarn.lock"
+    padding = "".join("# " + "\u00e9" * 100 + "\n" for _ in range(400))
+    lock.write_bytes(padding.encode() + fixture("yarn-berry-head.lock"))
+    data = lock.read_bytes()
+    assert len(data) - len(fixture("yarn-berry-head.lock")) > 65536
+    assert is_berry_text(data.decode())
+    settings = registry_settings(lock, data, tmp_path)
+    assert settings == Registries(".yarnrc.yml", False, {})
+    pins = parse("yarn.lock", data, registries=settings)
+    assert "private registry, set in .yarnrc.yml" in {p.detail for p in pins}
+    assert not any(p.source == "registry" for p in pins)
+    # Past 65,536 characters neither reads it as Yarn 2+.
+    lock.write_bytes(("#\n" * 40000).encode() + fixture("yarn-berry-head.lock"))
+    assert registry_settings(lock, lock.read_bytes(), tmp_path) == NONE
+    with pytest.raises(LockfileError, match="isn't a Yarn 1 lockfile"):
+        parse("yarn.lock", lock.read_bytes())
 
 
 def test_registry_settings_files_are_read_like_lockfiles(tmp_path: Path) -> None:
@@ -879,6 +1100,7 @@ def entry(key: str, resolution: str, version: str = "1.0.0", checksum: str = "10
 
 
 ROOT = "locator=app%40workspace%3A."
+JSR_YARN = "JSR registry, Yarn's default for @jsr packages"
 LIB = "locator=%40app%2Flib%40workspace%3Apackages%2Flib"
 PATCH = "x@patch:x@npm%3A1.0.0"
 OUTSIDE = ("x", "1.0.0", "unsupported", "patch file outside the project")
@@ -925,6 +1147,7 @@ REGISTRY = ("x", "1.0.0", "registry", None)
         (f"{PATCH}#../x.patch::version=1.0.0&hash=abc&{ROOT}", OUTSIDE),
         (f"{PATCH}#../../../x.patch::version=1.0.0&hash=abc&{LIB}", OUTSIDE),
         (f"{PATCH}#/tmp/x.patch::version=1.0.0&hash=abc&{ROOT}", OUTSIDE),
+        (f"{PATCH}#C:/x.patch::version=1.0.0&hash=abc&{ROOT}", OUTSIDE),
         (f"{PATCH}#~/../x.patch::version=1.0.0&hash=abc", OUTSIDE),
         (f"{PATCH}#./x.patch::version=1.0.0&hash=abc", OUTSIDE),
         (f"{PATCH}#~/a.patch&../b.patch::version=1.0.0&hash=abc&{ROOT}", OUTSIDE),
@@ -934,6 +1157,18 @@ REGISTRY = ("x", "1.0.0", "registry", None)
             ("x", "1.0.0", "unsupported", "git source"),
         ),
         ("x@patch:x@workspace%3Apackages%2Fx#~/x.patch::version=1.0.0&hash=abc", None),
+        # A patch file outside the project counts even on the project's own code.
+        (
+            f"x@patch:x@workspace%3Apackages%2Fx#../../../x.patch::version=1.0.0&hash=abc&{LIB}",
+            OUTSIDE,
+        ),
+        (
+            "x@patch:x@portal%3A./vendor/x%3A%3Alocator=app%2540workspace%253A.#../outside.patch"
+            f"::version=1.0.0&hash=abc&{ROOT}",
+            OUTSIDE,
+        ),
+        # Yarn 4 reads Yarn 3's optional flag as part of a relative path.
+        (f"{PATCH}#~builtin<compat/x>::version=1.0.0&hash=abc", OUTSIDE),
         (f"x@file:./x.tgz#./x.tgz::hash=abc&{ROOT}", ("x", "1.0.0", "unsupported", "file: source")),
         (f"x@file:./x#./x::hash=abc&{ROOT}", ("x", "1.0.0", "unsupported", "file: source")),
         (
@@ -952,6 +1187,7 @@ REGISTRY = ("x", "1.0.0", "registry", None)
             ("x", "1.0.0", "unsupported", "tarball URL outside the npm registry"),
         ),
         ("x@other:thing", ("x", "1.0.0", "unsupported", "unsupported source")),
+        ("@jsr/x@npm:1.0.0", ("@jsr/x", "1.0.0", "unsupported", JSR_YARN)),
         (
             "Evil\u202e@npm:1.0.0",
             (INVALID_NAME, "1.0.0", "unsupported", "not a valid npm package name"),
@@ -966,6 +1202,72 @@ def test_berry_sources(resolution: str, expected: tuple[str, str, str, str | Non
     (pin,) = pins
     assert (pin.package, pin.version, pin.source, pin.detail) == expected
     assert pin.line == 5 and pin.ecosystem == "npm"
+
+
+YARN3 = "__metadata:\n  version: 6\n  cacheKey: 8\n"
+
+
+@pytest.mark.parametrize(
+    ("resolution", "version", "expected"),
+    [
+        # Written by Yarn 3.8.7 (yarn install, YARN_ENABLE_SCRIPTS=0) for
+        # typescript 5.5.4, resolve 1.22.8 and a patch in .yarn/patches.
+        (
+            "typescript@patch:typescript@npm%3A5.5.4#~builtin<compat/typescript>"
+            "::version=5.5.4&hash=379a07",
+            "5.5.4",
+            ("typescript", "5.5.4", "registry", None),
+        ),
+        (
+            "resolve@patch:resolve@npm%3A1.22.8#~builtin<compat/resolve>"
+            "::version=1.22.8&hash=c3c19d",
+            "1.22.8",
+            ("resolve", "1.22.8", "registry", None),
+        ),
+        (
+            "lodash@patch:lodash@npm%3A4.17.21#./.yarn/patches/lodash.patch"
+            "::version=4.17.21&hash=172044&locator=y3%40workspace%3A.",
+            "4.17.21",
+            ("lodash", "4.17.21", "registry", None),
+        ),
+        # Yarn 3 has no project paths: ~/x.patch is optional /x.patch.
+        (f"{PATCH}#~/patches/x.patch::version=1.0.0&hash=abc", "1.0.0", OUTSIDE),
+        (f"{PATCH}#~./x.patch::version=1.0.0&hash=abc&{ROOT}", "1.0.0", REGISTRY),
+        (f"{PATCH}#~../x.patch::version=1.0.0&hash=abc&{ROOT}", "1.0.0", OUTSIDE),
+        # Nor Yarn 4's flags: this is a relative path, with no workspace to start from.
+        (f"{PATCH}#optional!builtin<compat/x>::version=1.0.0&hash=abc", "1.0.0", OUTSIDE),
+        # Yarn 3 has no JSR default; it fetches @jsr packages from its registry.
+        ("@jsr/x@npm:1.0.0", "1.0.0", ("@jsr/x", "1.0.0", "registry", None)),
+    ],
+)
+def test_berry_yarn_3_patch_paths(
+    resolution: str, version: str, expected: tuple[str, str, str, str | None]
+) -> None:
+    data = berry_lock(entry("x@whatever", resolution, version=version), metadata=YARN3)
+    (pin,) = parse("yarn.lock", data)
+    assert (pin.package, pin.version, pin.source, pin.detail) == expected
+
+
+def test_a_berry_jsr_package_is_checked_when_yarnrc_configures_the_scope() -> None:
+    data = berry_lock(entry("@jsr/x@npm:1.0.0", "@jsr/x@npm:1.0.0"))
+    public = yarnrc("npmScopes:\n  jsr:\n    npmRegistryServer: https://registry.npmjs.org\n")
+    assert rows(parse("yarn.lock", data, registries=public)) == [
+        ("@jsr/x", "1.0.0", 5, "registry", None)
+    ]
+    # A scope without a server uses npmRegistryServer, as in Yarn's getScopeRegistry.
+    token_only = yarnrc("npmScopes:\n  jsr:\n    npmAuthToken: hunter2\n")
+    assert rows(parse("yarn.lock", data, registries=token_only)) == [
+        ("@jsr/x", "1.0.0", 5, "registry", None)
+    ]
+    corp = yarnrc("npmScopes:\n  jsr:\n    npmRegistryServer: https://npm.corp.example\n")
+    assert [p.detail for p in parse("yarn.lock", data, registries=corp)] == [
+        "private registry, set in .yarnrc.yml"
+    ]
+    other = yarnrc("npmScopes:\n  corp:\n    npmRegistryServer: https://npm.corp.example\n")
+    assert [p.detail for p in parse("yarn.lock", data, registries=other)] == [JSR_YARN]
+    # Yarn never reads an '@jsr' entry, so the JSR default still applies.
+    at_jsr = yarnrc("npmScopes:\n  '@jsr':\n    npmRegistryServer: https://registry.npmjs.org\n")
+    assert [p.detail for p in parse("yarn.lock", data, registries=at_jsr)] == [JSR_YARN]
 
 
 def test_an_alias_is_checked_as_the_package_it_resolves_to() -> None:
@@ -1052,6 +1354,18 @@ def test_an_invalid_berry_name_is_reported_without_echoing_it() -> None:
         (
             berry_lock(metadata="# c\n__metadata:\n  version: hunter2\n"),
             "line 2: __metadata a version isn't one Garnet reads (4 to 8)",
+        ),
+        (
+            berry_lock(metadata="__metadata:\n  version: \u00b3\n"),
+            "line 1: __metadata a version isn't one Garnet reads (4 to 8)",
+        ),
+        (
+            berry_lock(metadata="__metadata:\n  version: \u0668\n"),
+            "line 1: __metadata a version isn't one Garnet reads (4 to 8)",
+        ),
+        (
+            berry_lock(metadata="__metadata:\n  version: " + "9" * 5000 + "\n"),
+            "line 1: __metadata a version isn't one Garnet reads (4 to 8)",
         ),
         (
             berry_lock(metadata="__metadata:\n  version: 8\n  version: 8\n"),

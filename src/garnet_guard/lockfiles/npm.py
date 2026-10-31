@@ -5,6 +5,7 @@ Pure string handling: nothing here fetches, resolves or installs.
 
 from __future__ import annotations
 
+import posixpath
 import re
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -149,3 +150,19 @@ def source_problem(url: str, name: str, version: str | None) -> str | None:
             return "private registry"
         return "tarball URL outside the npm registry"
     return "unsupported source"
+
+
+_DRIVE = re.compile("[A-Za-z]:")
+
+
+def inside(base: str, path: str) -> bool:
+    """True if ``path``, taken from the folder ``base`` (relative to the
+    lockfile's folder), stays inside the lockfile's folder. An absolute
+    path, one that starts with a Windows drive (``C:``) or one with a
+    backslash never does."""
+    if not path or "\\" in path or posixpath.isabs(path) or posixpath.isabs(base):
+        return False
+    if _DRIVE.match(path) or _DRIVE.match(base):
+        return False
+    joined = posixpath.normpath(posixpath.join(base, path))
+    return joined != ".." and not joined.startswith("../")

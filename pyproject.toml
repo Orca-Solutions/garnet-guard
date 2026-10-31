@@ -153,31 +153,8 @@ allow_indirect_imports = true
 [[tool.importlinter.contracts]]
 name = "only lockfiles/yamldoc.py imports PyYAML (ADR-0016)"
 type = "forbidden"
-source_modules = [
-    "garnet_guard.checks",
-    "garnet_guard.facts",
-    "garnet_guard.ecosystems",
-    "garnet_guard.engine",
-    "garnet_guard.report",
-    "garnet_guard.markdown",
-    "garnet_guard.sarif",
-    "garnet_guard.cli",
-    "garnet_guard.workspace",
-    "garnet_guard.safe_archive",
-    "garnet_guard.net",
-    "garnet_guard.policy",
-    "garnet_guard.models",
-    "garnet_guard.lockfiles.base",
-    "garnet_guard.lockfiles.berry",
-    "garnet_guard.lockfiles.diff",
-    "garnet_guard.lockfiles.npm",
-    "garnet_guard.lockfiles.package_lock",
-    "garnet_guard.lockfiles.pnpm",
-    "garnet_guard.lockfiles.pylock",
-    "garnet_guard.lockfiles.registries",
-    "garnet_guard.lockfiles.requirements",
-    "garnet_guard.lockfiles.toml_locks",
-    "garnet_guard.lockfiles.yarn",
-]
+# The whole package, so a module added later is covered too.
+source_modules = ["garnet_guard"]
 forbidden_modules = ["yaml"]
+ignore_imports = ["garnet_guard.lockfiles.yamldoc -> yaml"]
 allow_indirect_imports = true

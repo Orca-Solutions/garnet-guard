@@ -15,6 +15,7 @@ Pure: the caller reads the files (``workspace.registry_settings``).
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -72,58 +73,124 @@ def _public(url: str) -> bool:
     return "${" not in url and url.strip().rstrip("/") in PUBLIC
 
 
-def _ini_value(raw: str) -> str:
-    """An .npmrc value as npm's ``ini`` reads it: quotes removed, or an
-    unquoted value cut at an inline ``;`` or ``#`` comment."""
-    value = raw.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        if value[0] == '"':
-            try:
-                decoded = json.loads(value)
-            except ValueError:
-                return value[1:-1]
-            return decoded if isinstance(decoded, str) else value[1:-1]
-        return value[1:-1]
+# .npmrc is read the way pnpm 10 reads it: with the ``ini`` 1.x parser
+# that config-chain uses. Lines end only at CR or LF; a line is a section
+# header only if it is exactly ``[name]``, with nothing before the ``[``
+# or after the ``]``; a line whose value holds U+2028 or U+2029 matches
+# none of the parser's patterns and is skipped. Keys and values are
+# trimmed the way JavaScript's ``trim`` trims, which removes a byte order
+# mark and leaves other control characters.
+_JS_SPACE = (
+    "\t\n\x0b\x0c\r \xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007"
+    "\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+)
+_INI_LINES = re.compile("[\r\n]+")
+_INI_COMMENT = re.compile(f"[{_JS_SPACE}]*[;#]")
+_INI_SECTION = re.compile(r"\[[^\]]*\]")
+_INI_SETTING = re.compile("([^=]+)(?:=([^\n\r\u2028\u2029]*))?")
+
+
+def _json(text: str) -> object:
+    """JSON.parse, which reads no NaN or Infinity."""
+
+    def constant(name: str) -> object:
+        raise ValueError(name)
+
+    return json.loads(text, parse_constant=constant)
+
+
+def _ini_value(raw: str) -> object:
+    """A key or value as ``ini``'s ``unsafe`` reads it: trimmed, then a
+    quoted one JSON-decoded (kept as written if that fails), an unquoted
+    one cut at an inline ``;`` or ``#`` comment, ``\\;``, ``\\#`` and
+    ``\\\\`` unescaped and any other backslash kept."""
+    value = raw.strip(_JS_SPACE)
+    if (value[:1] == '"' and value[-1:] == '"') or (value[:1] == "'" and value[-1:] == "'"):
+        if value[0] == "'":
+            value = value[1:-1]
+        try:
+            return _json(value)
+        except (ValueError, RecursionError):
+            return value
     out = []
     escaped = False
     for c in value:
         if escaped:
-            out.append(c)
+            out.append(c if c in "\\;#" else "\\" + c)
             escaped = False
-        elif c == "\\":
-            escaped = True
         elif c in ";#":
             break
+        elif c == "\\":
+            escaped = True
         else:
             out.append(c)
-    return "".join(out).strip()
+    if escaped:
+        out.append("\\")
+    return "".join(out).strip(_JS_SPACE)
+
+
+def _js_key(key: object) -> str:
+    """The property name JavaScript makes of a decoded key (``String(key)``)."""
+    if isinstance(key, str):
+        return key
+    if isinstance(key, list):
+        return ",".join("" if k is None else _js_key(k) for k in key)
+    if isinstance(key, dict):
+        return "[object Object]"
+    return json.dumps(key)  # true, false, null or a number: never a registry key
+
+
+def _npmrc_settings(text: str) -> dict[str, object]:
+    """The top-level settings of an .npmrc, as ``ini.parse`` builds them."""
+    settings: dict[str, object] = {}
+    in_section = False
+    for line in _INI_LINES.split(text):
+        if not line or _INI_COMMENT.match(line):
+            continue
+        if _INI_SECTION.fullmatch(line):
+            in_section = True  # the keys after it are the section's, not settings
+            continue
+        m = _INI_SETTING.fullmatch(line)
+        if m is None or in_section:
+            continue
+        raw_key = _ini_value(m[1])
+        listed = isinstance(raw_key, str) and len(raw_key) > 2 and raw_key.endswith("[]")
+        key = raw_key[:-2] if listed and isinstance(raw_key, str) else _js_key(raw_key)
+        if key == "__proto__":
+            continue
+        value = True if m[2] is None else _ini_value(m[2])
+        if isinstance(value, str) and value in ("true", "false", "null"):
+            value = json.loads(value)
+        current = settings.get(key)
+        if listed and not isinstance(current, list):
+            current = [current] if current else []
+        if isinstance(current, list):
+            current.append(value)
+            value = current
+        settings[key] = value
+    return settings
 
 
 def npmrc(text: str) -> Registries:
-    """``registry=`` and ``@scope:registry=`` from an .npmrc, last one winning.
+    """``registry`` and ``@scope:registry`` from an .npmrc, last one winning,
+    read as pnpm reads them (see ``_INI_LINES`` above).
 
-    A value that names an environment variable (``${NPM_REGISTRY}``) is
-    taken as another registry: Garnet can't see the variable, so it can't
-    tell the package installs from the public one.
+    A value that isn't text, or that names an environment variable
+    (``${NPM_REGISTRY}``), is taken as another registry: pnpm stops on the
+    first, and Garnet can't see the variable, so it can't tell the package
+    installs from the public one. As in pnpm, the scope of a scope key runs
+    to its first colon (``@corp:x:registry`` is ``@corp``'s).
     """
     default: bool | None = None
     scopes: dict[str, bool | None] = {}
-    in_section = False
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line[0] in ";#":
-            continue
-        if line.startswith("[") and line.endswith("]"):
-            in_section = True  # npm reads a section's keys as nested, not as settings
-            continue
-        key, eq, value = line.partition("=")
-        if not eq or in_section:
-            continue
-        key = _ini_value(key)
+    for key, value in _npmrc_settings(text).items():
+        public = isinstance(value, str) and _public(value)
         if key == "registry":
-            default = _public(_ini_value(value))
-        elif key.startswith("@") and key.endswith(":registry") and "/" not in key:
-            scopes[key[: -len(":registry")]] = _public(_ini_value(value))
+            default = public
+        elif key.startswith("@") and key.endswith(":registry"):
+            scope = key[: key.index(":")]
+            if "/" not in scope:
+                scopes[scope] = public
     return Registries(NPMRC, default, scopes)
 
 
@@ -132,8 +199,10 @@ def pnpm_workspace(text: str) -> Registries:
     settings over .npmrc's, so a ``registries`` table (``default`` and
     ``@scope`` URLs) replaces the registries .npmrc set; a ``registry`` key
     there changes nothing, since pnpm has read the registries by then.
-    Raises ``LockfileError`` for one Garnet can't read."""
-    doc = load(text, schema="core")
+    Raises ``LockfileError`` for one Garnet can't read; only ``registries``
+    is held to the YAML reader's rules (anchors, aliases, tags elsewhere,
+    in a catalog say, are passed over)."""
+    doc = load(text, schema="core", read=frozenset({"registries"}))
     if doc is None:
         return Registries(PNPM_WORKSPACE)
     if not isinstance(doc, YamlMapping):
@@ -143,7 +212,10 @@ def pnpm_workspace(text: str) -> Registries:
     table = doc["registries"]
     if not isinstance(table, YamlMapping):
         raise LockfileError(f"line {doc.lines['registries']}: registries isn't a mapping")
-    default = False  # with no default, pnpm has no registry for unscoped packages
+    # With no default, pnpm 10 installs unscoped packages from npm's public
+    # registry, even when .npmrc names another one (which Garnet still
+    # counts, as it counts either file).
+    default: bool | None = None
     scopes: dict[str, bool | None] = {}
     for key, url in table.items():
         line = table.lines[key]
@@ -158,8 +230,9 @@ def pnpm_workspace(text: str) -> Registries:
 
 def yarnrc(text: str) -> Registries:
     """``npmRegistryServer`` and ``npmScopes.<scope>.npmRegistryServer`` from
-    a .yarnrc.yml. Raises ``LockfileError`` for one Garnet can't read."""
-    doc = load(text, schema="failsafe")
+    a .yarnrc.yml. Raises ``LockfileError`` for one Garnet can't read; only
+    those two keys are held to the YAML reader's rules."""
+    doc = load(text, schema="failsafe", read=frozenset({"npmRegistryServer", "npmScopes"}))
     if doc is None:
         return Registries(YARNRC)
     if not isinstance(doc, YamlMapping):
@@ -174,7 +247,11 @@ def yarnrc(text: str) -> Registries:
             line = table.lines[scope]
             if not isinstance(scope, str) or not isinstance(settings, YamlMapping):
                 raise LockfileError(f"line {line}: an npmScopes entry Garnet can't read")
-            scopes["@" + scope.removeprefix("@")] = _server(settings, "an npmRegistryServer")
+            server = _server(settings, "an npmRegistryServer")
+            # Yarn looks a scope up by its name without the @ (npmScopes
+            # has no key normalization), so it never reads an '@corp' entry.
+            if not scope.startswith("@"):
+                scopes["@" + scope] = server
     return Registries(YARNRC, default, scopes)
 
 

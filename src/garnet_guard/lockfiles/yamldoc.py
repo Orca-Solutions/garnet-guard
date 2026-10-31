@@ -1,10 +1,14 @@
-"""A strict YAML reader for pnpm-lock.yaml, Yarn 2+ yarn.lock and .yarnrc.yml (ADR-0016).
+"""A strict YAML reader for pnpm-lock.yaml and Yarn 2+ yarn.lock, and for
+the registry keys of pnpm-workspace.yaml and .yarnrc.yml (ADR-0016).
 
 The document is built here from PyYAML's parser events, not by a loader's
 constructor. That way an alias, an anchor, a tag outside the core schema,
 a merge key, a repeated key, a key that isn't a scalar and nesting deeper
 than :data:`MAX_DEPTH` are refused at the event that carries them, before
-anything is built, and each mapping records the line of every key.
+anything is built, and each mapping records the line of every key. In a
+settings file only the top-level keys Garnet reads are held to that; the
+values of the others, which people write by hand (a pnpm catalog with
+anchors), are passed over.
 
 pnpm and Yarn read these files with js-yaml, a YAML 1.2 parser; PyYAML
 reads YAML 1.1. Plain scalars are resolved the way the tool reads them:
@@ -35,6 +39,7 @@ Schema = Literal["core", "failsafe"]
 MAX_DEPTH = 32
 
 _CORE = "tag:yaml.org,2002:"
+_NODE_EVENTS = (yaml.ScalarEvent, yaml.AliasEvent, yaml.MappingStartEvent, yaml.SequenceStartEvent)
 _LINE_BREAKS = re.compile("[\x85  ]")
 
 # Plain scalars that js-yaml's default schema or YAML 1.1 reads as a null,
@@ -157,7 +162,7 @@ def _refuse(event: yaml.Event, line: int, kind: str) -> None:
         raise LockfileError(f"line {line}: a YAML tag Garnet doesn't read")
 
 
-def _build(text: str, schema: Schema) -> object:
+def _build(text: str, schema: Schema, read: frozenset[str] | None) -> object:
     loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
     root: object = None
     documents = 0
@@ -165,6 +170,25 @@ def _build(text: str, schema: Schema) -> object:
     stack: list[Mapping | Sequence] = []
     keys: list[object] = []
     waiting: list[bool] = []
+    # Collections open inside a top-level value that isn't read (``read``).
+    skipping = 0
+
+    def unread() -> bool:
+        """True if the next event starts the value of a top-level key that
+        isn't read, which is passed over unchecked and left out."""
+        return (
+            read is not None
+            and len(stack) == 1
+            and isinstance(stack[0], Mapping)
+            and waiting[0]
+            and keys[0] not in read
+        )
+
+    def skip() -> None:
+        top = stack[0]
+        assert isinstance(top, Mapping)
+        del top.lines[keys[0]]
+        waiting[0] = False
 
     def add(value: object, line: int) -> None:
         nonlocal root
@@ -191,6 +215,22 @@ def _build(text: str, schema: Schema) -> object:
     for event in yaml.parse(text, Loader=loader):
         kind = type(event)
         line = event.start_mark.line + 1
+        if skipping:
+            if kind is yaml.MappingStartEvent or kind is yaml.SequenceStartEvent:
+                skipping += 1
+                if len(stack) + skipping > MAX_DEPTH:
+                    raise LockfileError(f"line {line}: nested deeper than Garnet reads")
+            elif kind is yaml.MappingEndEvent or kind is yaml.SequenceEndEvent:
+                skipping -= 1
+                if not skipping:
+                    skip()
+            continue
+        if unread() and kind in _NODE_EVENTS:
+            if kind is yaml.MappingStartEvent or kind is yaml.SequenceStartEvent:
+                skipping = 1
+            else:
+                skip()
+            continue
         if kind is yaml.ScalarEvent:
             if event.anchor is not None:
                 raise LockfileError(f"line {line}: a YAML anchor, which Garnet refuses")
@@ -217,10 +257,17 @@ def _build(text: str, schema: Schema) -> object:
     return root
 
 
-def load(text: str, *, schema: Schema) -> object:
+def load(text: str, *, schema: Schema, read: frozenset[str] | None = None) -> object:
     """The document in ``text``: str, None, bool, :class:`Scalar`,
     :class:`Mapping` and :class:`Sequence` values only. Raises
-    ``LockfileError`` with a position, never the file's text."""
+    ``LockfileError`` with a position, never the file's text.
+
+    ``read``, for a settings file, names the top-level keys the caller
+    reads. The value of any other top-level key is passed over and left
+    out of the document, anchors, aliases, tags and repeated keys in it
+    included, as long as the file still parses as YAML. The top-level keys
+    themselves, and everything under a key in ``read``, are held to the
+    same rules as a lockfile."""
     m = _LINE_BREAKS.search(text)
     if m:
         line = text.count("\n", 0, m.start()) + 1
@@ -228,7 +275,7 @@ def load(text: str, *, schema: Schema) -> object:
             f"line {line}: a NEL, LS or PS character, which YAML versions read differently"
         )
     try:
-        return _build(text, schema)
+        return _build(text, schema, read)
     except yaml.MarkedYAMLError as err:
         mark = err.problem_mark or err.context_mark
         where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""

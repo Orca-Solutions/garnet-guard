@@ -57,6 +57,14 @@ def is_berry(head: bytes) -> bool:
     return False
 
 
+def is_berry_text(text: str) -> bool:
+    """:func:`is_berry` on the part of a decoded yarn.lock that :func:`parse`
+    looks at: its first 65,536 characters, after a byte order mark. Garnet
+    decides Berry or Yarn 1 only here, so the parser and the registry
+    settings it reads always agree."""
+    return is_berry(text.removeprefix("\ufeff")[:65536].encode())
+
+
 # --- Yarn 1's tokenizer and parser --------------------------------------------------
 
 _NEWLINE, _COMMENT, _INDENT, _STRING, _NUMBER, _BOOLEAN = "nl", "#", "indent", "str", "num", "bool"
@@ -364,12 +372,11 @@ def parse(text: str, registries: Registries = NONE) -> list[Pin]:
     counts, dev and optional dependencies too; yarn doesn't list workspace
     members, and an entry whose patterns are all ``link:`` is skipped.
     """
-    text = text.removeprefix("﻿")
-    head = text[:65536].encode()
-    if is_berry(head):
+    if is_berry_text(text):
         from . import berry
 
         return berry.parse(text, registries)
+    text = text.removeprefix("\ufeff")
     leading = []
     for raw in text.splitlines():
         if raw.strip() and not raw.startswith("#"):

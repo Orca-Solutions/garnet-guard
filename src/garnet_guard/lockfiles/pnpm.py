@@ -14,7 +14,11 @@ version, as a package-lock.json ``resolved`` URL must. Git, directory and
 other tarball sources are GRN-E005. ``link:`` and workspace dependencies are the project's own code
 and have no ``packages`` entry, so nothing is reported for them. A
 patched dependency (``patchedDependencies``) is checked as the release it
-patches; the patch file is in the repository.
+patches when its patch file, at the ``path`` the lockfile records (which
+a frozen install requires to match the project's settings), is inside the
+folder that holds pnpm-lock.yaml; otherwise every release its key names
+(``name@version``, or every version for a bare name or a range) is GRN-E005
+"patch file outside the project".
 
 A shape pnpm doesn't write and might read some other way is refused: a
 snapshot with its own resolution or version, a snapshot with no
@@ -28,13 +32,15 @@ import re
 from typing import Any
 
 from .base import LockfileError, Pin
-from .npm import INVALID_NAME, is_semver, source_problem, valid_name
+from .npm import INVALID_NAME, inside, is_semver, source_problem, valid_name
 from .registries import NONE, Registries
 from .yamldoc import Mapping, Scalar, load
 
 _V9 = ("9.0",)
 _V6 = ("6.0", "6.1")
 _SHOWN_VERSION = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3})?")
+# ASCII digits only: int() refuses some characters str.isdigit() accepts.
+_MAJOR = re.compile("[0-9]{1,8}")
 # Snapshot fields that would change what pnpm fetches if the packages
 # entry didn't set them. pnpm 9 and 10 write only dependencies,
 # optionalDependencies, transitivePeerDependencies, optional and id there.
@@ -55,7 +61,7 @@ def _lockfile_version(doc: Mapping) -> str:
         return text
     shown = f"lockfileVersion {text}" if _SHOWN_VERSION.fullmatch(text) else "a lockfileVersion"
     major = text.partition(".")[0]
-    if major.isdigit() and int(major) <= 5:
+    if _MAJOR.fullmatch(major) and int(major) <= 5:
         raise LockfileError(
             f"{shown} is from pnpm 7 or earlier, which Garnet doesn't read; regenerate the "
             "lockfile with pnpm 8 or later"
@@ -205,6 +211,43 @@ def _registry_problem(name: str, registries: Registries) -> str | None:
     return None
 
 
+# --- patchedDependencies -------------------------------------------------------------
+
+OUTSIDE_PATCH = "patch file outside the project"
+
+
+def _outside_patches(doc: Mapping) -> dict[tuple[str, str | None], str]:
+    """The releases ``patchedDependencies`` patches from a file outside the
+    lockfile's folder, as (name, version), with None for every version of
+    the name, each with that patch's path and hash."""
+    patched = _section(doc, "patchedDependencies")
+    outside: dict[tuple[str, str | None], str] = {}
+    for key, entry in patched.items():
+        line = patched.lines[key]
+        if not isinstance(key, str) or not isinstance(entry, Mapping):
+            raise LockfileError(f"line {line}: a patchedDependencies entry pnpm doesn't write")
+        path = _text(entry, "path", line)
+        if path is None:
+            raise LockfileError(f"line {line}: a patchedDependencies entry with no path")
+        if inside(".", path):
+            continue
+        parsed = split_key(key)
+        if parsed is not None and is_semver(parsed[1]):
+            release: tuple[str, str | None] = parsed
+        else:  # a bare name, or a range, which pnpm matches against every version
+            release = (key if parsed is None else parsed[0], None)
+        outside[release] = f"patch={path} hash={_text(entry, 'hash', line)}"
+    return outside
+
+
+def _patch_outside(pin: Pin, outside: dict[tuple[str, str | None], str]) -> Pin:
+    patch = outside.get((pin.package, pin.version)) or outside.get((pin.package, None))
+    if patch is None:
+        return pin
+    origin = f"{pin.origin or f'{pin.package}@{pin.version}'} {patch}"
+    return Pin(pin.package, pin.version, pin.line, "unsupported", OUTSIDE_PATCH, "npm", origin)
+
+
 # --- lockfileVersion 9.0 -----------------------------------------------------------
 
 
@@ -290,6 +333,6 @@ def parse(text: str, registries: Registries = NONE) -> list[Pin]:
         raise LockfileError("the top level isn't a mapping")
     version = _lockfile_version(doc)
     _section(doc, "importers")
-    _section(doc, "patchedDependencies")
+    outside = _outside_patches(doc)
     pins = _v9(doc, registries) if version in _V9 else _v6(doc, registries)
-    return sorted(pins, key=lambda p: p.line)
+    return sorted((_patch_outside(p, outside) for p in pins), key=lambda p: p.line)

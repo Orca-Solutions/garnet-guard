@@ -18,7 +18,13 @@ is checked as that package.
   release and applies patch files that are either in the project (``~/``,
   or a path from a workspace) or built into Yarn (``builtin<compat/...>``,
   which Yarn applies to typescript, resolve and fsevents); a patch file
-  anywhere else is GRN-E005.
+  anywhere else is GRN-E005, whatever it patches. Yarn 4 (``__metadata``
+  7 and 8) writes an optional patch as ``optional!builtin<...>``, Yarn 2
+  and 3 (4 to 6) as ``~builtin<...>``, and only Yarn 4 reads ``~/`` as
+  the project's folder.
+- A ``@jsr/`` package is GRN-E005 in a Yarn 4 lockfile unless
+  ``.yarnrc.yml`` configures the ``jsr`` scope: Yarn 4 fetches it from
+  npm.jsr.io by default; Yarn 2 and 3 have no such default.
 
 Yarn 1 and Berry are told apart by ``yarn.is_berry``, which counts a file
 as Berry only in the shape Yarn 1 ignores.
@@ -26,17 +32,17 @@ as Berry only in the shape Yarn 1 ignores.
 
 from __future__ import annotations
 
-import posixpath
 import re
 from typing import Any
 from urllib.parse import parse_qs, unquote
 
 from .base import LockfileError, Pin
-from .npm import INVALID_NAME, is_semver, looks_like_git, source_problem, valid_name
+from .npm import INVALID_NAME, inside, is_semver, looks_like_git, source_problem, valid_name
 from .registries import NONE, Registries
 from .yamldoc import Mapping, load
 
 METADATA_VERSIONS = range(4, 9)
+YARN4_METADATA = 7  # Yarn 4 writes 7 (its release candidates) and 8
 
 # Yarn's structUtils: a strict locator, and a range split into protocol,
 # source, selector and ::params.
@@ -45,6 +51,8 @@ _RANGE = re.compile(r"([^#:]*:)?((?:(?!::)[^#])*)(?:#((?:(?!::).)*))?(?:::(.*))?
 _BAD_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _BUILTIN_PATCH = re.compile(r"builtin<[^>]+>")
 _GIT_PROTOCOLS = ("git:", "git+", "ssh:", "github:", "gitlab:", "bitbucket:", "git@")
+# ASCII digits only: int() refuses some characters str.isdigit() accepts.
+_METADATA_VERSION = re.compile("[0-9]{1,8}")
 
 
 def _decode(text: str, line: int) -> str:
@@ -87,15 +95,6 @@ def _locator(text: str, line: int) -> tuple[str, str]:
     return name, m[3]
 
 
-def _inside(base: str, path: str) -> bool:
-    """True if ``path``, taken from the folder ``base``, stays inside the
-    folder that holds yarn.lock."""
-    if not path or "\\" in path or posixpath.isabs(path) or posixpath.isabs(base):
-        return False
-    joined = posixpath.normpath(posixpath.join(base, path))
-    return joined != ".." and not joined.startswith("../")
-
-
 def _workspace_folder(parent: str | None, line: int) -> str | None:
     """The folder of a ``::locator=`` parent that is a workspace, else None."""
     if parent is None:
@@ -106,25 +105,44 @@ def _workspace_folder(parent: str | None, line: int) -> str | None:
     return reference.removeprefix("workspace:")
 
 
-def _patch_inside(path: str, parent: str | None, line: int) -> bool:
-    """True for a patch file Yarn reads from the project or from itself."""
-    path = path[path.rfind("!") + 1 :]  # flags such as optional!
+def _patch_inside(path: str, parent: str | None, line: int, yarn4: bool) -> bool:
+    """True for a patch file Yarn reads from the project or from itself.
+
+    Yarn 4 writes flags before the last ``!`` (``optional!``) and a path
+    from the project's folder as ``~/``. Yarn 2 and 3 mark an optional
+    patch with a leading ``~`` and have no project paths: their ``~/x`` is
+    the absolute path ``/x``.
+    """
+    path = path[path.rfind("!") + 1 :] if yarn4 else path.removeprefix("~")
     if _BUILTIN_PATCH.fullmatch(path):
         return True
-    if path.startswith("~/"):
-        return _inside(".", path[2:])
+    if yarn4 and path.startswith("~/"):
+        return inside(".", path[2:])
     folder = _workspace_folder(parent, line)
-    return folder is not None and _inside(folder, path)
+    return folder is not None and inside(folder, path)
 
 
 # A pin's package, version, source, detail; None for the project's own code.
 Judged = tuple[str, str | None, str, str | None] | None
 
 
+def _registry_problem(name: str, registries: Registries, yarn4: bool) -> str | None:
+    """Why a package fetched by name and version isn't checked: .yarnrc.yml
+    sends it to another registry, or it is a JSR package, which Yarn 4
+    fetches from npm.jsr.io unless the ``jsr`` scope is configured."""
+    where = registries.other_registry(name)
+    if where is not None:
+        return f"private registry, set in {where}"
+    if yarn4 and name.startswith("@jsr/") and "@jsr" not in registries.scopes:
+        return "JSR registry, Yarn's default for @jsr packages"
+    return None
+
+
 def _judge(
-    name: str, reference: str, version: str | None, line: int, registries: Registries
+    name: str, reference: str, version: str | None, line: int, registries: Registries, yarn4: bool
 ) -> Judged:
-    """What Yarn fetches for ``name@reference``."""
+    """What Yarn fetches for ``name@reference``. ``yarn4`` is True for a
+    lockfile Yarn 4 wrote."""
     if not valid_name(name):
         return (INVALID_NAME, version if version and is_semver(version) else None, "", None)
     lower = reference.lower()
@@ -134,10 +152,8 @@ def _judge(
             if version != rng.selector:
                 raise LockfileError(f"line {line}: a version that doesn't match its resolution")
             if reference == f"npm:{rng.selector}":
-                where = registries.other_registry(name)
-                if where is None:
-                    return (name, version, "registry", None)
-                return (name, version, "unsupported", f"private registry, set in {where}")
+                why = _registry_problem(name, registries, yarn4)
+                return (name, version, "registry" if why is None else "unsupported", why)
             archive = rng.param("__archiveUrl")
             if archive is not None and set(rng.params or {}) == {"__archiveUrl"}:
                 # Yarn fetches this URL instead of the registry's usual one.
@@ -150,7 +166,7 @@ def _judge(
         rng = _Range(reference, line)
         protocol = "link:" if lower.startswith("link:") else "portal:"
         folder = _workspace_folder(rng.param("locator"), line)
-        if folder is not None and _inside(folder, rng.selector):
+        if folder is not None and inside(folder, rng.selector):
             return None
         return (name, version, "unsupported", f"{protocol} outside the project")
     if lower.startswith("patch:"):
@@ -162,10 +178,13 @@ def _judge(
         source_name, source_reference = _locator(rng.source, line)
         if source_reference.lower().startswith("patch:"):
             raise LockfileError(f"line {line}: a patch: resolution of a patch: resolution")
-        judged = _judge(source_name, source_reference, version, line, registries)
-        if judged is None or all(_patch_inside(p, parent, line) for p in paths):
+        judged = _judge(source_name, source_reference, version, line, registries, yarn4)
+        if all(_patch_inside(p, parent, line, yarn4) for p in paths):
             return judged
-        return (judged[0], judged[1], "unsupported", "patch file outside the project")
+        # Even a patch of the project's own code installs a file the diff
+        # doesn't show.
+        package, shown = (name, version) if judged is None else judged[:2]
+        return (package, shown, "unsupported", "patch file outside the project")
     if lower.startswith("file:"):
         return (name, version, "unsupported", "file: source")
     if lower.startswith("exec:"):
@@ -182,7 +201,7 @@ def _judge(
     return (name, version, "unsupported", "unsupported source")
 
 
-def _pin(key: object, entry: Any, line: int, registries: Registries) -> Pin | None:
+def _pin(key: object, entry: Any, line: int, registries: Registries, yarn4: bool) -> Pin | None:
     if not isinstance(key, str) or not isinstance(entry, Mapping):
         raise LockfileError(f"line {line}: an entry that isn't 'descriptor: fields'")
     resolution = entry.get("resolution")
@@ -195,7 +214,7 @@ def _pin(key: object, entry: Any, line: int, registries: Registries) -> Pin | No
     if checksum is not None and not isinstance(checksum, str):
         raise LockfileError(f"line {line}: a checksum that isn't text")
     name, reference = _locator(resolution, line)
-    judged = _judge(name, reference, version, line, registries)
+    judged = _judge(name, reference, version, line, registries, yarn4)
     if judged is None:
         return None
     package, shown, source, detail = judged
@@ -218,17 +237,18 @@ def parse(text: str, registries: Registries = NONE) -> list[Pin]:
         raise LockfileError("no __metadata entry, so it isn't a Yarn 2 or later lockfile")
     metadata = doc["__metadata"]
     version = metadata.get("version")
-    if not (isinstance(version, str) and version.isdigit() and int(version) in METADATA_VERSIONS):
-        short = isinstance(version, str) and version.isdigit() and len(version) < 4
-        shown = f"version {version}" if short else "a version"
+    digits = isinstance(version, str) and _METADATA_VERSION.fullmatch(version) is not None
+    if not (digits and int(version) in METADATA_VERSIONS):
+        shown = f"version {version}" if digits and len(version) < 4 else "a version"
         raise LockfileError(
             f"line {doc.lines['__metadata']}: __metadata {shown} isn't one Garnet reads (4 to 8)"
         )
+    yarn4 = int(version) >= YARN4_METADATA
     pins = []
     for key, entry in doc.items():
         if key == "__metadata":
             continue
-        pin = _pin(key, entry, doc.lines[key], registries)
+        pin = _pin(key, entry, doc.lines[key], registries, yarn4)
         if pin is not None:
             pins.append(pin)
     return sorted(pins, key=lambda p: p.line)

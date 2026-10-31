@@ -44,9 +44,9 @@ registry`, `bundled in <package>, checked only as part of it`, `resolved URL isn
 package's registry tarball` or `not a valid npm package name`; an invalid name is shown as
 `(invalid name)`, and the lockfile line points at it. From pnpm-lock.yaml and a Yarn 2+
 yarn.lock it can also be `private registry, set in .npmrc` (or `pnpm-workspace.yaml`,
-`.yarnrc.yml`), `JSR registry, pnpm's default for @jsr packages`, `exec: source`,
-`link: outside the project`, `portal: outside the project` or `patch file outside the
-project`. The JSON report also gives the file and line in the evidence.
+`.yarnrc.yml`), `JSR registry, pnpm's default for @jsr packages` (or `Yarn's default`),
+`exec: source`, `link: outside the project`, `portal: outside the project` or `patch file
+outside the project`. The JSON report also gives the file and line in the evidence.
 
 ## How to resolve it
 
