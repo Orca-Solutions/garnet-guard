@@ -596,7 +596,8 @@ def declared_requirements(
     metadata: bytes, *, sdist: bool = False
 ) -> tuple[Requirement, ...] | None:
     """The ``Requires-Dist`` entries of a METADATA or PKG-INFO file that install
-    without an extra, one per name, in the order they are declared.
+    without an extra, one per name, in the order they are declared, with any
+    later line for the same name in ``also`` and ``also_installs``.
 
     A requirement whose marker mentions ``extra`` is installed only when
     someone asks for that extra, so it is left out. A line ``packaging`` can't
@@ -606,8 +607,7 @@ def declared_requirements(
     msg = BytesHeaderParser().parsebytes(metadata)
     if sdist and not _sdist_fixes_requirements(msg):
         return None
-    out: list[Requirement] = []
-    seen: set[str] = set()
+    by_name: dict[str, list[Requirement]] = {}
     for raw in msg.get_all("Requires-Dist") or []:
         line = " ".join(str(raw).split())
         if not line:
@@ -625,11 +625,10 @@ def declared_requirements(
                 continue
             name = canonicalize_name(req.name)
             url = req.url
-        if name in seen:
-            continue
-        seen.add(name)
-        out.append(Requirement(name, line, source=url))
-    return tuple(out)
+        by_name.setdefault(name, []).append(Requirement(name, line, source=url))
+    # The first line for a name is the one compared; a second one (another
+    # marker, a direct URL) is kept on it.
+    return tuple(first.with_others(rest) for first, *rest in by_name.values())
 
 
 def _pyproject_entry_points(pyproject: bytes) -> set[str]:

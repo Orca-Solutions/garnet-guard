@@ -57,7 +57,7 @@ An ignore is for a finding someone has looked at: the release notes explain the 
 An ignore matches a finding when all of these hold:
 
 - the finding's rule is in `rules`;
-- the package name matches `package` (PyPI names are normalized, so `Pillow` and `pillow` are the same);
+- the package name matches `package` (PyPI names are normalized, so `Pillow` and `pillow` are the same; npm names match exactly as written, `@scope/` included);
 - `versions`, if set, contains the new version (pre-releases included). It is a PEP 440 specifier, so for now an ignore with `versions` never matches an npm package; leave it out to cover every version until semver ranges are supported;
 - `ecosystem`, if set, matches;
 - the rule is not GRN-T007, GRN-T008 or GRN-K001, unless `acknowledge_critical = true`;

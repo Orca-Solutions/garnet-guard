@@ -57,6 +57,23 @@ setuptools and pip all find entry points through it:
     line, so only a new target counts. Only a new target counts in `pygments.lexers` too:
     pygments picks a lexer by the class a line loads, not by the line's name, and it loads
     every lexer to match a file name or content.
+  - in `pygments.lexers`, `keyring.backends`, `setuptools.file_finders`,
+    `setuptools.finalize_distribution_options`, `opentelemetry_pre_instrument`,
+    `opentelemetry_post_instrument`, `pdm`, `poetry.plugin` and `poetry.application.plugin`
+    the tool also ignores the line's name, so a target counts
+    as new only when no line of the group in the trusted version listed it, under any name.
+    mako 1.4.1 renamed its lexers `css+mako` to `css_mako` and so on, with the same classes,
+    and nothing new runs. A renamed line that loads another object, or the same object
+    from another module, is a new target and is reported. A name setuptools skips doesn't
+    count: a `finalize_distribution_options` hook named `2to3_doctests` never ran, so its
+    target under another name is new. In the other groups the name decides what runs, so
+    they compare name by name: `distutils.setup_keywords` loads a line when a `setup()` call
+    uses the keyword it names, `egg_info.writers` writes the file it names, `pydantic` and
+    `opentelemetry_instrumentor` skip the names a user turns off
+    (`PYDANTIC_DISABLE_PLUGINS`, `OTEL_PYTHON_DISABLED_INSTRUMENTATIONS`), flake8 turns on
+    an off-by-default plugin and picks a formatter by name, and virtualenv picks a creator,
+    seeder or discovery by name. The other `setuptools.*` groups compare name by name too,
+    since Garnet doesn't know that setuptools ignores the name there.
 
   Lines removed, repeated or reordered with nothing new running are not reported, so
   dropping a duplicate line, a stray copy of a metadata folder or one of two setuptools

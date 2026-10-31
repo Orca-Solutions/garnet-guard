@@ -10,6 +10,7 @@ fails when a rule is registered for an ecosystem without a firing and a quiet ro
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
@@ -17,6 +18,7 @@ import pytest
 
 from garnet_guard.checks import ALL_CHECKS
 from garnet_guard.engine import run_checks
+from garnet_guard.facts.npmmeta import declared_dependencies
 from garnet_guard.models import (
     CallSite,
     Change,
@@ -171,6 +173,14 @@ def _npm_depends(version: str, *deps: tuple[str, str]) -> ReleaseFacts:
     return replace(rel, artifacts=(art,))
 
 
+def _npm_rel_from(version: str, package_json: dict[str, object]) -> ReleaseFacts:
+    """An npm release with the dependencies ``package_json`` declares."""
+    rel = _npm(version)
+    reqs = declared_dependencies(json.dumps(package_json).encode())
+    art = replace(rel.artifacts[0], uploaded_at=UPLOADED, requirements=reqs, requirements_read=True)
+    return replace(rel, artifacts=(art,))
+
+
 def _profiled(rel: ReleaseFacts, *profiles: DependencyProfile) -> ReleaseFacts:
     return replace(rel, dependencies=profiles)
 
@@ -256,6 +266,12 @@ def _rows() -> list[Row]:
         "attested by another repository",
         attested,
         release("1.1", provenance=prov(WHEEL, repo="github.com/evil/r", repo_id="2")),
+    )
+    fires(
+        "GRN-T002",
+        "GitLab project with the trusted GitHub repository's id",
+        attested,
+        release("1.1", provenance=prov(WHEEL, repo="gitlab.com/o/r", repo_id="1")),
     )
     quiet(
         "GRN-T002",
@@ -766,6 +782,23 @@ def _rows() -> list[Row]:
         Verdict.WARN,
         eco=NPM,
     )
+    fires(
+        "GRN-C008",
+        "npm: optionalDependencies declares a name again to install a young package",
+        _npm_depends("1.0", ("through", "~2.3.1")),
+        _profiled(
+            _npm_rel_from(
+                "1.1",
+                {
+                    "dependencies": {"through": "~2.3.1", "h2": "npm:established@^1"},
+                    "optionalDependencies": {"h2": "npm:young@^1"},
+                },
+            ),
+            _profile("established", 3000, 80),
+        ),
+        Verdict.WARN,
+        eco=NPM,
+    )
     quiet(
         "GRN-C008",
         "npm: same dependencies",
@@ -964,6 +997,14 @@ def _rows() -> list[Row]:
     )
     fires(
         "GRN-C010",
+        "a sitecustomize extension module in site-packages",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "sitecustomize.cpython-312-x86_64-linux-gnu.so": "\x7fELF"}),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C010",
         "a script named like a common command",
         release("1.0", PKG),
         release("1.1", {**PKG, "demo-1.1.data/scripts/pip": "#!/bin/sh\n"}),
@@ -983,6 +1024,13 @@ def _rows() -> list[Row]:
         "the same script as before",
         release("1.0", {**PKG, "demo-1.0.data/scripts/demo-run": "#!/bin/sh\n"}),
         release("1.1", {**PKG, "demo-1.1.data/scripts/demo-run": "#!/bin/sh\necho 1\n"}),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C010",
+        "a sourceless __pycache__/sitecustomize.pyc, which isn't imported",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "__pycache__/sitecustomize.cpython-312.pyc": "\x00"}),
         eco=PYPI,
     )
     quiet(

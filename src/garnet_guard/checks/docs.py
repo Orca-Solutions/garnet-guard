@@ -37,7 +37,7 @@ _DOCS: tuple[RuleDoc, ...] = (
         "The verified source repository differs between the trusted and new versions.",
         "Attestations name the repository whose CI built the release. A different repository means "
         "someone else's CI published this version: a fork, a new home, or an attacker's repository. "
-        "Renames are ignored when GitHub's repository id is unchanged.",
+        "Renames are ignored when the repository id on the same host is unchanged.",
         "Confirm the move from the old repository: an announcement or a commit there, or the "
         "project's page linking the new home. Don't rely on the release notes or on what the new "
         "repository says about itself; whoever published the release wrote them.",
@@ -150,7 +150,8 @@ _DOCS: tuple[RuleDoc, ...] = (
         W,
         "Code that runs at import time gained calls that run processes, load code, or use the network. "
         "In test files (tests/, test_*.py, conftest.py) it reports at info, unless a non-test module "
-        "imports the file or an entry point names it.",
+        "imports the file or an entry point names it. A call after a def in the same block calls "
+        "that function, not an alias the name held before (six's exec_ in its Python 2 branch).",
         "Module top-level code runs the moment anything imports the package, including your test suite "
         "and CI. lightning 2.6.2 started a credential stealer this way, from a thread launched in "
         "lightning/__init__.py.",
@@ -231,9 +232,10 @@ _DOCS: tuple[RuleDoc, ...] = (
         W,
         "The new version depends on a package the trusted version didn't, or a dependency it "
         "had now installs from somewhere else. It is a warning when the registry has no such "
-        "package, when it installs from git, a URL or a path, or when its first release came "
-        "less than 90 days before this one (or after it), whoever owns it. An established "
-        "dependency is info.",
+        "package, when it installs from git, a URL or a path, when its name is declared again "
+        "(npm's optionalDependencies, a second Requires-Dist line) to install another package or "
+        "source, which Garnet doesn't look up, or when its first release came less than 90 days "
+        "before this one (or after it), whoever owns it. An established dependency is info.",
         "A dependency installs with the package, and a new one gets no comparison of its own: "
         "Garnet has no trusted version of it to diff against. Adding a package the attacker "
         "controls is a quiet way to carry a payload into a trusted one. event-stream 3.3.6 "
@@ -254,7 +256,9 @@ _DOCS: tuple[RuleDoc, ...] = (
         ".egg-info folder at the wheel's root or under <name>.data/purelib/ or platlib/, line by "
         "line as importlib.metadata does; lines removed, repeated or reordered with nothing new "
         "running are not reported, and in a group whose tool loads every line (setuptools.*, "
-        "flake8, keyring and others) only a new target counts. It is a warning for a group another tool loads by itself (pytest11, "
+        "flake8, keyring and others) only a new target counts, and where the tool ignores a "
+        "line's name too (pygments.lexers, keyring and others) only a target new to the group. "
+        "It is a warning for a group another tool loads by itself (pytest11, "
         "setuptools.*, flake8, keyring and others) and for a new script in the wheel's own "
         "entry_points.txt with a common command's name (pip, git, curl and the others on the "
         "rule page) other than the project's own; any other new or changed entry point is info. "
@@ -273,9 +277,10 @@ _DOCS: tuple[RuleDoc, ...] = (
         "diff",
         W,
         "The new version's wheel adds a file that runs or installs outside the package: a "
-        "sitecustomize.py or usercustomize.py in site-packages, a script under .data/scripts/, or "
-        "a file under .data/data/. It is a warning for the startup modules, for a script named "
-        "like a common command and for files under etc/; other scripts and data files are info.",
+        "sitecustomize or usercustomize module, package or extension in site-packages, a script "
+        "under .data/scripts/, or a file under .data/data/. It is a warning for "
+        "the startup modules, for a script named like a common command and for files under etc/; "
+        "other scripts and data files are info.",
         "Python imports sitecustomize and usercustomize at every start, like a .pth file, so their "
         "code runs in every Python process in the environment whether or not anything imports the "
         "package. Scripts become commands on PATH, and files under etc/ are read as "
@@ -380,10 +385,15 @@ _DOCS += (
         "unsupported-source",
         "absolute",
         Severity.INFO,
-        "A dependency comes from a source Garnet doesn't check: git, a local path, a direct URL or a private index.",
-        "Garnet compares releases published on PyPI. Code from other sources wasn't checked, and it "
-        "isn't passed either.",
-        "Review the change to that dependency by hand.",
+        "A dependency comes from a source Garnet doesn't check: git, a local path, a direct URL, a private "
+        "index or registry, or another npm package's tarball (a bundled dependency). In a requirements "
+        "file, an index, extra index or --find-links anywhere in the file, or in the files it is read "
+        "with through -r and -c, applies to every pin in them.",
+        "Garnet compares releases published on PyPI and npm. Code from other sources wasn't checked, and "
+        "it isn't passed either.",
+        "Review the change to that dependency by hand. A bundled dependency changes only with the package "
+        "that ships it, so review that package's update, or the lockfile edit itself if that package "
+        "didn't change.",
     ),
 )
 

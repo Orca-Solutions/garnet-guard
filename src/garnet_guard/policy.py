@@ -322,8 +322,10 @@ def severity_for(policy: Policy, doc: RuleDoc) -> Severity:
 def matches(ignore: Ignore, rule_id: str, change: Change) -> bool:
     """True if ``ignore`` covers this rule for this change, expiry aside.
 
-    ``versions`` is matched against the candidate version, pre-releases included.
-    A version that isn't PEP 440 never matches a ``versions`` range.
+    ``package`` is compared PEP 503 normalized for a PyPI change and exactly
+    as written for an npm change. ``versions`` is matched against the candidate
+    version, pre-releases included. A version that isn't PEP 440 never matches
+    a ``versions`` range, and neither does an npm change.
     """
     if rule_id not in ignore.rules:
         return False
@@ -336,7 +338,7 @@ def matches(ignore: Ignore, rule_id: str, change: Change) -> bool:
     if ignore.versions is None:
         return True
     if change.ecosystem != "pypi":
-        return False  # npm ranges arrive with npm support
+        return False  # versions is PEP 440 only; npm ranges are still open
     try:
         return SpecifierSet(ignore.versions).contains(Version(change.candidate), prereleases=True)
     except InvalidVersion:
@@ -446,7 +448,10 @@ def policy_changes(before: bytes | None, after: bytes | None, *, source: str) ->
         ).append(line)
 
     def key(i: Ignore) -> tuple[object, ...]:
-        return (i.ecosystem, canonicalize_name(i.package), i.versions, i.rules)
+        # npm names match as written, so only a PyPI-only ignore is compared
+        # normalized; without an ecosystem, Foo_Bar and foo-bar are two npm names.
+        name = canonicalize_name(i.package) if i.ecosystem == "pypi" else i.package
+        return (i.ecosystem, name, i.versions, i.rules)
 
     was_ignored = {key(i): i for i in old.ignores}
     now_ignored = {key(i): i for i in new.ignores}

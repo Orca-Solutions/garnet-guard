@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import posixpath
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -26,7 +27,19 @@ from .policy import (
 )
 from .report import escape, to_json, to_text
 from .sarif import to_sarif
-from .workspace import Unchecked, changes_for, dedupe, discover, git_show, plain_file
+from .workspace import (
+    Unchecked,
+    changes_for,
+    dedupe,
+    discover,
+    disk_reader,
+    git_reader,
+    git_show,
+    plain_file,
+    read_lockfile,
+    registry_settings,
+    requirement_includes,
+)
 
 _FAIL_ON = {"warn": Severity.WARN, "block": Severity.BLOCK, "never": Severity.OFF}
 
@@ -39,6 +52,16 @@ exit codes:
      lockfile or an internal error. This is never a pass.
 
 Each finding links to its rule's page; `garnet explain RULE` prints a summary.
+"""
+
+_WRAPPER_EXIT_CODES = """\
+exit codes:
+  0  the check passed and the package manager succeeded
+  1  warn findings, with fail_on = "warn"; nothing installed
+  2  block findings; nothing installed
+  3  Garnet couldn't check the command, or couldn't finish (nothing installed);
+     or the package manager failed after the check (uv: the checked files were
+     already written, and Garnet says so)
 """
 
 _FAIL_ON_HELP = "exit non-zero at this verdict or worse (default: the policy's fail_on, else block)"
@@ -61,7 +84,8 @@ def _parser() -> argparse.ArgumentParser:
         help="check every dependency change between two lockfiles",
         description="Compare a trusted lockfile with an updated one and check every package\n"
         "version that changed. Reads uv.lock, poetry.lock, pylock.toml and pinned\n"
-        "requirements files.",
+        "requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json,\n"
+        "pnpm-lock.yaml and yarn.lock (Yarn 1 and Yarn 2+) for npm.",
         epilog=_EXIT_CODES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -142,6 +166,33 @@ def _parser() -> argparse.ArgumentParser:
     )
     pc.add_argument("path", nargs="?", metavar="PATH", help="the policy file")
 
+    for tool, what in (
+        ("pip", "pip install"),
+        ("uv", "uv add, remove, lock or sync"),
+    ):
+        w = sub.add_parser(
+            tool,
+            help=f"check a {what} command, then install only what was checked",
+            description=f"garnet {tool} … resolves the command with builds turned off, checks "
+            "every\ndependency change, then installs exactly what was checked. Nothing is "
+            "installed\nat or above fail_on, or when the command can't be resolved without "
+            "building.\n--garnet-force installs anyway. See docs/install-wrapper.md.",
+            epilog=_WRAPPER_EXIT_CODES,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        w.add_argument("args", nargs=argparse.REMAINDER, help=f"the {tool} command's arguments")
+
+    h = sub.add_parser(
+        "hook",
+        help="print an agent hook configuration, or run the hook",
+        description="garnet hook claude-code|codex prints the hook configuration to add to\n"
+        "the agent's settings. With run, it reads one PreToolUse event on stdin and\n"
+        "answers it on stdout (the agent runs this; see docs/install-wrapper.md).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    h.add_argument("agent", choices=("claude-code", "codex"))
+    h.add_argument("run", nargs="?", choices=("run",), help="answer one hook event")
+
     sub.add_parser("version", help="print the version")
     return p
 
@@ -155,21 +206,34 @@ def _policy_args(p: argparse.ArgumentParser) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run ``garnet`` and return its exit code. Any failure of Garnet itself is 3."""
+    words = list(sys.argv[1:] if argv is None else argv)
+    if words[:1] in (["pip"], ["uv"]) and words[1:2] not in (["-h"], ["--help"]):
+        # The rest is the package manager's command line, not Garnet's options.
+        return _guarded(lambda: _wrapper(words[0], words[1:]))
     try:
-        args = _parser().parse_args(argv)
+        args = _parser().parse_args(words)
     except SystemExit as exc:
         return 0 if exc.code == 0 else 3
+    return _guarded(lambda: _dispatch(args))
+
+
+def _wrapper(tool: str, words: list[str]) -> int:
+    from .install import wrapper
+
+    return wrapper.main(tool, words)
+
+
+def _hook(agent: str, run: bool) -> int:
+    from .install import gate, hooks
+
+    if run:
+        return gate.run(agent)
+    return hooks.print_config(agent)
+
+
+def _guarded(task: Callable[[], int]) -> int:
     try:
-        if args.command == "version":
-            print(f"garnet {__version__}")
-            return 0
-        if args.command == "explain":
-            return _explain(args.rule_id)
-        if args.command == "check":
-            return _check(args)
-        if args.command == "policy":
-            return _policy_check(args.path)
-        return _diff(args)
+        return task()
     except (UsageError, LockfileError, PolicyError) as err:
         print(f"garnet: {err}", file=sys.stderr)
         return 3
@@ -178,6 +242,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as err:  # Garnet itself failed
         print(f"garnet: internal error: {type(err).__name__}: {err}", file=sys.stderr)
         return 3
+
+
+def _dispatch(args: argparse.Namespace) -> int:
+    if args.command == "hook":
+        return _hook(args.agent, args.run == "run")
+    if args.command in ("pip", "uv"):  # only reached for --help, handled by argparse
+        return 0
+    if args.command == "version":
+        print(f"garnet {__version__}")
+        return 0
+    if args.command == "explain":
+        return _explain(args.rule_id)
+    if args.command == "check":
+        return _check(args)
+    if args.command == "policy":
+        return _policy_check(args.path)
+    return _diff(args)
 
 
 class UsageError(Exception):
@@ -204,6 +285,11 @@ def _today() -> date:
     return datetime.now(UTC).date()
 
 
+def _rel(name: str) -> str:
+    """A lockfile's path as ``workspace.requirement_includes`` keys it."""
+    return posixpath.normpath(Path(name).as_posix())
+
+
 def _check(args: argparse.Namespace) -> int:
     """``garnet check``: every dependency change between two lockfiles."""
     if args.offline or args.cache_dir:
@@ -223,14 +309,39 @@ def _check(args: argparse.Namespace) -> int:
 
     changes: list[Change] = []
     unchecked: list[Unchecked] = []
+    read: list[tuple[Path, str, bytes, bytes | None]] = []
     for head in heads:
         if not plain_file(head, cwd):
             if head.is_symlink() or head.exists():
                 raise UsageError(f"refusing {head}: lockfiles must be regular files, not symlinks")
             raise UsageError(f"no such lockfile: {head}")
-        base = Path(args.base).read_bytes() if args.base else git_show(args.git_base, head, cwd=cwd)
+        base = (
+            read_lockfile(Path(args.base)) if args.base else git_show(args.git_base, head, cwd=cwd)
+        )
         name = os.path.relpath(head, cwd) if head.is_absolute() else head.as_posix()
-        found, skipped = changes_for(name, head.read_bytes(), base)
+        read.append((head, name, read_lockfile(head), base))
+    # A requirements file's -r and -c files, and the files that bring it in,
+    # decide its index too: in the working tree for head, and for the base
+    # at --git-base, or beside the --base file.
+    included = requirement_includes({_rel(n): d for _, n, d, _ in read}, disk_reader(cwd))
+    base_key = ""
+    if args.base:
+        base_key = _rel(os.path.relpath(Path(args.base).absolute(), cwd))
+        base_files = {base_key: read[0][3]} if read[0][3] is not None else {}  # one --head
+        base_included = requirement_includes(base_files, disk_reader(cwd))
+    else:
+        base_files = {_rel(n): b for _, n, _, b in read if b is not None}
+        base_included = requirement_includes(base_files, git_reader(args.git_base, cwd))
+    for head, name, data, base in read:
+        registries = registry_settings(head, data, cwd)
+        found, skipped = changes_for(
+            name,
+            data,
+            base,
+            registries=registries,
+            included=included.get(_rel(name)),
+            base_included=base_included.get(base_key if args.base else _rel(name)),
+        )
         changes += found
         unchecked += skipped
 

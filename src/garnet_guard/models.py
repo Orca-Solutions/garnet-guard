@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from enum import IntEnum, StrEnum
 from typing import Literal
@@ -146,7 +146,8 @@ class Ignore:
     """One ``[[garnet.ignore]]`` entry: findings someone reviewed and accepted.
 
     It applies to ``rules`` for ``package`` (and ``versions`` of the candidate,
-    when set) through ``until``, then stops applying. ``package`` is normalized.
+    when set) through ``until``, then stops applying. ``package`` is kept as
+    written; it matches PEP 503 normalized on PyPI and exactly on npm.
     """
 
     package: str
@@ -388,11 +389,33 @@ class Requirement:
     spec: str
     alias_of: str | None = None
     source: str | None = None
+    # Other declarations of this name in the same artifact that install
+    # something else, as written (a second Requires-Dist line, or the name in
+    # another package.json table, such as optionalDependencies, which npm lets
+    # override dependencies). Only the first is compared and looked up.
+    also: tuple[str, ...] = ()
+    # What those declarations install instead of this one's registry
+    # package: another registry package (an npm alias target), a URL, a git
+    # repository or a path. GRN-C008 keeps its severity for them.
+    also_installs: tuple[str, ...] = ()
 
     @property
     def package(self) -> str:
         """The registry package that installs."""
         return self.alias_of or self.name
+
+    def with_others(self, others: Sequence[Requirement]) -> Requirement:
+        """This requirement with the other declarations of its name that
+        install something other than its registry package: their specs in
+        ``also``, and what they install in ``also_installs``."""
+        differ = [o for o in others if (o.source, o.package) != (self.source, self.package)]
+        if not differ:
+            return self
+        return replace(
+            self,
+            also=tuple(o.spec for o in differ),
+            also_installs=tuple(dict.fromkeys(o.source or o.package for o in differ)),
+        )
 
 
 @dataclass(frozen=True)
@@ -555,3 +578,27 @@ class ReleaseFacts:
     def content(self) -> tuple[ArtifactFacts, ...]:
         """The artifacts whose contents were inspected."""
         return tuple(a for a in self.artifacts if a.inspected)
+
+
+@dataclass(frozen=True)
+class IndexFile:
+    """One file of a release as the registry lists it, for the install wrapper."""
+
+    filename: str
+    packagetype: str  # "bdist_wheel", "sdist", ...
+    requires_python: str | None = None
+    yanked: bool = False
+
+
+@dataclass(frozen=True)
+class ProjectReleases:
+    """Every release a registry lists for one project, with its files.
+
+    The install wrapper uses it to see whether resolving with builds off
+    picked a lower release than the package manager would (SPEC §10.3), and
+    to say why a requirement has no wheel it can use.
+    """
+
+    name: str
+    on_registry: bool
+    releases: tuple[tuple[str, tuple[IndexFile, ...]], ...] = ()  # (version, files)

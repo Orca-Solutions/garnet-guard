@@ -26,6 +26,7 @@ from .models import (
     Ignore,
     Limits,
     Policy,
+    ProjectReleases,
     RawFinding,
     ReleaseFacts,
     Severity,
@@ -97,6 +98,10 @@ class Fetcher:
             replay=self.options.replay.get(version),
             advisories=advisories,
         )
+
+    def pypi_releases(self, package: str) -> ProjectReleases:
+        """PyPI's release list for one project. Raises ``NetError``."""
+        return pypi.project_releases(self._pypi, package)
 
     def dependency_profile(self, ecosystem: str, name: str) -> DependencyProfile:
         """What the registry says about a package, fetched once per run. Raises ``NetError``."""
@@ -326,6 +331,13 @@ def compare(
         cand = with_dependency_profiles(fetcher, base, facts[candidate])
     change = Change(ecosystem, name, baseline, candidate)
     return run_checks(change, base, cand, policy=policy, today=opts.today)
+
+
+def pypi_releases(package: str, options: Options | None = None) -> ProjectReleases:
+    """Every release PyPI lists for ``package``, with its files (the install
+    wrapper's newest-release check). Raises ``NetError``."""
+    with Fetcher(options or Options()) as fetcher:
+        return fetcher.pypi_releases(package)
 
 
 def evaluate(
