@@ -195,7 +195,9 @@ _DOCS: tuple[RuleDoc, ...] = (
         "already carried outside its sdist in the same file isn't new, nor is a .pth line it "
         "carried outside its sdist in any .pth file. Both files must be read to the end; when "
         "one can't be, or a wheel file is nested too deep to list its calls, a GRN-E finding "
-        "names this rule.",
+        "names this rule. Calls only in test files, or in a top-level folder with no "
+        "__init__.py, are a separate finding at info unless something imports or names the "
+        "file; a .pth file never is.",
         "A wheel is built from its sdist, or from the same tagged source, so its code should "
         "be in the sdist byte for byte. Reviewers read the sdist or the repository; pip "
         "installs the wheel. Code that is only in the wheel is the part nobody reviewed. "

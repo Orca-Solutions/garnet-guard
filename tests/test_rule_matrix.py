@@ -636,6 +636,36 @@ def _rows() -> list[Row]:
         ),
         eco=PYPI,
     )
+    # The maintainer's 2026-10-31 decision: code only in a test file or a file
+    # outside the packages (aenum 3.1.16, google-auth-oauthlib 1.2.0) is info.
+    fires(
+        "GRN-C006",
+        "a test module only the wheel has, listed at info",
+        release("1.0", PKG, sdist_files=PKG),
+        release("1.1", {**PKG, "demo/test_stdlib.py": fetch}, sdist_files=PKG),
+        Verdict.PASS,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C006",
+        "a script outside the packages only the wheel has, listed at info",
+        release("1.0", PKG, sdist_files=PKG),
+        release("1.1", {**PKG, "scripts/readme-gen/gen.py": fetch}, sdist_files=PKG),
+        Verdict.PASS,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C006",
+        "a test module only the wheel has, which a package module imports",
+        release("1.0", PKG, sdist_files=PKG),
+        release(
+            "1.1",
+            {"demo/__init__.py": "from demo import test_stdlib\n", "demo/test_stdlib.py": fetch},
+            sdist_files=PKG,
+        ),
+        Verdict.WARN,
+        eco=PYPI,
+    )
     # The telnyx 4.87.1 and 4.87.2 shape as published: both files carry the
     # payload byte for byte, so it is GRN-C003's to report.
     both = {**paired, "demo/_client.py": client + THREAD_PAYLOAD}

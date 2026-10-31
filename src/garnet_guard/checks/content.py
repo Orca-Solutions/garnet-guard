@@ -5,7 +5,7 @@ from __future__ import annotations
 import functools
 import posixpath
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import replace
 from datetime import datetime
 
@@ -33,6 +33,8 @@ from . import wheel_tags
 MAX_EVIDENCE = 25  # evidence lines per finding; the rest are counted, not listed
 # A wheel's <name>-<version>.data/purelib/ and platlib/ install into site-packages itself.
 _SITE_PREFIX = re.compile(r"^[^/]+\.data/(purelib|platlib)/")
+# Dotted names in a .pth line: every one it could import, for GRN-C006's info split
+_NAMES = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
 
 # Well-known build backends. A switch to one of these isn't GRN-C002; a switch
 # to anything else, or to a backend shipped inside the sdist, is.
@@ -369,9 +371,15 @@ def _live_test_modules(art: ArtifactFacts) -> set[str]:
     plugin loads in every pytest run). Importing ``a.b.c`` also runs ``a``
     and ``a.b``.
     """
-    tests = {m.module: m for m in art.modules if is_test_path(m.path)}
-    frontier = [i for m in art.modules if m.module not in tests for i in m.imports]
-    frontier += list(art.entry_points)
+    return _live_modules(art, {m.module for m in art.modules if is_test_path(m.path)})
+
+
+def _live_modules(art: ArtifactFacts, quiet: set[str], roots: Iterable[str] = ()) -> set[str]:
+    """The modules in ``quiet`` that a module outside it imports, directly or
+    through other modules in it, or that an entry point or ``roots`` names."""
+    held = {m.module: m for m in art.modules if m.module in quiet}
+    frontier = [i for m in art.modules if m.module not in held for i in m.imports]
+    frontier += [*art.entry_points, *roots]
     reached: set[str] = set()
     while frontier:
         name = frontier.pop()
@@ -381,9 +389,9 @@ def _live_test_modules(art: ArtifactFacts) -> set[str]:
             if prefix in reached:
                 continue
             reached.add(prefix)
-            if prefix in tests:
-                frontier.extend(tests[prefix].imports)
-    return reached & set(tests)
+            if prefix in held:
+                frontier.extend(held[prefix].imports)
+    return reached & set(held)
 
 
 _RUNNERS = frozenset(
@@ -429,10 +437,31 @@ def _outside_package(art: ArtifactFacts, package: str) -> set[str]:
     """
     if art.packagetype != "sdist":
         return set()
-    tops = {f.path.split("/")[0] for f in art.files if f.path.endswith("/__init__.py")}
+    return _outside_tops((f.path for f in art.files), (m.path for m in art.modules), package)
+
+
+def _outside_tops(files: Iterable[str], modules: Iterable[str], package: str) -> set[str]:
+    """The module paths in a folder at the top that holds no package: no
+    ``__init__.py`` anywhere under it, and not named after the project."""
+    tops = {f.split("/")[0] for f in files if f.endswith("/__init__.py")}
     name = package.lower().replace("-", "_").replace(".", "_")
     tops |= {"src", name, name.split("_")[0]}
-    return {m.path for m in art.modules if "/" in m.path and m.path.split("/")[0] not in tops}
+    return {m for m in modules if "/" in m and m.split("/")[0] not in tops}
+
+
+def _quiet_wheel_files(art: ArtifactFacts, package: str) -> set[str]:
+    """Install paths of the wheel's Python files that run only when run on
+    their own (GRN-C006 reports their code at info, as GRN-C003 does): test
+    files, and files in a folder at the top of site-packages that holds no
+    package (``scripts/readme-gen/``). One stays loud when a module outside
+    this set imports it, an entry point names it, or a ``.pth`` line in the
+    wheel names it."""
+    site = {_site_name(m.path): m.module for m in art.modules}
+    files = [_site_name(f.path) for f in art.files]
+    paths = {p for p in site if is_test_path(p)} | _outside_tops(files, site, package)
+    named = (w for p in art.pth_files for x in p.all_lines for w in _NAMES.findall(x))
+    live = _live_modules(art, {site[p] for p in paths}, named)
+    return {p for p in paths if site[p] not in live}
 
 
 def new_import_time_exec(
@@ -819,6 +848,11 @@ def sdist_wheel_mismatch(
     version's wheel already carried outside its sdist, at the same install
     path, isn't new; for a ``.pth`` file a line counts as carried at any path,
     as GRN-C001 lets a ``.pth`` be renamed.
+
+    Code only in test files or in files outside the release's packages is a
+    separate finding at info, as GRN-C003 reports such files (the
+    maintainer's 2026-10-31 decision): see ``_quiet_wheel_files``. A ``.pth``
+    file is never at info.
     """
     if base is None or cand.sdist_match is None:
         return
@@ -832,35 +866,59 @@ def sdist_wheel_mismatch(
             lines_before.update(w.lines)
             if w.at is None and w.path.endswith(".pth"):
                 bare_before.add(w.path)
-    evidence: list[Evidence] = []
-    files = 0
+    read = next((a for a in cand.artifacts if a.filename == sm.wheel), None)
+    quiet = _quiet_wheel_files(read, cand.package) if read is not None else set()
+    # loud: warn; quiet: test files and files outside the packages, at info
+    found: dict[bool, tuple[list[Evidence], list[str]]] = {False: ([], []), True: ([], [])}
     for w in sm.code:
         if w.path.endswith(".pth"):
             lines = [x for x in w.lines if x not in lines_before]
             if not lines and (w.lines or w.at is not None or w.path in bare_before):
                 continue
-            files += 1
+            evidence, files = found[False]  # a .pth runs at every startup: never quiet
+            files.append(w.path)
             evidence.append(_wheel_only_pth(w, sm.sdist, lines))
             continue
         new = [c for c in w.calls if c.name not in calls_before.get(w.path, set())]
         if new:
-            files += 1
+            evidence, files = found[w.path in quiet]
+            files.append(w.path)
             evidence.extend(_wheel_only_line(w, sm.sdist, c) for c in new)
-    if not evidence:
-        return
     head = Evidence(
         "note",
         f"compared {sm.wheel} with {sm.sdist}: {sm.matched} Python file(s) match the sdist, "
         f"{sm.differ} differ from their copy there, {sm.absent} have none",
     )
-    more = len(evidence) - MAX_EVIDENCE
-    tail = (Evidence("note", f"and {more} more"),) if more > 0 else ()
     note = (Evidence("note", _no_trusted_pair(base)),) if base.sdist_match is None else ()
-    yield RawFinding(
-        "GRN-C006",
-        f"{cand.version}'s wheel has code that is not in its sdist ({files} file(s))",
-        (head, *evidence[:MAX_EVIDENCE], *tail, *note),
-    )
+    for is_quiet, (evidence, files) in found.items():
+        if not evidence:
+            continue
+        more = len(evidence) - MAX_EVIDENCE
+        tail = (Evidence("note", f"and {more} more"),) if more > 0 else ()
+        if not is_quiet:
+            title = (
+                f"{cand.version}'s wheel has code that is not in its sdist ({len(files)} file(s))"
+            )
+            why: tuple[Evidence, ...] = ()
+        else:
+            title = (
+                f"{cand.version}'s wheel has code that is not in its sdist only in test "
+                f"files or files outside its packages ({len(files)} file(s))"
+            )
+            why = (
+                Evidence(
+                    "note",
+                    "test files and files outside the release's packages run only when run "
+                    "on their own, and no other module, entry point or .pth file in the wheel "
+                    "names these, so this is reported at info",
+                ),
+            )
+        yield RawFinding(
+            "GRN-C006",
+            title,
+            (head, *evidence[:MAX_EVIDENCE], *tail, *why, *note),
+            lowered_to=Severity.INFO if is_quiet else None,
+        )
 
 
 def _source_matched(rel: ReleaseFacts) -> ArtifactFacts | None:

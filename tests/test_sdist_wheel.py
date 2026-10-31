@@ -37,6 +37,7 @@ FETCH = "import urllib.request\n\ndef get(url):\n    return urllib.request.urlop
 PY2 = "def setup():\n    print 'hi'\n"
 DEEP = "\nTABLE = " + " + ".join(["1"] * 1500) + "\n"  # parses, too deep to walk
 WHEEL1, SDIST1 = "demo-1.1-py3-none-any.whl", "demo-1.1.tar.gz"
+CHANGE = Change("pypi", "demo", "1.0", "1.1")
 
 
 def _c006(base: ReleaseFacts | None, cand: ReleaseFacts) -> list[tuple[str, list[str]]]:
@@ -335,6 +336,90 @@ def test_pth_lines_the_trusted_wheel_carried_are_not_new() -> None:
     assert evidence[1:] == [
         f"demo-1.1-nspkg.pth (1 executable line(s)) has no copy in {SDIST1}: {nspkg.strip()}",
         f"demo.pth (no executable lines) has no copy in {SDIST1}",
+    ]
+
+
+# --- Test files and files outside the packages: info (the maintainer's 2026-10-31 decision) ---
+
+QUIET_TITLE = (
+    "1.1's wheel has code that is not in its sdist only in test files or files outside "
+    "its packages ({n} file(s))"
+)
+LOUD_TITLE = "1.1's wheel has code that is not in its sdist ({n} file(s))"
+
+
+def _c006_levels(wheel_files: dict[str, str | bytes]) -> list[tuple[str, str]]:
+    """GRN-C006's findings, as (severity, title), for a 1.1 wheel with these
+    files beside the clean sdist ``PAIRED``, after a 1.0 that matched."""
+    base = release("1.0", PAIRED, sdist_files=PAIRED)
+    cand = release("1.1", {**PAIRED, **wheel_files}, sdist_files=PAIRED)
+    result = run_checks(Change("pypi", "demo", "1.0", "1.1"), base, cand)
+    return [(f.severity.name, f.title) for f in result.findings if f.rule_id == "GRN-C006"]
+
+
+def test_code_only_in_test_files_is_info() -> None:
+    """aenum 3.1.16's ``aenum/test_stdlib_tests.py`` and oauth2client 4.0.0's
+    top-level ``tests/`` tree, which only the wheel has."""
+    for path in ("demo/test_stdlib.py", "tests/test_client.py", "demo/conftest.py", "test/x.py"):
+        assert _c006_levels({path: FETCH}) == [("INFO", QUIET_TITLE.format(n=1))], path
+
+
+def test_code_outside_the_packages_is_info() -> None:
+    """google-auth-oauthlib 1.2.0's ``scripts/readme-gen/readme_gen.py``: a
+    folder with no ``__init__.py`` that isn't named after the project."""
+    assert _c006_levels({"scripts/readme-gen/readme_gen.py": FETCH}) == [
+        ("INFO", QUIET_TITLE.format(n=1))
+    ]
+    base = release("1.0", PAIRED, sdist_files=PAIRED)
+    cand = release(
+        "1.1", {**PAIRED, "scripts/gen.py": FETCH, "demo/test_x.py": FETCH}, sdist_files=PAIRED
+    )
+    (found,) = [f for f in run_checks(CHANGE, base, cand).findings if f.rule_id == "GRN-C006"]
+    assert [e.summary for e in found.evidence] == [
+        _head(2, 0, 2),
+        "demo/test_x.py:4 calls urllib.request.urlopen (in get()); demo-1.1.tar.gz has no such file",
+        "scripts/gen.py:4 calls urllib.request.urlopen (in get()); demo-1.1.tar.gz has no such file",
+        "test files and files outside the release's packages run only when run on their own, "
+        "and no other module, entry point or .pth file in the wheel names these, so this is "
+        "reported at info",
+    ]
+
+
+def test_package_modules_stay_warn() -> None:
+    """ecdsa 0.14's ``ecdsa/six.py`` and reportlab 4.5.0's
+    ``reportlab/lib/extformat.py``: modules of the package itself."""
+    assert _c006_levels({"demo/six.py": FETCH}) == [("WARN", LOUD_TITLE.format(n=1))]
+    assert _c006_levels({"demo/lib/extformat.py": FETCH}) == [("WARN", LOUD_TITLE.format(n=1))]
+    # A folder with an __init__.py is a package, whatever its name.
+    assert _c006_levels({"helpers/__init__.py": "", "helpers/net.py": FETCH}) == [
+        ("WARN", LOUD_TITLE.format(n=1))
+    ]
+
+
+def test_a_test_or_script_file_something_runs_stays_warn() -> None:
+    """As GRN-C003 does: a non-test module imports it, an entry point names
+    it, or a .pth line in the wheel names it."""
+    imported = {"demo/_client.py": "from demo import test_helpers\n", "demo/test_helpers.py": FETCH}
+    assert _c006_levels(imported) == [("WARN", LOUD_TITLE.format(n=1))]
+    entry = "[console_scripts]\ngen = scripts.gen:get\n"
+    named = {"scripts/gen.py": FETCH, "demo-1.1.dist-info/entry_points.txt": entry}
+    assert _c006_levels(named) == [("WARN", LOUD_TITLE.format(n=1))]
+    pth = {"tools/boot.py": FETCH, "demo.pth": "import tools.boot\n"}
+    assert ("WARN", LOUD_TITLE.format(n=2)) in _c006_levels(pth)
+    assert all(level == "WARN" for level, _ in _c006_levels(pth))
+
+
+def test_a_pth_file_is_never_info() -> None:
+    """A .pth runs at every startup, whatever its name says."""
+    assert _c006_levels({"test_boot.pth": "import os; os.system('id')\n"}) == [
+        ("WARN", LOUD_TITLE.format(n=1))
+    ]
+
+
+def test_loud_and_quiet_files_are_two_findings() -> None:
+    assert sorted(_c006_levels({"demo/_fetch.py": FETCH, "tests/test_fetch.py": FETCH})) == [
+        ("INFO", QUIET_TITLE.format(n=1)),
+        ("WARN", LOUD_TITLE.format(n=1)),
     ]
 
 

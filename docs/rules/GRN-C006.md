@@ -10,7 +10,7 @@ status: implemented
 
 | | |
 |---|---|
-| Default severity | `warn` |
+| Default severity | `warn` (`info` in test files and files outside the packages) |
 | Kind | diff rule: fires only when the trusted version had the property and the new version lost it, or the new version gained a risky property the trusted version lacked. |
 | Status | Implemented in 0.3 (PyPI) |
 
@@ -52,6 +52,17 @@ a `.pth` file with no executable lines at a path where the trusted wheel had a `
 its sdist lacked. When the trusted version gives nothing to compare with (it had no sdist or
 no wheel, or Garnet couldn't read them), the evidence says so.
 
+Code only in test files, or in files outside the release's packages, is listed in its own
+finding at `info` (the maintainer's decision of 2026-10-31, as [GRN-C003](GRN-C003.md)
+reports such files). A test file is one GRN-C003 counts as a test: under a `tests/` folder
+or a top-level `test/` folder, or named `test_*.py` or `conftest.py` (aenum 3.1.16's
+`aenum/test_stdlib_tests.py`). A file outside the packages is in a folder at the top of
+site-packages with no `__init__.py` anywhere under it and not named after the project
+(google-auth-oauthlib 1.2.0's `scripts/readme-gen/readme_gen.py`). Both run only when someone
+runs them. Such a file stays at `warn` when a module outside these files imports it, directly
+or through them, an entry point names it, or a `.pth` line in the wheel names it. A `.pth`
+file is never at `info`: it runs at every startup.
+
 Files a build writes, such as a `_version.py` from setuptools-scm or hatch-vcs, are in the
 wheel and not the sdist, or differ between the two. They don't run processes, load code or
 use the network, so they stay quiet.
@@ -85,6 +96,17 @@ demo 1.0 → 1.1: WARN
   WARN  GRN-C006 sdist-wheel-mismatch: 1.1's wheel has code that is not in its sdist (1 file(s))
            - compared demo-1.1-py3-none-any.whl with demo-1.1.tar.gz: 1 Python file(s) match the sdist, 1 differ from their copy there, 0 have none
            - demo/_client.py:7 calls subprocess.run (in setup()); demo/_client.py in demo-1.1.tar.gz doesn't
+```
+
+At `info`, from the test fixture: a script in a folder that holds no package, which only the
+wheel has.
+
+```text
+demo 1.0 → 1.1: PASS
+  info  GRN-C006 sdist-wheel-mismatch: 1.1's wheel has code that is not in its sdist only in test files or files outside its packages (1 file(s))
+           - compared demo-1.1-py3-none-any.whl with demo-1.1.tar.gz: 1 Python file(s) match the sdist, 0 differ from their copy there, 1 have none
+           - scripts/readme-gen/gen.py:4 calls urllib.request.urlopen (in get()); demo-1.1.tar.gz has no such file
+           - test files and files outside the release's packages run only when run on their own, and no other module, entry point or .pth file in the wheel names these, so this is reported at info
 ```
 
 ## How to resolve it
