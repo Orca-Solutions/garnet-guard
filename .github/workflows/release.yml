@@ -3,6 +3,8 @@ name: Release
 # Publishes garnet-guard to PyPI when the maintainer pushes a version tag.
 # Trusted Publishing (OIDC) replaces any stored token, and
 # pypa/gh-action-pypi-publish signs PEP 740 attestations for every file.
+# The same files, a Sigstore-signed build provenance for them and their
+# SHA-256 sums then go on a draft GitHub release for the maintainer to publish.
 
 on:
   push:
@@ -55,6 +57,37 @@ jobs:
         with:
           name: dist
           path: dist/
+          if-no-files-found: error
+
+  attest:
+    name: Sign build provenance
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write # sign with Sigstore
+      attestations: write # store the attestation on GitHub
+      contents: read
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: Name the bundle after the release
+        env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir provenance
+          cp "$BUNDLE" "provenance/garnet_guard-${TAG#v}.provenance.sigstore.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: provenance
+          path: provenance/
           if-no-files-found: error
 
   publish:
@@ -114,3 +147,54 @@ jobs:
               exit 1
             fi
           done
+
+  github-release:
+    name: Draft the GitHub release
+    needs: [attest, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # create the draft release and attach its files
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: provenance
+          path: provenance/
+      - name: Create the draft release with the signed files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          awk -v head="## $version " 'index($0, head) == 1 { found = 1; next } found && /^## / { exit } found' \
+            CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no section headed '## $version (date)'."
+            exit 1
+          fi
+          (cd dist && sha256sum -- *) > SHA256SUMS.txt
+          files=(dist/* provenance/* SHA256SUMS.txt)
+          prerelease=()
+          case "$version" in *a*|*b*|*rc*) prerelease=(--prerelease) ;; esac
+          draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || echo none)"
+          case "$draft" in
+            none)
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+                "${prerelease[@]}" --title "Garnet Guard $version" --notes-file notes.md "${files[@]}"
+              ;;
+            true)
+              gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${files[@]}"
+              ;;
+            *)
+              echo "::error::The GitHub release for $TAG is already published, and published releases are immutable, so its files can't be added. Delete it only if nothing links to it yet, then re-run this job."
+              exit 1
+              ;;
+          esac
+          echo "Draft release for $TAG is ready: open Releases, check the notes and publish it." >> "$GITHUB_STEP_SUMMARY"
