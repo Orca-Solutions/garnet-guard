@@ -29,6 +29,32 @@ def test_the_wheel_pip_would_install_is_read() -> None:
     assert select_wheel(["demo-1.1.tar.gz"]) is None
 
 
+def test_with_no_wheel_for_this_python_the_newest_build_here_is_read() -> None:
+    # pendulum 2.0.4: its first wheel by name is a Python 2 build with no
+    # compiled code; 2.0.5 dropped it. Both are read as their newest CPython
+    # build for this machine's platform, so the two compare like for like.
+    other = "win_amd64" if HERE.platform.startswith("macosx") else "macosx_10_9_x86_64"
+    old = [
+        f"demo-1.0-cp27-cp27m-{HERE.platform}.whl",
+        f"demo-1.0-cp34-cp34m-{HERE.platform}.whl",
+        f"demo-1.0-cp37-cp37m-{HERE.platform}.whl",
+        f"demo-1.0-cp38-cp38-{other}.whl",
+        "demo-1.0.tar.gz",
+    ]
+    new = [f.replace("1.0", "1.1") for f in old if "cp27" not in f]
+    assert select_wheel(old) == f"demo-1.0-cp37-cp37m-{HERE.platform}.whl"
+    assert select_wheel(new) == f"demo-1.1-cp37-cp37m-{HERE.platform}.whl"
+    assert select_wheel(list(reversed(old))) == select_wheel(old)
+    # No wheel for this platform: the newest CPython, then x86-64, then the name.
+    elsewhere = ["demo-1.1-cp36-cp36m-win32.whl", "demo-1.1-cp37-cp37m-win32.whl"]
+    assert select_wheel([*elsewhere, "demo-1.1-cp37-cp37m-win_amd64.whl"]) == (
+        "demo-1.1-cp37-cp37m-win_amd64.whl"
+    )
+    assert select_wheel(["demo-1.1-py2-none-any.whl", *elsewhere]) == (
+        "demo-1.1-cp37-cp37m-win32.whl"
+    )
+
+
 def _uploaded(rel: ReleaseFacts, *hours: float) -> ReleaseFacts:
     start = datetime(2026, 9, 1, 12, tzinfo=UTC)
     arts = tuple(

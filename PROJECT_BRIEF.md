@@ -7,7 +7,7 @@ The approved outcome, constraints and permissions for anyone working on Garnet G
 - **Mission:** no project takes a dependency update on faith. See [VISION.md](VISION.md).
 - **Launch success** (mid-December 2026, launch week from Tue Dec 8): the criteria in [VISION.md](VISION.md#what-success-looks-like) and the month-2 exit in [ROADMAP.md](ROADMAP.md).
 - **1.0:** the acceptance criteria in [docs/SPEC-v1.md](docs/SPEC-v1.md) §13.
-- **Dated milestones:** incident replays reproducible by Nov 15, 2026, and a reduced clean-corpus backtest by Dec 1, 2026 ([ROADMAP.md](ROADMAP.md), month 1). Both were met on 2026-10-30: `uv run python -m backtest` replays 51 malicious releases (47 PyPI, 4 npm), all of which get a warning, and the clean corpus covers 18,181 updates of the top 1,000 PyPI and npm packages, 366 of them flagged for a look (2.0%), none a false claim ([README](README.md#replays-of-real-malicious-releases)).
+- **Dated milestones:** incident replays reproducible by Nov 15, 2026, and a reduced clean-corpus backtest by Dec 1, 2026 ([ROADMAP.md](ROADMAP.md), month 1). Both were met on 2026-10-30: `uv run python -m backtest` replays 52 malicious releases (47 PyPI, 5 npm), all of which get a warning, and the clean corpus covers 18,181 updates of the top 1,000 PyPI and npm packages, 606 of them flagged for a look (3.3%) by the rules 0.2.0 ships, none a false claim ([README](README.md#replays-of-real-malicious-releases)).
 
 ## Constraints
 
