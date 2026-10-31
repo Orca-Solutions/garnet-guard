@@ -487,32 +487,16 @@ def _script_order(script: tuple[str, str]) -> tuple[int, str]:
     return (INSTALL_SCRIPTS.index(script[0]), script[1])
 
 
-def _installable(
-    rng: str, versions: dict[str, Any], times: dict[str, Any], at: datetime
-) -> tuple[list[str], str | None]:
-    """The versions a range could install from ``at`` until now: the newest
-    match published by ``at``, then every match published after it. With
-    the reason when there are none. Raises ``ValueError`` for a range it
-    can't read."""
-    when = {v: t for v in versions if (t := _parse_time(times.get(v))) is not None}
-    matches = npm_range.matching(rng, when)
-    by_then = [v for v in matches if when[v] <= at]
-    if not by_then:
-        return [], f"no version matching {rng or '*'} was published by {at:%Y-%m-%d %H:%M} UTC"
-    return [by_then[-1], *(v for v in matches if when[v] > at)], None
-
-
 def dependency_installs(
-    ctx: FetchContext, req: Requirement, at: datetime, pinned: tuple[str, ...] = ()
+    ctx: FetchContext, req: Requirement, pinned: tuple[str, ...] = ()
 ) -> DependencyInstalls:
-    """The releases of a new dependency that a user of a version published at
-    ``at`` could install (GRN-C008), each read with ``_dependency_release``.
-
-    ``pinned`` are the versions a lockfile pins, which are read instead of
-    the range's. Without a pin, that is the newest version satisfying the
-    range by ``at`` and every satisfying version published since, up to
-    ``MAX_DEPENDENCY_VERSIONS``. Raises ``NetError`` when a request fails;
-    anything else that stops the read is in ``problem``.
+    """The releases of a new dependency that GRN-C008 reads, each with
+    ``_dependency_release``: the versions a lockfile pins (``pinned``), else
+    every version npm lists that satisfies the range, whenever it was
+    published (npm can pick any of them: the ``latest`` tag, a deprecated
+    version skipped, an ``engines`` preference, a tree reused). More than
+    ``MAX_DEPENDENCY_VERSIONS`` aren't read. Raises ``NetError`` when a
+    request fails; anything else that stops the read is in ``problem``.
     """
     name = req.package
     rng = requirement_range(req)
@@ -520,7 +504,7 @@ def dependency_installs(
     pack = packument(ctx, name)
     if pack is None:
         return replace(out, problem=f"npm has no package {name}")
-    times, versions = _table(pack, "time"), _table(pack, "versions")
+    versions = _table(pack, "versions")
     if pinned:
         wanted = sorted(set(pinned))
         gone = [v for v in wanted if v not in versions]
@@ -530,11 +514,11 @@ def dependency_installs(
             )
     else:
         try:
-            wanted, why = _installable(rng, versions, times, at)
+            wanted = npm_range.matching(rng, versions)
         except ValueError:
             return replace(out, problem=f"Garnet can't read the range {rng!r}")
-        if why is not None:
-            return replace(out, problem=why)
+        if not wanted:
+            return replace(out, problem=f"no version of {name} matches {rng or '*'}")
     if len(wanted) > MAX_DEPENDENCY_VERSIONS:
         return replace(
             out,

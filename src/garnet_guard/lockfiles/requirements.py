@@ -65,7 +65,7 @@ def parse(text: str) -> list[Pin]:
             if private_index:
                 pins.append(Pin(name, version, line_no, "unsupported", "private index"))
             else:
-                pins.append(Pin(name, version, line_no))
+                pins.append(Pin(name, version, line_no, marker=bool(m.group(4))))
             continue
         m = _NAMED.match(line)
         if m:

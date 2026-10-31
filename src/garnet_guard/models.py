@@ -381,7 +381,7 @@ class DependencyProfile:
 
 
 # GRN-C008 reads at most this many releases of one young dependency; one with
-# more versions a user could install keeps the rule's severity, with a note.
+# more versions to read keeps the rule's severity, with a note.
 MAX_DEPENDENCY_VERSIONS = 5
 
 
@@ -406,10 +406,10 @@ class DependencyRelease:
     install_scripts: tuple[tuple[str, str], ...] = ()
     binding_gyp: bool = False
     gypfile_off: bool = False
-    # PyPI: the wheels read, the files they install that Python runs or reads
-    # at every start (a .pth, sitecustomize.py or usercustomize.py in
-    # site-packages, or any of those under .data/data/) as "wheel: path", and
-    # the Requires-Python values of the release's files.
+    # PyPI: the wheels read, the files they install that Python reads or runs
+    # at every start (a .pth in site-packages, or anything importing as
+    # sitecustomize or usercustomize there; any of those under .data/data/)
+    # as "wheel: path", and the Requires-Python values of the release's files.
     wheels_read: tuple[str, ...] = ()
     startup_files: tuple[str, ...] = ()
     requires_python: tuple[str, ...] = ()
@@ -419,8 +419,7 @@ class DependencyRelease:
 
 @dataclass(frozen=True)
 class DependencyInstalls:
-    """The releases of a new dependency that a user of the candidate could
-    install (GRN-C008).
+    """The releases of a new dependency that GRN-C008 reads.
 
     Read only for a dependency first released less than 90 days before the
     candidate that an owner of the trusted package also owns: that one is
@@ -428,12 +427,13 @@ class DependencyInstalls:
     install-time hook and verified provenance from the trusted package's
     repository.
 
-    ``pinned`` is True when a lockfile pins the dependency: ``releases`` are
-    the pinned versions. Otherwise they are the newest version matching the
-    candidate's range at its first upload, and every matching version
-    published after that, up to the time of the lookup. ``problem`` says why
-    Garnet didn't read them all (no version by then, a range it can't read,
-    more than ``MAX_DEPENDENCY_VERSIONS``); the rule then keeps its severity.
+    ``pinned`` is True when the lockfiles the change comes from pin the
+    dependency: ``releases`` are the pinned versions. Otherwise they are
+    every version the registry lists at the lookup that the candidate's
+    range admits, whenever it was published (prereleases too where the
+    range admits them). ``problem`` says why Garnet didn't read them all (no
+    match, a range it can't read, more than ``MAX_DEPENDENCY_VERSIONS``);
+    the rule then keeps its severity.
     """
 
     name: str
@@ -552,8 +552,8 @@ class ReleaseFacts:
     # looked up by the engine for GRN-C008. A name with no profile and no
     # GRN-E001 naming GRN-C008 wasn't looked up at all (no baseline to diff).
     dependencies: tuple[DependencyProfile, ...] = ()
-    # The releases each young dependency with an owner in common with the
-    # trusted package could install, read by the engine for GRN-C008. A
+    # The releases of each young dependency with an owner in common with the
+    # trusted package that the engine read for GRN-C008. A
     # dependency that needed them and has none had a failed lookup (GRN-E001).
     dependency_installs: tuple[DependencyInstalls, ...] = ()
     # The registry accounts that own the package: PyPI's owner and maintainer

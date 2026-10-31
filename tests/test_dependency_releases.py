@@ -18,7 +18,7 @@ from typing import Any, cast
 import pytest
 
 from backtest.corpus import DependencyInstallsCache
-from garnet_guard.checks.content import owned_young_dependencies
+from garnet_guard.checks.content import _leaves_out, owned_young_dependencies
 from garnet_guard.ecosystems import npm, npm_range, pypi
 from garnet_guard.ecosystems.github import TagLookup
 from garnet_guard.ecosystems.gittree import TreeLookup
@@ -40,7 +40,7 @@ from garnet_guard.models import (
     Verdict,
 )
 from garnet_guard.net import Http, NetError, Response
-from garnet_guard.workspace import pinned_versions
+from garnet_guard.workspace import merge_pins, pinned_versions
 from tests.builders import prov, release, sdist, wheel
 
 UPLOADED = datetime(2026, 9, 1, tzinfo=UTC)
@@ -111,7 +111,7 @@ def _npm(*releases: DependencyRelease, installs: Any = None, **base_kw: Any) -> 
 
 CLEAN_NPM = (
     "info: same owner, no install scripts, provenance from github.com/o/r, in helper 1.0.2, "
-    "the only version helper@^1.0.0 could install from 1.1's upload until the lookup"
+    "the only published version matching helper@^1.0.0"
 )
 
 
@@ -134,8 +134,7 @@ def test_every_installable_version_must_be_clean() -> None:
     f = _npm(_npm_release(), _npm_release("1.0.3"))
     assert f.severity == Severity.INFO
     assert f.evidence[0].summary.endswith(
-        "in helper 1.0.2, 1.0.3, every version helper@^1.0.0 could install from 1.1's upload "
-        "until the lookup"
+        "in helper 1.0.2, 1.0.3, every published version matching helper@^1.0.0"
     )
 
 
@@ -307,6 +306,21 @@ def test_a_dependency_declared_twice_warns_and_is_not_read() -> None:
     )
 
 
+@pytest.mark.parametrize("trusted_has_it", [False, True])
+def test_an_alias_of_the_same_package_warns_and_is_not_read(trusted_has_it: bool) -> None:
+    doc = {"dependencies": {"helper": "^1.0.0", "h2": "npm:helper@^2.0.0"}}
+    alias, plain = sorted(declared_dependencies(json.dumps(doc).encode()), key=lambda r: r.name)
+    assert (alias.name, alias.package, plain.name) == ("h2", "helper", "helper")
+    base = _rel("npm", "1.0", plain) if trusted_has_it else _rel("npm", "1.0")
+    cand = _rel("npm", "1.1", plain, alias)
+    assert owned_young_dependencies(base, replace(cand, dependencies=(_profile(),))) == ()
+    f = _c008(NPM, base, cand, (_installs(_npm_release()),))
+    assert f.severity == Severity.WARN
+    said = " ".join(e.summary for e in f.evidence)
+    assert "helper is installed by more than one requirement" in said
+    assert "kept at warn" in said and "info: same owner" not in said
+
+
 # PyPI
 
 PYREQ = Requirement("helper", "helper>=1.0")
@@ -335,8 +349,7 @@ def test_pypi_same_owner_clean_helper_is_info() -> None:
     assert f.severity == Severity.INFO
     assert f.evidence[0].summary.endswith(
         "info: same owner, a py3-none-any wheel, no file that runs at start-up, provenance from "
-        "github.com/o/r, in helper 1.0.2, the only version helper>=1.0 could install from "
-        "1.1's upload until the lookup"
+        "github.com/o/r, in helper 1.0.2, the only published version matching helper>=1.0"
     )
     universal = "helper-1.0.2-py2.py3-none-any.whl"
     assert _py(_py_release(files=(universal, SDIST))).severity == Severity.INFO
@@ -375,10 +388,37 @@ def test_pypi_requires_python_that_leaves_out_a_current_python_warns() -> None:
     f = _py(_py_release(requires_python=(">=3.13",)))
     assert f.severity == Severity.WARN
     assert (
-        "helper 1.0.2 requires Python >=3.13, so pip on Python 3.11 installs another version"
+        "helper 1.0.2 requires Python >=3.13, so pip on Python 3.11.0 installs another version"
         in f.evidence[0].summary
     )
     assert _py(_py_release(requires_python=(">=3.8",))).severity == Severity.INFO
+
+
+@pytest.mark.parametrize(
+    ("requires_python", "left_out"),
+    [
+        ("<=3.15", "3.15.1"),
+        ("!=3.12.4", "3.12.4"),
+        ("<3.14.3", "3.14.3"),
+        (">=3.11.1", "3.11.0"),
+        ("==3.*,!=3.13.50", "3.13.50"),
+        (">=3.8", None),
+        (">=3.11,<4", None),
+    ],
+)
+def test_requires_python_is_tested_at_every_patch_level(
+    requires_python: str, left_out: str | None
+) -> None:
+    assert _leaves_out(requires_python) == left_out
+    f = _py(_py_release(requires_python=(requires_python,)))
+    if left_out is None:
+        assert f.severity == Severity.INFO
+    else:
+        assert f.severity == Severity.WARN
+        assert f"so pip on Python {left_out} installs another version" in f.evidence[0].summary
+
+
+def test_unreadable_requires_python_warns() -> None:
     f = _py(_py_release(requires_python=("~~3",)))
     assert f.severity == Severity.WARN
     assert "has a Requires-Python Garnet can't read (~~3)" in f.evidence[0].summary
@@ -396,6 +436,50 @@ def test_pypi_startup_files_warn(path: str, does: str) -> None:
     f = _py(_py_release(startup_files=(path,)))
     assert f.severity == Severity.WARN
     assert f"installs {path}, which Python {does} at every start" in f.evidence[0].summary
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "sitecustomize.py",
+        "sitecustomize/__init__.py",
+        "SiteCustomize/__init__.py",
+        "sitecustomize.pyc",
+        "__pycache__/sitecustomize.cpython-312.pyc",
+        "sitecustomize.cpython-312-x86_64-linux-gnu.so",
+        "sitecustomize.abi3.so",
+        "sitecustomize.pyd",
+        "usercustomize/__init__.py",
+        "UserCustomize.cp312-win_amd64.pyd",
+        "x.pth",
+        "X.PTH",
+        "h-1.data/purelib/sitecustomize/__init__.py",
+        "h-1.data/purelib/x.pth",
+        "h-1.data/platlib/x.PTH",
+        "h-1.data/platlib/sitecustomize.abi3.so",
+        "h-1.data/data/lib/python3.12/site-packages/sitecustomize/__init__.py",
+        "h-1.data/data/lib/python3.12/site-packages/x.pth",
+        "h-1.DATA/data/share/usercustomize.pyc",
+    ],
+)
+def test_startup_module_forms(path: str) -> None:
+    assert pypi._startup_file(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "helper/sitecustomize.py",
+        "helper/x.pth",
+        "helper/__pycache__/sitecustomize.cpython-312.pyc",
+        "sitecustomizer.py",
+        "h-1.data/purelib/helper/sitecustomize.py",
+        "h-1.data/scripts/sitecustomize",
+        "h-1.dist-info/x.pth",
+    ],
+)
+def test_files_that_do_not_run_at_start(path: str) -> None:
+    assert not pypi._startup_file(path)
 
 
 def test_pypi_every_file_needs_provenance_from_the_repository() -> None:
@@ -448,19 +532,19 @@ class _Fetcher:
         return cast(DependencyProfile, _profile(name))
 
     def dependency_installs(
-        self, ecosystem: str, req: Requirement, at: datetime, pinned: tuple[str, ...] = ()
+        self, ecosystem: str, req: Requirement, pinned: tuple[str, ...] = ()
     ) -> DependencyInstalls:
-        self.calls.append((ecosystem, req, at, pinned))
+        self.calls.append((ecosystem, req, pinned))
         if isinstance(self.found, Exception):
             raise self.found
         return self.found
 
 
-def test_engine_reads_the_releases_with_the_candidate_upload_time() -> None:
+def test_engine_reads_the_releases_of_a_young_shared_helper() -> None:
     fetcher = _Fetcher(_installs(_npm_release()))
     base, cand = _rel("npm", "1.0"), _rel("npm", "1.1", HELPER)
     cand = with_dependency_profiles(cast(Any, fetcher), base, cand)
-    assert fetcher.calls == [("npm", HELPER, UPLOADED, ())]
+    assert fetcher.calls == [("npm", HELPER, ())]
     assert cand.dependency_installs == (_installs(_npm_release()),)
     assert run_checks(NPM, base, cand).verdict == Verdict.PASS
 
@@ -470,7 +554,7 @@ def test_engine_passes_lockfile_pins() -> None:
     base, cand = _rel("pypi", "1.0"), _rel("pypi", "1.1", PYREQ)
     pins = {("pypi", "helper"): ("1.0.2",)}
     with_dependency_profiles(cast(Any, fetcher), base, cand, pins)
-    assert fetcher.calls == [("pypi", PYREQ, UPLOADED, ("1.0.2",))]
+    assert fetcher.calls == [("pypi", PYREQ, ("1.0.2",))]
 
 
 @pytest.mark.parametrize(
@@ -510,17 +594,114 @@ def test_releases_the_facts_carry_are_not_read_again() -> None:
 def test_dependency_installs_cache_round_trip(tmp_path: Path) -> None:
     cache = DependencyInstallsCache(tmp_path)
     found = _installs(_npm_release(install_scripts=(("postinstall", "node x.js"),)), pinned=True)
-    assert cache.get("npm", HELPER, UPLOADED) is None
-    cache.put("npm", HELPER, UPLOADED, found)
-    assert cache.get("npm", HELPER, UPLOADED) == found
-    assert cache.get("npm", HELPER, UPLOADED + timedelta(seconds=1)) is None
+    assert cache.get("npm", HELPER) is None
+    cache.put("npm", HELPER, found)
+    assert cache.get("npm", HELPER) == found
+    assert cache.get("npm", Requirement("helper", "helper@^2.0.0")) is None
 
 
 def test_pinned_versions_from_a_lockfile() -> None:
     body = b"helper==1.0.2\nhelper-two==2.0 ; python_version < '3.12'\nloose>=1\n"
     pins = pinned_versions("requirements.txt", body)
-    assert pins[("pypi", "helper")] == ("1.0.2",)
-    assert ("pypi", "loose") not in pins
+    assert pins == {("pypi", "helper"): ("1.0.2",)}
+    # a pin under a marker, or a second entry under one, leaves the range to read
+    body = b"helper==1.0.2 ; python_version < '3.12'\nHelper_Name==2\n"
+    assert pinned_versions("requirements.txt", body) == {("pypi", "helper-name"): ("2",)}
+    body = b"helper==1.0.2\nhelper==1.0.3 ; sys_platform == 'win32'\n"
+    assert pinned_versions("requirements.txt", body) == {}
+
+
+def test_pinned_versions_from_uv_and_pylock_markers() -> None:
+    uv = b"""version = 1
+[[package]]
+name = "helper"
+version = "1.0.2"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = ["python_full_version < '3.12'"]
+
+[[package]]
+name = "other"
+version = "2.0"
+source = { registry = "https://pypi.org/simple" }
+"""
+    assert pinned_versions("uv.lock", uv) == {("pypi", "other"): ("2.0",)}
+
+
+def test_pins_come_only_from_lockfiles_the_change_is_in() -> None:
+    a = {("pypi", "helper"): ("1.0.2",), ("pypi", "x"): ("1",)}
+    b = {("pypi", "helper"): ("1.0.3",)}
+    assert merge_pins([a]) == a
+    # every lockfile has to pin it; their versions are all read
+    assert merge_pins([a, b]) == {("pypi", "helper"): ("1.0.2", "1.0.3")}
+    assert merge_pins([]) == {}
+
+
+def test_pylock_marker_drops_the_pin() -> None:
+    pylock = b"""lock-version = "1.0"
+[[packages]]
+name = "helper"
+version = "1.0.2"
+index = "https://pypi.org/simple"
+marker = "python_version < '3.12'"
+
+[[packages]]
+name = "other"
+version = "2.0"
+index = "https://pypi.org/simple"
+"""
+    assert pinned_versions("pylock.toml", pylock) == {("pypi", "other"): ("2.0",)}
+    poetry = b"""[[package]]
+name = "helper"
+version = "1.0.2"
+markers = "python_version < \\"3.12\\""
+
+[[package]]
+name = "other"
+version = "2.0"
+"""
+    assert pinned_versions("poetry.lock", poetry) == {("pypi", "other"): ("2.0",)}
+
+
+def test_check_takes_pins_from_the_lockfiles_each_change_is_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from garnet_guard import cli
+
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    git("config", "commit.gpgsign", "false")
+    (tmp_path / "requirements.txt").write_text("demo==1.0\nhelper==1.0.2\n")
+    (tmp_path / "requirements-dev.txt").write_text("other==1\nhelper==9.9\n")
+    (tmp_path / "requirements-ci.txt").write_text("tool==1\nhelper==1.0.3\n")
+    git("add", ".")
+    git("commit", "-q", "-m", "base")
+    (tmp_path / "requirements.txt").write_text("demo==1.1\nhelper==1.0.2\n")
+    (tmp_path / "requirements-dev.txt").write_text("other==2\nhelper==9.9\n")
+    (tmp_path / "requirements-ci.txt").write_text(
+        "tool==2\nhelper==1.0.3 ; python_version < '3.12'\n"
+    )
+    seen: dict[Any, Any] = {}
+
+    def fake_evaluate(changes: Any, *, policy: Any = None, options: Any = None) -> list[Any]:
+        seen.update(options.pins)
+        return []
+
+    monkeypatch.setattr(cli, "evaluate", fake_evaluate)
+    monkeypatch.chdir(tmp_path)
+    heads = ["requirements.txt", "requirements-dev.txt", "requirements-ci.txt"]
+    args = ["check", "--git-base", "HEAD", "--no-policy", "--format", "json"]
+    cli.main(args + [a for h in heads for a in ("--head", h)])
+    # demo's change reads helper 1.0.2 only, never the 9.9 another lockfile pins
+    assert seen[("pypi", "demo", "1.0", "1.1")][("pypi", "helper")] == ("1.0.2",)
+    assert seen[("pypi", "other", "1", "2")][("pypi", "helper")] == ("9.9",)
+    # a pin under a marker leaves helper's range to be read
+    assert ("pypi", "helper") not in seen[("pypi", "tool", "1", "2")]
 
 
 # Fetching the releases (fake registry)
@@ -575,7 +756,7 @@ def _plain(name: str = "helper") -> bytes:
     return sdist("package", {"package.json": json.dumps({"name": name})})
 
 
-def test_npm_reads_the_version_by_then_and_every_match_since() -> None:
+def test_npm_reads_every_published_match_whenever_published() -> None:
     pkg = {"name": "helper", "scripts": {"postinstall": "node setup.js", "test": "x"}}
     tarballs = {
         "1.0.1": _plain(),
@@ -586,17 +767,17 @@ def test_npm_reads_the_version_by_then_and_every_match_since() -> None:
         "2.0.0": _plain(),
     }
     times = {
-        "1.0.1": "2026-08-01T00:00:00Z",  # older than the newest match by then
+        "1.0.1": "2026-08-01T00:00:00Z",  # older: a dist-tag or reused tree can install it
         "1.0.2": "2026-08-31T00:00:00Z",
-        "1.1.0": "2026-09-02T00:00:00Z",  # after the candidate: ^1.0.0 installs it today
+        "1.1.0": "2026-09-02T00:00:00Z",  # after the candidate
         "2.0.0": "2026-08-15T00:00:00Z",  # outside the range
     }
     routes = _npm_registry(tarballs, times, **{"1.0.2": {"scripts": {"preinstall": "node pre.js"}}})
     ctx, http = _npm_ctx(routes)
-    found = npm.dependency_installs(ctx, HELPER, UPLOADED)
+    found = npm.dependency_installs(ctx, HELPER)
     assert found.problem is None and not found.pinned
-    assert [r.version for r in found.releases] == ["1.0.2", "1.1.0"]
-    first = found.releases[0]
+    assert [r.version for r in found.releases] == ["1.0.1", "1.0.2", "1.1.0"]
+    first = found.releases[1]
     assert first.files == (TGZ,) and first.problem is None
     # the tarball's script and the registry copy's both count
     assert first.install_scripts == (
@@ -606,16 +787,16 @@ def test_npm_reads_the_version_by_then_and_every_match_since() -> None:
     assert first.binding_gyp and not first.gypfile_off
     assert first.provenance == (FileProvenance(TGZ, present=False, verified=False),)
     assert not any("attestations" in u for u in http.calls)
-    assert "https://registry.npmjs.org/helper/-/helper-1.0.1.tgz" not in http.calls
+    assert "https://registry.npmjs.org/helper/-/helper-2.0.0.tgz" not in http.calls
 
 
 def test_npm_reads_only_the_pinned_versions() -> None:
     tarballs = {"1.0.1": _plain(), "1.0.2": _plain()}
     times = {"1.0.1": "2026-08-01T00:00:00Z", "1.0.2": "2026-08-31T00:00:00Z"}
     ctx, _ = _npm_ctx(_npm_registry(tarballs, times))
-    found = npm.dependency_installs(ctx, HELPER, UPLOADED, ("1.0.1",))
+    found = npm.dependency_installs(ctx, HELPER, ("1.0.1",))
     assert found.pinned and [r.version for r in found.releases] == ["1.0.1"]
-    gone = npm.dependency_installs(ctx, HELPER, UPLOADED, ("9.9.9",))
+    gone = npm.dependency_installs(ctx, HELPER, ("9.9.9",))
     assert gone.problem == "the lockfile pins helper 9.9.9, which npm doesn't list"
 
 
@@ -624,7 +805,7 @@ def test_npm_more_versions_than_the_cap_are_not_read() -> None:
     tarballs = {f"1.0.{i}": _plain() for i in range(n)}
     times = {f"1.0.{i}": f"2026-09-{i + 1:02d}T00:00:00Z" for i in range(n)}
     ctx, http = _npm_ctx(_npm_registry(tarballs, times))
-    found = npm.dependency_installs(ctx, HELPER, UPLOADED)
+    found = npm.dependency_installs(ctx, HELPER)
     assert found.releases == ()
     assert found.problem == (
         f"{n} versions of helper could install (1.0.0 to 1.0.{n - 1}); Garnet reads a young "
@@ -633,22 +814,20 @@ def test_npm_more_versions_than_the_cap_are_not_read() -> None:
     assert not any(u.endswith(".tgz") for u in http.calls)
 
 
-def test_npm_with_no_version_by_then_or_an_unreadable_range() -> None:
-    ctx, _ = _npm_ctx(_npm_registry({"1.0.0": _plain()}, {"1.0.0": "2026-09-05T00:00:00Z"}))
-    found = npm.dependency_installs(ctx, HELPER, UPLOADED)
+def test_npm_with_no_match_or_an_unreadable_range() -> None:
+    ctx, _ = _npm_ctx(_npm_registry({"2.0.0": _plain()}, {"2.0.0": "2026-08-05T00:00:00Z"}))
+    found = npm.dependency_installs(ctx, HELPER)
     assert found.releases == ()
-    assert found.problem == "no version matching ^1.0.0 was published by 2026-09-01 00:00 UTC"
+    assert found.problem == "no version of helper matches ^1.0.0"
     odd = Requirement("helper", "helper@next")
-    assert npm.dependency_installs(ctx, odd, UPLOADED).problem == (
-        "Garnet can't read the range 'next'"
-    )
+    assert npm.dependency_installs(ctx, odd).problem == "Garnet can't read the range 'next'"
 
 
 def test_npm_tarball_that_does_not_match_its_integrity() -> None:
     routes = _npm_registry({"1.0.2": _plain()}, {"1.0.2": "2026-08-31T00:00:00Z"})
     routes["https://registry.npmjs.org/helper/-/helper-1.0.2.tgz"] = (200, b"other bytes")
     ctx, _ = _npm_ctx(routes)
-    (rel,) = npm.dependency_installs(ctx, HELPER, UPLOADED).releases
+    (rel,) = npm.dependency_installs(ctx, HELPER).releases
     assert rel.problem == "helper-1.0.2.tgz doesn't match the registry's integrity hash"
 
 
@@ -657,7 +836,7 @@ def test_npm_download_failure_raises() -> None:
     del routes["https://registry.npmjs.org/helper/-/helper-1.0.2.tgz"]
     ctx, _ = _npm_ctx(routes)
     with pytest.raises(NetError, match="HTTP 404"):
-        npm.dependency_installs(ctx, HELPER, UPLOADED)
+        npm.dependency_installs(ctx, HELPER)
 
 
 def _tgz(entries: list[tuple[str, bytes]]) -> bytes:
@@ -797,7 +976,7 @@ def test_pypi_reads_every_installable_version_and_finds_startup_files() -> None:
             _pypi_file(WHL, startup, "2026-08-30T00:00:00Z", ">=3.9"),
             _pypi_file(SDIST, b"sdist", "2026-08-30T00:00:00Z", ">=3.9"),
         ],
-        "1.1.0": [_pypi_file(whl_110, good, "2026-09-03T00:00:00Z")],  # after: installs today
+        "1.1.0": [_pypi_file(whl_110, good, "2026-09-03T00:00:00Z")],
         "2.0rc1": [_pypi_file("helper-2.0rc1.tar.gz", b"s", "2026-08-02T00:00:00Z")],
     }
     doc = json.dumps({"info": {}, "releases": files}).encode()
@@ -809,13 +988,15 @@ def test_pypi_reads_every_installable_version_and_finds_startup_files() -> None:
             f"https://files.pythonhosted.org/{whl_101}": (200, good),
         }
     )
-    found = pypi.dependency_installs(ctx, PYREQ, UPLOADED)
+    found = pypi.dependency_installs(ctx, PYREQ)
     assert found.problem is None
-    assert [r.version for r in found.releases] == ["1.0.2", "1.1.0"]
-    rel = found.releases[0]
+    # every listed version the range admits, whenever uploaded, prereleases too
+    assert [r.version for r in found.releases] == ["1.0.1", "1.0.2", "1.1.0", "2.0rc1"]
+    rel = found.releases[1]
     assert rel.problem is None and rel.requires_python == (">=3.9",)
     assert rel.files == (WHL, SDIST) and rel.wheels_read == (WHL,)
-    # what lands in site-packages itself, and anything of the kind under .data/data/
+    # what imports from site-packages itself, and anything of the kind under .data/data/;
+    # helper/sitecustomize.py imports as helper.sitecustomize and doesn't count
     assert rel.startup_files == (
         f"{WHL}: SiteCustomize.py",
         f"{WHL}: helper-1.0.2.data/data/lib/python3.12/site-packages/y.pth",
@@ -824,24 +1005,40 @@ def test_pypi_reads_every_installable_version_and_finds_startup_files() -> None:
     )
     assert [p.present for p in rel.provenance] == [False, False]
     assert f"https://pypi.org/integrity/helper/1.0.2/{SDIST}/provenance" in http.calls
-    # the sdist is never downloaded, nor an older release
+    assert f"https://files.pythonhosted.org/{whl_101}" in http.calls
+    rc = found.releases[3]
+    assert rc.files == ("helper-2.0rc1.tar.gz",) and rc.wheels_read == ()
+    # an sdist is never downloaded
     assert f"https://files.pythonhosted.org/{SDIST}" not in http.calls
-    assert f"https://files.pythonhosted.org/{whl_101}" not in http.calls
     # a lockfile pin is read instead, matched by PEP 440 equality
-    pinned = pypi.dependency_installs(ctx, PYREQ, UPLOADED, ("1.0.1.0",))
+    pinned = pypi.dependency_installs(ctx, PYREQ, ("1.0.1.0",))
     assert pinned.pinned and [r.version for r in pinned.releases] == ["1.0.1"]
 
 
-def test_pypi_with_no_match_by_then() -> None:
-    files = {"1.0": [_pypi_file("helper-1.0.tar.gz", b"s", "2026-09-05T00:00:00Z")]}
+def test_pypi_with_no_match_or_too_many() -> None:
+    files = {"0.9": [_pypi_file("helper-0.9.tar.gz", b"s", "2026-08-05T00:00:00Z")]}
     doc = json.dumps({"info": {}, "releases": files}).encode()
     ctx, _ = _pypi_ctx({"https://pypi.org/pypi/helper/json": (200, doc)})
-    found = pypi.dependency_installs(ctx, PYREQ, UPLOADED)
+    found = pypi.dependency_installs(ctx, PYREQ)
     assert found.releases == ()
-    assert found.problem == "no version matching >=1.0 had a file on PyPI by 2026-09-01 00:00 UTC"
+    assert found.problem == "no version of helper matches >=1.0"
+    many = {
+        v: [_pypi_file(f"helper-{v}.tar.gz", b"s", "2026-08-05T00:00:00Z")]
+        for v in ("1.0", "1.1", "1.2", "1.3", "1.4", "1.5a1")
+    }
+    doc = json.dumps({"info": {}, "releases": many}).encode()
+    ctx, http = _pypi_ctx({"https://pypi.org/pypi/helper/json": (200, doc)})
+    found = pypi.dependency_installs(ctx, PYREQ)
+    assert found.releases == () and http.calls == ["https://pypi.org/pypi/helper/json"]
+    assert found.problem == (
+        "6 versions of helper could install (1.0 to 1.5a1); Garnet reads a young "
+        "dependency's releases only up to 5"
+    )
+    pinned = pypi.dependency_installs(ctx, PYREQ, ("2.0",))
+    assert pinned.problem == "the lockfile pins helper 2.0, which PyPI doesn't list"
 
 
 def test_pypi_lookup_failure_raises() -> None:
     ctx, _ = _pypi_ctx({"https://pypi.org/pypi/helper/json": (503, b"")})
     with pytest.raises(NetError, match="HTTP 503"):
-        pypi.dependency_installs(ctx, PYREQ, UPLOADED)
+        pypi.dependency_installs(ctx, PYREQ)

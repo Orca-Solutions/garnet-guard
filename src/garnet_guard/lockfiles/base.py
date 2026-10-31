@@ -52,6 +52,9 @@ class Pin:
     line: int
     source: Literal["pypi", "unpinned", "unsupported"] = "pypi"
     detail: str | None = None
+    # The entry applies only under an environment marker (a requirements
+    # line with "; marker", uv's resolution-markers, pylock's marker).
+    marker: bool = False
 
 
 _REQ_NAME = re.compile(r"requirements[^/\\]*\.(txt|in)$", re.IGNORECASE)

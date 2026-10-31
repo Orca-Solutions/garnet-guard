@@ -10,7 +10,7 @@ status: implemented
 
 | | |
 |---|---|
-| Default severity | `warn` for a dependency that is new to the registry, missing from it, or installed from outside it; `info` for an established one, and for a new one from the trusted package's owner when every release a user could install has no install-time hook and provenance from the trusted package's repository |
+| Default severity | `warn` for a dependency that is new to the registry, missing from it, or installed from outside it; `info` for an established one, and for a new one from the trusted package's owner when every release of it that Garnet reads (every published version its range admits, or the lockfile's pins) has no install-time hook and provenance from the trusted package's repository |
 | Kind | diff rule: fires only when the trusted version had the property and the new version lost it, or the new version gained a risky property the trusted version lacked. |
 | Status | Implemented in 0.2; the shared-owner check is new in 0.3 |
 
@@ -40,8 +40,8 @@ back is no reason to look less closely.
 Maintainers who split code into a helper package often publish it the same day as the release
 that uses it. An attacker who holds a maintainer's account can do the same, so a shared owner
 alone never lowers the finding. When an account that owns the trusted package owns the young
-dependency too, Garnet reads every release of it that a user of the new version could install,
-and reports the dependency at `info` only when all of these hold for every one of them:
+dependency too, Garnet reads the releases of it listed below, and reports the dependency at
+`info` only when all of these hold for every one of them:
 
 - **No install-time hook.** On npm, neither the tarball's `package.json` nor the registry's copy
   of it has a `preinstall`, `install` or `postinstall` script, and there is no `binding.gyp`, in
@@ -53,10 +53,17 @@ and reports the dependency at `info` only when all of these hold for every one o
   (`py2.py3-none-any` counts), so pip installs the same wheel on every platform with Python 3.
   Otherwise pip builds the sdist where no wheel fits and runs its build code, or, with no sdist,
   installs another version there. Its Requires-Python admits every CPython release supported
-  today (3.11 to 3.15); on a Python it leaves out, pip installs another version. No wheel
-  installs a `.pth` file, `sitecustomize.py` or `usercustomize.py` into site-packages, or any of
-  them under `<name>.data/data/`, which installs relative to the environment and can land in
-  site-packages: Python reads or runs those at every start.
+  today, tested at 3.11.0 to 3.11.50 and so on for each of 3.11 to 3.15 (so `!=3.12.4` or
+  `<=3.15` keeps `warn`); on a Python it leaves out, pip installs another version. No wheel
+  installs anything Python reads or runs at every start: a `.pth` file at the top of
+  site-packages, or anything that imports as `sitecustomize` or `usercustomize` from there,
+  matched by its first path part up to the first dot, in any case: a module
+  (`sitecustomize.py`), a package (`sitecustomize/__init__.py`), compiled code
+  (`sitecustomize.pyc`, `__pycache__/sitecustomize.cpython-312.pyc`) or an extension module
+  (`sitecustomize.cpython-312-x86_64-linux-gnu.so`, `sitecustomize.abi3.so`,
+  `sitecustomize.pyd`). The same goes under `<name>.data/purelib/` and `platlib/`, which install
+  into site-packages, and anywhere under `<name>.data/data/`, which installs relative to the
+  environment and can land there.
 - **Provenance from the trusted package's repository.** Every file of the release has an
   attestation that verifies with Sigstore (npm provenance, PEP 740 on PyPI), from a repository
   the trusted version's own verified attestations name, or, on github.com, from the same GitHub
@@ -64,19 +71,26 @@ and reports the dependency at `info` only when all of these hold for every one o
   match, so the dependency keeps `warn`.
 - **One requirement.** The new version declares the dependency once, with no environment
   marker. A second requirement for the same name (another `Requires-Dist` line, or the name in
-  both `dependencies` and `optionalDependencies`) or a marker makes the release that installs
-  depend on the machine, so the dependency keeps `warn` without a lookup.
+  both `dependencies` and `optionalDependencies`), a second requirement on npm that installs the
+  same registry package under an alias (`"helper": "^1"` and `"h2": "npm:helper@^2"`, matched
+  by the alias target, lowercased), or a marker makes the release that installs depend on how
+  they combine or on the machine, so the dependency keeps `warn` without a lookup.
 
-The releases Garnet reads are the ones a user could install:
+The releases Garnet reads are these. It doesn't work out which one an installer would pick:
+that depends on dist-tags, deprecations, `engines`, yanks, resolution strategy (uv's
+`lowest`) and what is already installed, so every candidate is read.
 
-- When a lockfile Garnet reads (`garnet check`) pins the dependency, the pinned versions.
-- Otherwise, the newest version that matched the range when the new version was first uploaded,
-  and every matching version published after that, up to the time of the lookup: a helper
-  release published an hour after the new version installs with the same range. Ranges follow
-  node-semver's rules on npm, with prereleases only when the range names one and `latest` read
-  as `*`, and the requirement's specifier on PyPI, counting a version from its first file.
-  Neither registry records dist-tags or yanks as they stood then. More than 5 such releases
-  aren't read, and the evidence says how many there were.
+- Under `garnet check`, when the dependency is pinned in every lockfile the change comes from,
+  with no environment marker on the pin (a `;` marker in a requirements file, `marker` in
+  `pylock.toml`, `resolution-markers` in `uv.lock`), the pinned versions. Pins in other
+  lockfiles of the repository aren't used.
+- Otherwise, every version the registry lists that the requirement admits, whenever it was
+  published, up to the time of the lookup. On npm the range follows node-semver's rules, with
+  prereleases only when the range names one and `latest` read as `*`. On PyPI it is the
+  requirement's specifier over every version with a file, prereleases and yanked releases
+  included.
+- More than 5 such releases aren't read, so the dependency keeps `warn`, and the evidence says
+  how many there were. A helper that is less than 90 days old rarely has more.
 
 Anything Garnet couldn't check keeps `warn`: a registry lookup or download that failed, or a
 response it couldn't read (both also GRN-E001), an attestation that couldn't be verified, a range
@@ -84,8 +98,8 @@ Garnet can't read, a tarball that doesn't match its integrity hash, more than 5 
 or a release with more than 10 wheels. The files and attestations checked are the ones the
 registry lists at the time of the lookup. The evidence line says which way it went and why, for
 example `info: same owner, no install scripts, provenance from
-github.com/TooTallNate/proxy-agents, in proxy-agent-negotiate 1.1.0, the only version
-proxy-agent-negotiate@1.1.0 could install from 9.1.0's upload until the lookup`, or
+github.com/TooTallNate/proxy-agents, in proxy-agent-negotiate 1.1.0, the only published
+version matching proxy-agent-negotiate@1.1.0`, or
 `kept at warn: httpx2 2.9.1 has provenance naming github.com/pydantic/httpx2, not
 github.com/modelcontextprotocol/python-sdk like mcp 1.30.0`.
 
@@ -180,6 +194,9 @@ matched. How to write one is in [the policy guide](../policy.md); the format is 
   one. A package that is new to the lockfile has no trusted release there, so it gets only the
   rules that need none; for a young helper from the trusted package's owner, this rule reads the
   pinned version itself.
+- **Which release installs.** Garnet reads every release the range admits, not the one an
+  installer would choose, and doesn't read releases outside the range that a lockfile or an
+  override (npm `overrides`, pip constraints) could install instead.
 - **A changed version range** of a dependency the trusted version already had.
 - **An sdist without fixed metadata.** When a release has no wheel, the sdist's `PKG-INFO` is
   used only from metadata version 2.2 onwards and only when `Requires-Dist` isn't listed as

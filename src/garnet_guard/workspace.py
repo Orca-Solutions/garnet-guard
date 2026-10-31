@@ -132,14 +132,35 @@ def changes_for(
     return changes, unchecked
 
 
-def pinned_versions(head_name: str, head: bytes) -> dict[tuple[str, str], tuple[str, ...]]:
+PinTable = dict[tuple[str, str], tuple[str, ...]]
+
+
+def pinned_versions(head_name: str, head: bytes) -> PinTable:
     """The versions a lockfile pins from PyPI, by ("pypi", normalized name).
-    GRN-C008 reads these for a young dependency instead of its whole range."""
+    GRN-C008 reads these for a young dependency instead of its whole range.
+
+    A package with any entry under an environment marker, or any entry that
+    isn't a PyPI pin, is left out: on some machines something else installs,
+    so GRN-C008 reads the range instead.
+    """
     out: dict[tuple[str, str], set[str]] = {}
+    unsure: set[str] = set()
     for p in parse(head_name, head):
-        if p.source == "pypi" and p.version:
+        if p.source == "pypi" and p.version and not p.marker:
             out.setdefault(("pypi", p.package), set()).add(p.version)
-    return {k: tuple(sorted(v)) for k, v in out.items()}
+        else:
+            unsure.add(p.package)
+    return {k: tuple(sorted(v)) for k, v in out.items() if k[1] not in unsure}
+
+
+def merge_pins(tables: list[PinTable]) -> PinTable:
+    """The pins a change can rely on when it comes from several lockfiles: a
+    package every one of them pins, with all their versions. A package one
+    of them doesn't pin is left out, so GRN-C008 reads its range."""
+    if not tables:
+        return {}
+    keys = set(tables[0]).intersection(*tables[1:])
+    return {k: tuple(sorted({v for t in tables for v in t[k]})) for k in keys}
 
 
 def dedupe(changes: list[Change]) -> list[Change]:

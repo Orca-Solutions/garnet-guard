@@ -887,23 +887,43 @@ def owned_young_dependencies(
     profiles = {p.name: p for p in cand.dependencies}
     uploaded = _uploaded(cand)
     trusted_owners = set(base.owners)
+    installers = _installers(base, cand)
     out: dict[str, Requirement] = {}
     for r in new:
         p = profiles.get(r.package)
         if r.source is not None or p is None or not p.on_registry or r.package in out:
             continue
-        if _not_one_range(r, cand.ecosystem) is not None:
+        if _not_one_range(r, cand.ecosystem, installers) is not None:
             continue
         if _young(p, uploaded) is not None and trusted_owners & set(p.owners):
             out[r.package] = r
     return tuple(out.values())
 
 
-def _not_one_range(r: Requirement, ecosystem: str) -> str | None:
+def _installers(base: ReleaseFacts, cand: ReleaseFacts) -> dict[str, list[str]]:
+    """Every requirement of the candidate that installs a registry package, by
+    that package (lowercased): a name and an npm alias of it (``"h2":
+    "npm:helper@^2"``) both install ``helper``."""
+    _, c = _metadata_pair(base, cand)
+    out: dict[str, list[str]] = {}
+    for req in c.requirements if c is not None else ():
+        if req.source is None:
+            out.setdefault(req.package.lower(), []).append(req.spec)
+            out[req.package.lower()] += list(req.also)
+    return out
+
+
+def _not_one_range(
+    r: Requirement, ecosystem: str, installers: dict[str, list[str]] | None = None
+) -> str | None:
     """Why a requirement doesn't name one range of releases, or None."""
     if r.also:
         others = "; ".join(_clip(a, 80) for a in r.also[:3])
         return f"{r.name} is declared more than once ({others} as well), so which release installs depends on how they combine"
+    rivals = [o for o in (installers or {}).get(r.package.lower(), []) if o != r.spec]
+    if rivals:
+        said = "; ".join(_clip(o, 80) for o in rivals[:3])
+        return f"{r.package} is installed by more than one requirement ({said} as well), so which release installs depends on how they combine"
     if ecosystem != "pypi":
         return None
     try:
@@ -972,16 +992,23 @@ def _pure_wheel(filename: str) -> bool:
     return _PURE in tags
 
 
+# Patch levels tested for each supported minor: a clause such as !=3.12.4 or
+# <3.14.3 leaves out some patch releases only.
+_PATCHES = range(51)
+
+
 def _leaves_out(requires_python: str) -> str | None:
-    """The first current Python a Requires-Python value leaves out, or the
-    value itself when it can't be read."""
+    """The first current Python (X.Y.Z, any patch level 0 to 50) a
+    Requires-Python value leaves out, or the value itself when it can't be
+    read."""
     try:
         spec = SpecifierSet(requires_python)
     except InvalidSpecifier:
         return requires_python
     for py in CURRENT_PYTHONS:
-        if not spec.contains(f"{py}.0", prereleases=True):
-            return py
+        for patch in _PATCHES:
+            if not spec.contains(f"{py}.{patch}", prereleases=True):
+                return f"{py}.{patch}"
     return None
 
 
@@ -1063,24 +1090,24 @@ def _provenance_from(
     return provs[0].repository, []
 
 
-def _versions_said(installs: DependencyInstalls, cand: ReleaseFacts) -> str:
+def _versions_said(installs: DependencyInstalls) -> str:
     versions = ", ".join(r.version for r in installs.releases)
     if installs.pinned:
         return f"{installs.name} {versions}, as the lockfile pins it"
-    plural = "every version" if len(installs.releases) > 1 else "the only version"
-    return (
-        f"{installs.name} {versions}, {plural} {_clip(installs.spec, 80)} could install "
-        f"from {cand.version}'s upload until the lookup"
+    plural = (
+        "every published version" if len(installs.releases) > 1 else "the only published version"
     )
+    return f"{installs.name} {versions}, {plural} matching {_clip(installs.spec, 80)}"
 
 
 def _same_owner_verdict(
     base: ReleaseFacts, cand: ReleaseFacts, r: Requirement, installs: DependencyInstalls | None
 ) -> tuple[bool, str]:
     """Whether a young dependency with a shared owner drops to info, and the
-    evidence that says why or why not. Every release a user could install
-    has to be read and come out clean."""
-    not_one = _not_one_range(r, cand.ecosystem)
+    evidence that says why or why not. Every release the fetch read (the
+    lockfile's pins, else every published version the range admits) has to
+    come out clean."""
+    not_one = _not_one_range(r, cand.ecosystem, _installers(base, cand))
     if not_one is not None:
         return False, f"kept at warn: {not_one}"
     if installs is None:
@@ -1121,8 +1148,7 @@ def _same_owner_verdict(
         else "a py3-none-any wheel, no file that runs at start-up"
     )
     return True, (
-        f"info: same owner, {clean}, provenance from {attested[0]}, in "
-        f"{_versions_said(installs, cand)}"
+        f"info: same owner, {clean}, provenance from {attested[0]}, in {_versions_said(installs)}"
     )
 
 
@@ -1144,8 +1170,10 @@ def new_dependency(
     registry, one the registry doesn't have, and one whose first release came
     within ``YOUNG_DEPENDENCY_DAYS`` of this release (or after it). A young
     dependency that an account owning the trusted package owns too drops to
-    info only when every release a user of the candidate could install
-    (``cand.dependency_installs``) has no install-time hook and every file has
+    info only when every release of it Garnet read
+    (``cand.dependency_installs``: the lockfile's pins, else every published
+    version the range admits, at most ``MAX_DEPENDENCY_VERSIONS``) has no
+    install-time hook and every file has
     verified provenance from a repository the trusted release is attested
     from: whoever holds a maintainer's account could publish both, but an
     attestation from the trusted package's repository also takes access to

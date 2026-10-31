@@ -12,7 +12,16 @@ from pathlib import Path
 from . import __version__
 from .checks import DOCS
 from .checks.docs import rule_url
-from .engine import ECOSYSTEMS, Options, Report, compare, evaluate, report, unchecked_result
+from .engine import (
+    ECOSYSTEMS,
+    ChangeKey,
+    Options,
+    Report,
+    compare,
+    evaluate,
+    report,
+    unchecked_result,
+)
 from .facts.pyindex import SENSITIVE_SET_VERSION, sensitive_set
 from .lockfiles import LockfileError
 from .models import Change, Policy, Severity
@@ -27,11 +36,13 @@ from .policy import (
 from .report import escape, to_json, to_text
 from .sarif import to_sarif
 from .workspace import (
+    PinTable,
     Unchecked,
     changes_for,
     dedupe,
     discover,
     git_show,
+    merge_pins,
     pinned_versions,
     plain_file,
 )
@@ -231,7 +242,9 @@ def _check(args: argparse.Namespace) -> int:
 
     changes: list[Change] = []
     unchecked: list[Unchecked] = []
-    pins: dict[tuple[str, str], tuple[str, ...]] = {}
+    # The pins of each lockfile a change comes from, so GRN-C008 reads a
+    # young dependency's version from those lockfiles only.
+    tables: dict[ChangeKey, list[PinTable]] = {}
     for head in heads:
         if not plain_file(head, cwd):
             if head.is_symlink() or head.exists():
@@ -243,10 +256,12 @@ def _check(args: argparse.Namespace) -> int:
         found, skipped = changes_for(name, body, base)
         changes += found
         unchecked += skipped
-        for key, versions in pinned_versions(name, body).items():
-            pins[key] = tuple(sorted(set(pins.get(key, ())) | set(versions)))
+        table = pinned_versions(name, body)
+        for c in found:
+            tables.setdefault((c.ecosystem, c.package, c.baseline, c.candidate), []).append(table)
 
     token = os.environ.get(args.github_token_env) or None
+    pins = {key: merge_pins(ts) for key, ts in tables.items()}
     options = Options(github_token=token, today=today, pins=pins)
     results = evaluate(dedupe(changes), policy=policy, options=options)
     results += [

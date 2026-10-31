@@ -36,7 +36,7 @@ from packaging.version import InvalidVersion, Version
 from garnet_guard import __version__, models
 from garnet_guard.checks.content import new_requirement_names, owned_young_dependencies
 from garnet_guard.ecosystems import github, gittree, npm, pypi
-from garnet_guard.engine import candidate_upload, install_lookup_error, run_checks
+from garnet_guard.engine import install_lookup_error, run_checks
 from garnet_guard.models import (
     Change,
     ChangeResult,
@@ -60,7 +60,7 @@ FIRST = {
 }
 NOT_DETECTION = {"GRN-K001", "GRN-E001", "GRN-E002", "GRN-E003"}
 RELEASES_PER_PACKAGE = 11  # 11 releases give 10 updates per package
-CACHE_FORMAT = 45
+CACHE_FORMAT = 46
 
 
 def _ecosystem(argv: list[str]) -> tuple[str, int, list[str]]:
@@ -256,28 +256,25 @@ class ProfileCache:
 
 class DependencyInstallsCache:
     """Releases of young dependencies with a shared owner (GRN-C008), one JSON
-    file per (requirement, candidate upload time), cached like the profiles.
-    The releases include every matching version up to the first lookup, so a
-    rerun sees that day's answer."""
+    file per requirement, cached like the profiles. The releases are every
+    matching version at the first lookup, so a rerun sees that day's answer."""
 
     def __init__(self, root: Path) -> None:
         self.root = root / f"v{CACHE_FORMAT}-garnet-{__version__}" / "dependency-installs"
 
-    def _path(self, ecosystem: str, req: Requirement, at: datetime) -> Path:
-        key = json.dumps([req.package, req.spec, at.isoformat()]).encode()
+    def _path(self, ecosystem: str, req: Requirement) -> Path:
+        key = json.dumps([req.package, req.spec]).encode()
         return self.root / ecosystem / f"{hashlib.sha256(key).hexdigest()[:32]}.json"
 
-    def get(self, ecosystem: str, req: Requirement, at: datetime) -> DependencyInstalls | None:
-        p = self._path(ecosystem, req, at)
+    def get(self, ecosystem: str, req: Requirement) -> DependencyInstalls | None:
+        p = self._path(ecosystem, req)
         if not p.exists():
             return None
         found: DependencyInstalls = decode(DependencyInstalls, json.loads(p.read_text()))
         return found
 
-    def put(
-        self, ecosystem: str, req: Requirement, at: datetime, found: DependencyInstalls
-    ) -> None:
-        p = self._path(ecosystem, req, at)
+    def put(self, ecosystem: str, req: Requirement, found: DependencyInstalls) -> None:
+        p = self._path(ecosystem, req)
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(encode(found), sort_keys=True))
@@ -287,18 +284,17 @@ class DependencyInstallsCache:
 def with_dependency_installs(
     ecosystem: str, base: ReleaseFacts, cand: ReleaseFacts, cache: DependencyInstallsCache
 ) -> ReleaseFacts:
-    """The candidate with the releases each young dependency with a shared
-    owner could install, as ``engine.with_dependency_installs`` does without
+    """The candidate with the releases of each young dependency with a
+    shared owner that GRN-C008 reads, as ``engine.with_dependency_installs`` does without
     lockfile pins, cached on disk."""
-    at = candidate_upload(cand)
     wanted = owned_young_dependencies(base, cand)
-    if at is None or not wanted:
+    if not wanted:
         return cand
     got: list[DependencyInstalls] = []
     errors: list[FactError] = []
     todo: list[Requirement] = []
     for r in wanted:
-        hit = cache.get(ecosystem, r, at)
+        hit = cache.get(ecosystem, r)
         if hit is None:
             todo.append(r)
         else:
@@ -310,16 +306,16 @@ def with_dependency_installs(
                 try:
                     if ecosystem == "npm":
                         nctx = npm.FetchContext(http=http, limits=Limits(), tags=tags)
-                        found = npm.dependency_installs(nctx, r, at)
+                        found = npm.dependency_installs(nctx, r)
                     else:
                         pctx = pypi.FetchContext(
                             http=http, limits=Limits(), tags=tags, trees=gittree.TreeLookup(http)
                         )
-                        found = pypi.dependency_installs(pctx, r, at)
+                        found = pypi.dependency_installs(pctx, r)
                 except (NetError, ValueError, TypeError, KeyError, AttributeError) as err:
                     errors.append(install_lookup_error(err, r.package, cand.version))
                     continue
-                cache.put(ecosystem, r, at, found)
+                cache.put(ecosystem, r, found)
                 got.append(found)
     return dataclasses.replace(
         cand, dependency_installs=tuple(got), errors=cand.errors + tuple(errors)

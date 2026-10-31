@@ -739,34 +739,53 @@ def _requires_python(entries: Any) -> tuple[str, ...]:
     return tuple(sorted(v for v in found if v))
 
 
-# Files Python runs or reads at every start when they land in site-packages.
-_STARTUP_NAMES = ("sitecustomize.py", "usercustomize.py")
-_DATA_DATA = re.compile(r"^[^/]+\.data/data/")
+# Modules Python imports at every start when they are on the path, in any
+# form: sitecustomize.py, a sitecustomize/ package, a .pyc, an extension
+# module (.so, .pyd, abi3). Matched by top-level module name, any case.
+_STARTUP_MODULES = frozenset({"sitecustomize", "usercustomize"})
+_DATA_DATA = re.compile(r"^[^/]+\.data/data/", re.IGNORECASE)
+
+
+def _module_name(part: str) -> str:
+    """The module a top-level file or folder name imports as: the text
+    before the first dot, lowercased."""
+    return part.split(".", 1)[0].lower()
 
 
 def _startup_file(path: str) -> bool:
-    """A wheel file that Python reads or runs at every start once installed: a
-    .pth, sitecustomize.py or usercustomize.py in site-packages itself, or
-    anywhere under ``.data/data/``, which installs relative to the prefix
-    and can land in site-packages (``lib/python3.12/site-packages/x.pth``)."""
-    base = path.rsplit("/", 1)[-1].lower()
-    if not (base.endswith(".pth") or base in _STARTUP_NAMES):
-        return False
-    return "/" not in site_path(path) or bool(_DATA_DATA.match(path))
+    """A wheel file that Python reads or runs at every start once installed:
+    a .pth file in site-packages itself, or anything that imports as
+    sitecustomize or usercustomize from there (a module, a package, a .pyc,
+    an extension module), including under ``.data/purelib/`` and
+    ``platlib/``, and any of those anywhere under ``.data/data/``, which
+    installs relative to the environment and can land in site-packages
+    (``lib/python3.12/site-packages/x.pth``)."""
+    if _DATA_DATA.match(path):
+        parts = path.split("/")[2:]
+        return parts[-1].lower().endswith(".pth") or any(
+            _module_name(p) in _STARTUP_MODULES for p in parts
+        )
+    site = site_path(path)
+    parts = site.split("/")
+    if len(parts) == 1 and parts[0].lower().endswith(".pth"):
+        return True
+    if _module_name(parts[0]) in _STARTUP_MODULES:
+        return True
+    # a sourceless __pycache__/sitecustomize.cpython-312.pyc at the top
+    return (
+        len(parts) == 2 and parts[0] == "__pycache__" and _module_name(parts[1]) in _STARTUP_MODULES
+    )
 
 
 def dependency_installs(
-    ctx: FetchContext, req: Requirement, at: datetime, pinned: tuple[str, ...] = ()
+    ctx: FetchContext, req: Requirement, pinned: tuple[str, ...] = ()
 ) -> DependencyInstalls:
-    """The releases of a new dependency that a user of a version published at
-    ``at`` could install (GRN-C008), each read with ``_dependency_release``.
-
-    ``pinned`` are the versions a lockfile pins, which are read instead of
-    the specifier's. Without a pin, that is the newest version matching the
-    requirement's specifier with a file on PyPI by ``at``, and every matching
-    version first uploaded since, up to ``MAX_DEPENDENCY_VERSIONS``. Raises
-    ``NetError`` when a request fails; anything else that stops the read is
-    in ``problem``.
+    """The releases of a new dependency that GRN-C008 reads, each with
+    ``_dependency_release``: the versions a lockfile pins (``pinned``), else
+    every version with a file on PyPI that the requirement's specifier
+    admits, prereleases included, whenever it was uploaded. More than
+    ``MAX_DEPENDENCY_VERSIONS`` aren't read. Raises ``NetError`` when a
+    request fails; anything else that stops the read is in ``problem``.
     """
     name = normalize(req.package)
     out = DependencyInstalls(name, req.spec, pinned=bool(pinned))
@@ -783,18 +802,17 @@ def dependency_installs(
     releases = data.get("releases") if isinstance(data, dict) else None
     if not isinstance(releases, dict):
         releases = {}
-    first: dict[Version, tuple[str, datetime]] = {}
+    # Every version with a file, by PEP 440 version: a lockfile may spell one
+    # differently (1.0 and 1.0.0 are one release).
+    listed: dict[Version, str] = {}
     for raw, entries in releases.items():
-        stamps = [f.uploaded_at for f in _registry_files(entries) if f.uploaded_at is not None]
-        if not stamps:
+        if not _registry_files(entries):
             continue
         try:
-            first[Version(raw)] = (raw, min(stamps))
+            listed[Version(raw)] = raw
         except InvalidVersion:
             continue
     if pinned:
-        # A lockfile may spell a version differently (1.0 and 1.0.0 are one release).
-        listed = {v: raw for v, (raw, _) in first.items()}
         wanted = []
         for pin in sorted(set(pinned)):
             try:
@@ -807,15 +825,13 @@ def dependency_installs(
                 )
             wanted.append(raw)
     else:
-        by_then = list(specifier.filter(v for v, (_, t) in first.items() if t <= at))
-        if not by_then:
-            return replace(
-                out,
-                problem=f"no version matching {specifier or 'any'} had a file on PyPI by "
-                f"{at:%Y-%m-%d %H:%M} UTC",
-            )
-        later = sorted(specifier.filter(v for v, (_, t) in first.items() if t > at))
-        wanted = [first[v][0] for v in [max(by_then), *later]]
+        # Every release the specifier admits, prereleases and yanked ones too
+        # and whenever uploaded: what installs depends on the installer and
+        # its options (pip's yanked fallback, uv's lowest resolution).
+        matching = sorted(specifier.filter(listed, prereleases=True))
+        if not matching:
+            return replace(out, problem=f"no version of {name} matches {specifier or 'any'}")
+        wanted = [listed[v] for v in matching]
     if len(wanted) > MAX_DEPENDENCY_VERSIONS:
         return replace(
             out,
@@ -843,7 +859,7 @@ def _dependency_release(
         requires_python=_requires_python(entries),
     )
     out = replace(out, provenance=tuple(_fetch_provenance(ctx, name, version, f) for f in files))
-    wheels = [f for f in files if f.filename.endswith(".whl")]
+    wheels = [f for f in files if f.filename.lower().endswith(".whl")]
     if len(wheels) > MAX_DEPENDENCY_WHEELS:
         return replace(
             out,
