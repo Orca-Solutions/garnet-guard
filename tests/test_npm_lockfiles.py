@@ -3,8 +3,8 @@
 The fixtures in tests/fixtures/npm were written by npm 10.9.4
 (``npm install --package-lock-only --ignore-scripts``), by npm 6 for
 lockfileVersion 1, and by yarn 1.22.22 (``yarn import`` from npm 6's
-lockfile, which writes no package code). yarn-berry.lock is hand-written in
-Yarn 4's format. No test here touches the network.
+lockfile, which writes no package code). pnpm-lock.yaml and Yarn 2+
+yarn.lock are tested in test_pnpm_berry.py. No test here touches the network.
 """
 
 from __future__ import annotations
@@ -912,7 +912,7 @@ def test_only_a_metadata_entry_with_a_version_counts_as_berry() -> None:
     """Yarn 1 ignores a lockfile whose __metadata entry has content. One with
     nothing under it, or one further down, may still be installed from, so
     it is read, and refused for its missing header."""
-    assert is_berry(fixture("yarn-berry.lock"))
+    assert is_berry(fixture("yarn-berry-base.lock"))
     assert is_berry(b"\xef\xbb\xbf# c\n\n__metadata:\r\n  version: 8\r\n")
     for data in (
         b'__metadata:\n\nms@^2.1.1:\n  version: 2.1.3\n  resolved: "https://evil.example/ms.tgz"\n',
@@ -925,27 +925,11 @@ def test_only_a_metadata_entry_with_a_version_counts_as_berry() -> None:
             parse("yarn.lock", data)
 
 
-def test_yarn_berry_is_refused_by_name_and_by_content() -> None:
-    data = fixture("yarn-berry.lock")
-    with pytest.raises(LockfileError, match=r"yarn\.lock: this is a Yarn 2 or later \(Berry\)"):
-        parse("yarn.lock", data)
-    with pytest.raises(LockfileError, match=r"old\.lock is a Yarn 2 or later \(Berry\)"):
-        parse("old.lock", data)
-
-
-def test_pnpm_is_refused_by_name_and_by_content() -> None:
-    data = fixture("pnpm-lock.yaml")
-    with pytest.raises(
-        LockfileError, match="pnpm-lock.yaml is a pnpm lockfile, which Garnet doesn't read yet"
-    ):
-        detect("pnpm-lock.yaml", data)
-    with pytest.raises(LockfileError, match="looks like a pnpm lockfile"):
-        detect("lock.yaml", data)
-
-
 def test_npm_formats_are_detected_by_content_too() -> None:
     assert detect("base.json", fixture("package-lock-base.json")) == "package-lock.json"
     assert detect("old.lock", fixture("yarn-base.lock")) == "yarn.lock"
+    assert detect("old.lock", fixture("yarn-berry-base.lock")) == "yarn.lock"
+    assert detect("lock.yaml", fixture("pnpm-lock-base.yaml")) == "pnpm-lock.yaml"
 
 
 # --- version order -----------------------------------------------------------------------
@@ -1023,14 +1007,15 @@ def test_discover_adds_npm_lockfiles_after_python_ones(tmp_path: Path) -> None:
         "package-lock.json",
         "npm-shrinkwrap.json",
         "yarn.lock",
+        "pnpm-lock.yaml",
     ]
 
 
-def test_discover_leaves_out_a_berry_yarn_lock_but_lists_a_symlinked_one(tmp_path: Path) -> None:
-    (tmp_path / "yarn.lock").write_bytes(fixture("yarn-berry.lock"))
-    assert discover(tmp_path) == []
+def test_discover_lists_a_berry_yarn_lock_and_a_symlinked_one(tmp_path: Path) -> None:
+    (tmp_path / "yarn.lock").write_bytes(fixture("yarn-berry-base.lock"))
+    assert [p.name for p in discover(tmp_path)] == ["yarn.lock"]
     (tmp_path / "yarn.lock").unlink()
-    (tmp_path / "elsewhere.lock").write_bytes(fixture("yarn-berry.lock"))
+    (tmp_path / "elsewhere.lock").write_bytes(fixture("yarn-berry-base.lock"))
     (tmp_path / "yarn.lock").symlink_to(tmp_path / "elsewhere.lock")
     assert [p.name for p in discover(tmp_path)] == ["yarn.lock"]  # refused by the caller
 
@@ -1040,27 +1025,6 @@ def test_discover_lists_a_yarn_lock_that_yarn_1_would_install_from(tmp_path: Pat
     assert [p.name for p in discover(tmp_path)] == ["yarn.lock"]  # and refused when read
 
 
-def test_check_refuses_a_yarn_lock_that_became_berry(tmp_path, monkeypatch, capsys) -> None:
-    _git(tmp_path, "init", "-q")
-    _git(tmp_path, "config", "user.email", "t@example.com")
-    _git(tmp_path, "config", "user.name", "t")
-    _git(tmp_path, "config", "commit.gpgsign", "false")
-    (tmp_path / "uv.lock").write_bytes(b"version = 1\n")
-    (tmp_path / "yarn.lock").write_bytes(fixture("yarn-base.lock"))
-    _git(tmp_path, "add", ".")
-    _git(tmp_path, "commit", "-qm", "base")
-    (tmp_path / "yarn.lock").write_bytes(fixture("yarn-berry.lock"))
-    monkeypatch.chdir(tmp_path)
-    assert main(["check", "--git-base", "HEAD", "--no-policy"]) == 3
-    err = capsys.readouterr().err
-    assert "yarn.lock is now a Yarn 2 or later (Berry) lockfile" in err
-
-    # A yarn.lock that was Berry in the base too is left out, as before.
-    _git(tmp_path, "commit", "-qam", "berry")
-    assert main(["check", "--git-base", "HEAD", "--no-policy"]) == 0
-    assert capsys.readouterr().out.endswith("verdict: pass\n")
-
-
 def test_check_help_lists_the_formats(capsys) -> None:
     assert main(["check", "--help"]) == 0
     out = " ".join(capsys.readouterr().out.split())
@@ -1068,27 +1032,11 @@ def test_check_help_lists_the_formats(capsys) -> None:
         "uv.lock",
         "package-lock.json",
         "npm-shrinkwrap.json",
-        "Yarn 1 yarn.lock",
         "pnpm-lock.yaml",
+        "yarn.lock (Yarn 1 and Yarn 2+)",
     ):
         assert name in out
-
-
-@pytest.mark.parametrize(
-    ("name", "data", "message"),
-    [
-        ("pnpm-lock.yaml", "pnpm-lock.yaml", "pnpm lockfile"),
-        ("yarn.lock", "yarn-berry.lock", "Berry"),
-    ],
-)
-def test_check_refuses_formats_not_read_yet(
-    tmp_path, monkeypatch, capsys, name, data, message
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / name).write_bytes(fixture(data))
-    (tmp_path / "base").write_bytes(fixture(data))
-    assert main(["check", "--base", "base", "--head", name, "--no-policy"]) == 3
-    assert message in capsys.readouterr().err
+    assert "aren't read yet" not in out
 
 
 def _git(repo: Path, *args: str) -> None:

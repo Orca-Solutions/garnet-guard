@@ -32,10 +32,9 @@ from .workspace import (
     dedupe,
     discover,
     git_show,
-    left_out,
     plain_file,
     read_lockfile,
-    refuse_switch_to_berry,
+    registry_settings,
 )
 
 _FAIL_ON = {"warn": Severity.WARN, "block": Severity.BLOCK, "never": Severity.OFF}
@@ -71,8 +70,8 @@ def _parser() -> argparse.ArgumentParser:
         help="check every dependency change between two lockfiles",
         description="Compare a trusted lockfile with an updated one and check every package\n"
         "version that changed. Reads uv.lock, poetry.lock, pylock.toml and pinned\n"
-        "requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json and\n"
-        "Yarn 1 yarn.lock for npm. pnpm-lock.yaml and Yarn 2+ lockfiles aren't read yet.",
+        "requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json,\n"
+        "pnpm-lock.yaml and yarn.lock (Yarn 1 and Yarn 2+) for npm.",
         epilog=_EXIT_CODES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -227,9 +226,6 @@ def _check(args: argparse.Namespace) -> int:
     policy = _policy(args)
     today = _today()
     heads = [Path(h) for h in args.head] if args.head else discover(cwd)
-    if not args.head and args.git_base:
-        for path in left_out(cwd):
-            refuse_switch_to_berry(path, git_show(args.git_base, path, cwd=cwd))
     if not heads:
         raise UsageError("no lockfiles found; pass --head PATH")
     if args.base and len(heads) != 1:
@@ -246,7 +242,9 @@ def _check(args: argparse.Namespace) -> int:
             read_lockfile(Path(args.base)) if args.base else git_show(args.git_base, head, cwd=cwd)
         )
         name = os.path.relpath(head, cwd) if head.is_absolute() else head.as_posix()
-        found, skipped = changes_for(name, read_lockfile(head), base)
+        data = read_lockfile(head)
+        registries = registry_settings(head, data, cwd)
+        found, skipped = changes_for(name, data, base, registries=registries)
         changes += found
         unchecked += skipped
 

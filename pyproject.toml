@@ -26,6 +26,7 @@ dependencies = [
     "httpx>=0.28.1",
     "packaging>=26.3",
     "pypi-attestations>=0.0.30",
+    "pyyaml>=6.0.2",
     "sigstore>=4.5.1,<5",
 ]
 
@@ -41,6 +42,7 @@ dev = [
     "pytest>=9.1.1",
     "respx>=0.23.1",
     "ruff>=0.17.0",
+    "types-pyyaml>=6.0.12.20260906",
 ]
 
 [project.urls]
@@ -146,4 +148,36 @@ source_modules = [
     "garnet_guard.policy",
 ]
 forbidden_modules = ["httpx"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "only lockfiles/yamldoc.py imports PyYAML (ADR-0016)"
+type = "forbidden"
+source_modules = [
+    "garnet_guard.checks",
+    "garnet_guard.facts",
+    "garnet_guard.ecosystems",
+    "garnet_guard.engine",
+    "garnet_guard.report",
+    "garnet_guard.markdown",
+    "garnet_guard.sarif",
+    "garnet_guard.cli",
+    "garnet_guard.workspace",
+    "garnet_guard.safe_archive",
+    "garnet_guard.net",
+    "garnet_guard.policy",
+    "garnet_guard.models",
+    "garnet_guard.lockfiles.base",
+    "garnet_guard.lockfiles.berry",
+    "garnet_guard.lockfiles.diff",
+    "garnet_guard.lockfiles.npm",
+    "garnet_guard.lockfiles.package_lock",
+    "garnet_guard.lockfiles.pnpm",
+    "garnet_guard.lockfiles.pylock",
+    "garnet_guard.lockfiles.registries",
+    "garnet_guard.lockfiles.requirements",
+    "garnet_guard.lockfiles.toml_locks",
+    "garnet_guard.lockfiles.yarn",
+]
+forbidden_modules = ["yaml"]
 allow_indirect_imports = true
