@@ -114,7 +114,7 @@ IDs are stable forever. A retired rule keeps its ID reserved. Exact firing condi
 | GRN-C005 | obfuscated-blob (planned) | New long base64/hex/compressed literals, especially passed to exec or decode. |
 | GRN-C006 | sdist-wheel-mismatch (planned) | Wheel contains files with no counterpart in the sdist. |
 | GRN-C007 | code-not-in-source | A Python file in the release isn't the one at its git tag and has sensitive calls the source lacks (code injected by the build, as in ultralytics 8.3.42). |
-| GRN-C008 | new-dependency | A dependency the old release didn't declare, a warning when it is missing from the registry, less than 90 days old there, or installed from outside it, whoever owns it (event-stream 3.3.6). |
+| GRN-C008 | new-dependency | A dependency the old release didn't declare, a warning when it is missing from the registry, less than 90 days old there, or installed from outside it (event-stream 3.3.6). A young one from the trusted package's owner is `info` only when every release Garnet reads of it (lockfile pins, else every published match, at most 5) has no install-time hook and provenance from the trusted package's repository. |
 | GRN-C009 | new-entry-point | A new entry point, a warning in groups other tools load by themselves (`pytest11`, `setuptools.*`) or for a script named like a common command. |
 | GRN-C010 | new-startup-file | A wheel adds `sitecustomize.py`, a script that installs as a command, or a data file installed outside the package. |
 | GRN-C011 | new-js-capability | The JavaScript an npm package loads uses a process, network or eval module or global, or obfuscated names, that the old release's didn't (`info`). |

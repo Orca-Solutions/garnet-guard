@@ -73,6 +73,9 @@ class Pin:
     detail: str | None = None
     ecosystem: str = "pypi"
     origin: str | None = None
+    # The entry applies only under an environment marker (a requirements
+    # line with "; marker", uv's resolution-markers, pylock's marker).
+    marker: bool = False
 
 
 _REQ_NAME = re.compile(r"requirements[^/\\]*\.(txt|in)$", re.IGNORECASE)

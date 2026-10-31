@@ -56,7 +56,7 @@ def test_requires_dist_skips_extras_and_keeps_markers() -> None:
         )
     )
     assert reqs == (
-        Requirement("requests", "Requests>=2.31"),
+        Requirement("requests", "Requests>=2.31", also=("requests[socks]",)),
         Requirement("tomli", 'tomli>=1; python_version < "3.11"'),
     )
 
@@ -89,7 +89,8 @@ def test_package_json_dependencies() -> None:
         "bundleDependencies": ["through"],
     }
     assert declared_dependencies(json.dumps(doc).encode()) == (
-        Requirement("through", "through@~2.3.1"),
+        # bundled: the copy in the tarball installs, so GRN-C008 keeps warn
+        Requirement("through", "through@~2.3.1", bundled=True),
         Requirement("from", "from@~0"),
         Requirement("fsevents", "fsevents@^2 (optional)"),
         Requirement("react", "react@>=18 (peer)"),
@@ -341,7 +342,9 @@ def _c008(base: ReleaseFacts, cand: ReleaseFacts) -> Any:
 def test_young_dependency_from_a_trusted_owner_still_warns() -> None:
     # A maintainer who splits out a helper often publishes the release that
     # uses it the same day, but whoever holds a maintainer's account can do the
-    # same: the shared owner is evidence, never a reason to lower the finding.
+    # same: the shared owner alone never lowers the finding. Only releases
+    # that were read and have no install-time hook and provenance from the
+    # trusted repository do (tests/test_dependency_releases.py).
     helper = replace(_profile("helper", 0), owners=("amy",))
     base = _npm_rel("1.0", owners=("amy", "bob"))
     cand = replace(_npm_rel("1.1", Requirement("helper", "helper@^1.0.0")), dependencies=(helper,))
@@ -349,6 +352,9 @@ def test_young_dependency_from_a_trusted_owner_still_warns() -> None:
     assert f.severity == Severity.WARN
     assert "helper was first released 0 day(s) before it" in f.title
     assert "owned by amy, who also own(s) demo" in f.evidence[0].summary
+    assert "kept at warn: the releases of helper that 1.1 could install weren't read" in (
+        f.evidence[0].summary
+    )
     other = replace(helper, owners=("mallory",))
     f = _c008(base, replace(cand, dependencies=(other,)))
     assert f.severity == Severity.WARN and "who also own" not in f.evidence[0].summary

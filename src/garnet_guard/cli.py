@@ -12,7 +12,16 @@ from pathlib import Path
 from . import __version__
 from .checks import DOCS
 from .checks.docs import rule_url
-from .engine import ECOSYSTEMS, Options, Report, compare, evaluate, report, unchecked_result
+from .engine import (
+    ECOSYSTEMS,
+    ChangeKey,
+    Options,
+    Report,
+    compare,
+    evaluate,
+    report,
+    unchecked_result,
+)
 from .facts.pyindex import SENSITIVE_SET_VERSION, sensitive_set
 from .lockfiles import LockfileError
 from .models import Change, Policy, Severity
@@ -27,11 +36,15 @@ from .policy import (
 from .report import escape, to_json, to_text
 from .sarif import to_sarif
 from .workspace import (
+    PinTable,
     Unchecked,
     changes_for,
     dedupe,
     discover,
     git_show,
+    installs_elsewhere,
+    merge_pins,
+    pinned_versions,
     plain_file,
     read_lockfile,
     registry_settings,
@@ -300,6 +313,10 @@ def _check(args: argparse.Namespace) -> int:
 
     changes: list[Change] = []
     unchecked: list[Unchecked] = []
+    # The pins of each lockfile a change comes from, so GRN-C008 reads a
+    # young dependency's version from those lockfiles only.
+    tables: dict[ChangeKey, list[PinTable]] = {}
+    elsewhere: dict[ChangeKey, str] = {}
     for head in heads:
         if not plain_file(head, cwd):
             if head.is_symlink() or head.exists():
@@ -309,14 +326,22 @@ def _check(args: argparse.Namespace) -> int:
             read_lockfile(Path(args.base)) if args.base else git_show(args.git_base, head, cwd=cwd)
         )
         name = os.path.relpath(head, cwd) if head.is_absolute() else head.as_posix()
-        data = read_lockfile(head)
-        registries = registry_settings(head, data, cwd)
-        found, skipped = changes_for(name, data, base, registries=registries)
+        body = read_lockfile(head)
+        registries = registry_settings(head, body, cwd)
+        found, skipped = changes_for(name, body, base, registries=registries)
         changes += found
         unchecked += skipped
+        table = pinned_versions(name, body, registries=registries)
+        index = installs_elsewhere(name, body, registries=registries)
+        for c in found:
+            key = (c.ecosystem, c.package, c.baseline, c.candidate)
+            tables.setdefault(key, []).append(table)
+            if index is not None:
+                elsewhere.setdefault(key, f"{index} ({name})")
 
     token = os.environ.get(args.github_token_env) or None
-    options = Options(github_token=token, today=today)
+    pins = {key: merge_pins(ts) for key, ts in tables.items()}
+    options = Options(github_token=token, today=today, pins=pins, installs_elsewhere=elsewhere)
     results = evaluate(dedupe(changes), policy=policy, options=options)
     results += [
         unchecked_result(u.change, u.rule_id, u.detail, policy=policy, today=today)

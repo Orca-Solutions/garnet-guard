@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .lockfiles import LockfileError, Pin, detect, diff_pins, parse
+from .lockfiles import LockfileError, Pin, detect, diff_pins, parse, requirements
 from .lockfiles.base import MAX_LOCKFILE_BYTES
 from .lockfiles.diff import new_unchecked
 from .lockfiles.registries import (
@@ -226,6 +226,86 @@ def changes_for(
         )
         unchecked.append(Unchecked(change, rule, what))
     return changes, unchecked
+
+
+PinTable = dict[tuple[str, str], tuple[str, ...]]
+
+
+# The lockfiles whose pins GRN-C008 reads. npm lockfiles aren't among them:
+# a package can sit in the tree several times, aliased or bundled, so a
+# young npm dependency's range is read instead.
+_PIN_FORMATS = frozenset({"requirements.txt", "uv.lock", "poetry.lock", "pylock.toml"})
+
+
+def pinned_versions(
+    head_name: str, head: bytes, *, registries: Registries | None = None
+) -> PinTable:
+    """What a lockfile says about the packages GRN-C008 may read for a young
+    dependency, by (ecosystem, name).
+
+    For a Python lockfile, the versions it pins from PyPI, read instead of
+    the dependency's whole range. A package with an entry under an
+    environment marker, or that isn't pinned with ``==``, is left out, so
+    the range is read. An npm lockfile's versions aren't used: a package can
+    sit in its tree several times, aliased or bundled. A lockfile that
+    ``installs_elsewhere`` gives nothing; the change carries that instead.
+    """
+    try:
+        fmt = detect(head_name, head)
+        if fmt not in _PIN_FORMATS or installs_elsewhere(head_name, head, registries=registries):
+            return {}
+        pins = parse(head_name, head, registries=registries)
+    except LockfileError:
+        return {}  # changes_for reports it
+    out: dict[tuple[str, str], set[str]] = {}
+    unsure: set[str] = set()
+    for p in pins:
+        if p.ecosystem == "pypi" and p.source == "registry" and p.version and not p.marker:
+            out.setdefault(("pypi", p.package), set()).add(p.version)
+        else:
+            unsure.add(p.package)
+    return {k: tuple(sorted(v)) for k, v in out.items() if k[1] not in unsure}
+
+
+def installs_elsewhere(
+    head_name: str, head: bytes, *, registries: Registries | None = None
+) -> str | None:
+    """What in a lockfile means a package may install from somewhere other
+    than the registry, or None. GRN-C008 then reads nothing for a young
+    dependency of a change from that lockfile and keeps its severity.
+
+    In a requirements file, any option line but ``--hash`` and any URL,
+    path or editable line (``requirements.unsure_source``). In any lockfile,
+    any entry from outside the registry (git, a URL, a path, another index,
+    an npm alias whose tarball is another package, a bundled copy): which
+    name it installs under, or which dependency it serves, isn't modelled.
+    """
+    try:
+        fmt = detect(head_name, head)
+        if fmt == "requirements.txt":
+            found = requirements.unsure_source(head.decode("utf-8", "replace"))
+            if found is not None:
+                return found
+        pins = parse(head_name, head, registries=registries)
+    except LockfileError:
+        return None  # changes_for reports it
+    if any(p.source == "unsupported" for p in pins):
+        return "an entry from outside the registry"
+    return None
+
+
+def merge_pins(tables: list[PinTable]) -> PinTable:
+    """The pins a change can rely on when it comes from several lockfiles: a
+    package every one of them pins, with all their versions. A package one
+    of them doesn't pin is left out, so GRN-C008 reads its range, unless one
+    of them installs it from outside the registry (``()``), which wins."""
+    if not tables:
+        return {}
+    outside = {k for t in tables for k, v in t.items() if not v}
+    keys = set(tables[0]).intersection(*tables[1:]) - outside
+    merged: PinTable = {k: tuple(sorted({v for t in tables for v in t[k]})) for k in keys}
+    merged.update(dict.fromkeys(outside, ()))
+    return merged
 
 
 def dedupe(changes: list[Change]) -> list[Change]:

@@ -9,21 +9,28 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any
 
+from packaging.requirements import InvalidRequirement
+from packaging.requirements import Requirement as PackagingRequirement
 from packaging.tags import sys_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
+from packaging.version import InvalidVersion, Version
 
 from ..facts.inventory import file_reader, inspect_artifact, site_path, wheel_files, wheel_own
 from ..facts.pyindex import sensitive_calls
 from ..models import (
+    MAX_DEPENDENCY_VERSIONS,
     ArtifactFacts,
     CallSite,
+    DependencyInstalls,
     DependencyProfile,
+    DependencyRelease,
     FactError,
     FileProvenance,
     IndexFile,
     Limits,
     ProjectReleases,
     ReleaseFacts,
+    Requirement,
     TagInfo,
     UnparsedWheelFile,
     WheelCalls,
@@ -694,6 +701,185 @@ def package_profile(ctx: FetchContext, package: str) -> DependencyProfile:
         latest_version=latest if isinstance(latest, str) else None,
         owners=owners(data),
     )
+
+
+# A young dependency's release is read only when it ships at most this many
+# wheels; one with more stays at the rule's severity, with a note.
+MAX_DEPENDENCY_WHEELS = 10
+
+
+def _registry_files(entries: Any) -> list[RegistryFile]:
+    """The files of one release as the JSON API's ``releases`` table lists them."""
+    out = []
+    for u in entries if isinstance(entries, list) else []:
+        if not isinstance(u, dict):
+            continue
+        digests = u.get("digests")
+        sha = digests.get("sha256") if isinstance(digests, dict) else None
+        if not (isinstance(u.get("filename"), str) and isinstance(u.get("url"), str) and sha):
+            continue
+        out.append(
+            RegistryFile(
+                filename=u["filename"],
+                url=u["url"],
+                sha256=str(sha),
+                packagetype=str(u.get("packagetype", "")),
+                uploaded_at=_parse_time(u.get("upload_time_iso_8601")),
+                size=u.get("size") if isinstance(u.get("size"), int) else None,
+            )
+        )
+    return sorted(out, key=lambda f: f.filename)
+
+
+def _requires_python(entries: Any) -> tuple[str, ...]:
+    """The distinct Requires-Python values of a release's files."""
+    found = {
+        u["requires_python"].strip()
+        for u in (entries if isinstance(entries, list) else [])
+        if isinstance(u, dict) and isinstance(u.get("requires_python"), str)
+    }
+    return tuple(sorted(v for v in found if v))
+
+
+# Modules Python imports at every start when they are on the path, in any
+# form: sitecustomize.py, a sitecustomize/ package, a .pyc, an extension
+# module (.so, .pyd, abi3). Matched by top-level module name, any case.
+_STARTUP_MODULES = frozenset({"sitecustomize", "usercustomize"})
+_DATA_DATA = re.compile(r"^[^/]+\.data/data/", re.IGNORECASE)
+
+
+def _module_name(part: str) -> str:
+    """The module a top-level file or folder name imports as: the text
+    before the first dot, lowercased."""
+    return part.split(".", 1)[0].lower()
+
+
+def _startup_file(path: str) -> bool:
+    """A wheel file that Python reads or runs at every start once installed:
+    a .pth file in site-packages itself, or anything that imports as
+    sitecustomize or usercustomize from there (a module, a package, a .pyc,
+    an extension module), including under ``.data/purelib/`` and
+    ``platlib/``, and any of those anywhere under ``.data/data/``, which
+    installs relative to the environment and can land in site-packages
+    (``lib/python3.12/site-packages/x.pth``)."""
+    if _DATA_DATA.match(path):
+        parts = path.split("/")[2:]
+        return parts[-1].lower().endswith(".pth") or any(
+            _module_name(p) in _STARTUP_MODULES for p in parts
+        )
+    site = site_path(path)
+    parts = site.split("/")
+    if len(parts) == 1 and parts[0].lower().endswith(".pth"):
+        return True
+    if _module_name(parts[0]) in _STARTUP_MODULES:
+        return True
+    # a sourceless __pycache__/sitecustomize.cpython-312.pyc at the top
+    return (
+        len(parts) == 2 and parts[0] == "__pycache__" and _module_name(parts[1]) in _STARTUP_MODULES
+    )
+
+
+def dependency_installs(
+    ctx: FetchContext, req: Requirement, pinned: tuple[str, ...] = ()
+) -> DependencyInstalls:
+    """The releases of a new dependency that GRN-C008 reads, each with
+    ``_dependency_release``: the versions a lockfile pins (``pinned``), else
+    every version with a file on PyPI that the requirement's specifier
+    admits, prereleases included, whenever it was uploaded. More than
+    ``MAX_DEPENDENCY_VERSIONS`` aren't read. Raises ``NetError`` when a
+    request fails; anything else that stops the read is in ``problem``.
+    """
+    name = normalize(req.package)
+    out = DependencyInstalls(name, req.spec, pinned=bool(pinned))
+    try:
+        specifier = PackagingRequirement(req.spec).specifier
+    except InvalidRequirement:
+        return replace(out, problem=f"Garnet can't read the requirement {req.spec!r}")
+    resp = ctx.http.get(f"https://pypi.org/pypi/{name}/json", max_bytes=PROFILE_MAX_BYTES)
+    if resp.status == 404:
+        return replace(out, problem=f"PyPI has no project {name}")
+    if resp.status != 200:
+        raise NetError(f"PyPI JSON API returned HTTP {resp.status} for {name}")
+    data = resp.json()
+    releases = data.get("releases") if isinstance(data, dict) else None
+    if not isinstance(releases, dict):
+        releases = {}
+    # Every version with a file, by PEP 440 version: a lockfile may spell one
+    # differently (1.0 and 1.0.0 are one release).
+    listed: dict[Version, str] = {}
+    for raw, entries in releases.items():
+        if not _registry_files(entries):
+            continue
+        try:
+            listed[Version(raw)] = raw
+        except InvalidVersion:
+            continue
+    if pinned:
+        wanted = []
+        for pin in sorted(set(pinned)):
+            try:
+                raw = listed.get(Version(pin))
+            except InvalidVersion:
+                raw = None
+            if raw is None:
+                return replace(
+                    out, problem=f"the lockfile pins {name} {pin}, which PyPI doesn't list"
+                )
+            wanted.append(raw)
+    else:
+        # Every release the specifier admits, prereleases and yanked ones too
+        # and whenever uploaded: what installs depends on the installer and
+        # its options (pip's yanked fallback, uv's lowest resolution).
+        matching = sorted(specifier.filter(listed, prereleases=True))
+        if not matching:
+            return replace(out, problem=f"no version of {name} matches {specifier or 'any'}")
+        wanted = [listed[v] for v in matching]
+    if len(wanted) > MAX_DEPENDENCY_VERSIONS:
+        return replace(
+            out,
+            problem=f"{len(wanted)} versions of {name} could install ({wanted[0]} to "
+            f"{wanted[-1]}); Garnet reads a young dependency's releases only up to "
+            f"{MAX_DEPENDENCY_VERSIONS}",
+        )
+    return replace(
+        out,
+        releases=tuple(_dependency_release(ctx, name, v, releases.get(v)) for v in wanted),
+    )
+
+
+def _dependency_release(
+    ctx: FetchContext, name: str, version: str, entries: Any
+) -> DependencyRelease:
+    """One release of a new dependency: its files and their Requires-Python,
+    each wheel's file list (never its code) for files Python reads at every
+    start, and each file's PEP 740 provenance. Raises ``NetError``."""
+    files = _registry_files(entries)
+    out = DependencyRelease(
+        name,
+        version,
+        files=tuple(f.filename for f in files),
+        requires_python=_requires_python(entries),
+    )
+    out = replace(out, provenance=tuple(_fetch_provenance(ctx, name, version, f) for f in files))
+    wheels = [f for f in files if f.filename.lower().endswith(".whl")]
+    if len(wheels) > MAX_DEPENDENCY_WHEELS:
+        return replace(
+            out,
+            problem=f"{name} {version} has {len(wheels)} wheels; Garnet reads a young "
+            f"dependency's wheels only up to {MAX_DEPENDENCY_WHEELS}",
+        )
+    startup: list[str] = []
+    for f in wheels:
+        got = ctx.http.get(f.url, max_bytes=ctx.limits.max_artifact_bytes)
+        if got.status != 200:
+            raise NetError(f"download {f.filename}: HTTP {got.status}")
+        if hashlib.sha256(got.content).hexdigest() != f.sha256.lower():
+            return replace(out, problem=f"{f.filename} doesn't match PyPI's sha256")
+        listed, _, errs = wheel_files(f.filename, got.content, ctx.limits)
+        if errs:
+            return replace(out, problem=errs[0].summary)
+        startup += [f"{f.filename}: {e.path}" for e in listed if _startup_file(e.path)]
+    return replace(out, wheels_read=tuple(f.filename for f in wheels), startup_files=tuple(startup))
 
 
 def project_releases(ctx: FetchContext, package: str) -> ProjectReleases:

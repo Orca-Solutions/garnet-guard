@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import posixpath
 import re
 import threading
@@ -12,11 +13,14 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-from ..facts.npmmeta import inspect_tarball
+from ..facts.npmmeta import INSTALL_SCRIPTS, inspect_tarball, install_hooks, install_scripts
 from ..lockfiles.npm import valid_name
 from ..models import (
+    MAX_DEPENDENCY_VERSIONS,
     ArtifactFacts,
+    DependencyInstalls,
     DependencyProfile,
+    DependencyRelease,
     FactError,
     FileProvenance,
     Limits,
@@ -24,7 +28,7 @@ from ..models import (
     Requirement,
 )
 from ..net import Http, NetError
-from . import github, osv
+from . import github, npm_range, osv
 from .npm_provenance import verify_provenance
 
 REGISTRY = "https://registry.npmjs.org"
@@ -447,6 +451,129 @@ def package_profile(ctx: FetchContext, package: str) -> DependencyProfile:
         owners=maintainers(pack),
         unpublished_versions=tuple(v for _, v in gone),
         earliest_unpublished_at=gone[0][0] if gone else None,
+    )
+
+
+def requirement_range(r: Requirement) -> str:
+    """The version range of an npm requirement as package.json writes it,
+    the part after ``npm:name@`` for an alias."""
+    spec = r.spec
+    for label in (" (optional)", " (peer)"):
+        if spec.endswith(label):
+            spec = spec[: -len(label)]
+            break
+    rng = spec[len(r.name) + 1 :] if spec.startswith(f"{r.name}@") else spec
+    if rng.startswith("npm:"):
+        target = rng[4:]
+        at = target.rfind("@")
+        rng = target[at + 1 :] if at > 0 else ""
+    return rng.strip()
+
+
+def _integrity(dist: dict[str, Any]) -> str | None:
+    """The tarball's SRI string, from ``integrity`` or the old ``shasum``."""
+    integrity = dist.get("integrity")
+    if isinstance(integrity, str):
+        return integrity
+    shasum = dist.get("shasum")
+    if isinstance(shasum, str):
+        try:
+            return "sha1-" + base64.b64encode(bytes.fromhex(shasum)).decode()
+        except ValueError:
+            return None
+    return None
+
+
+def _script_order(script: tuple[str, str]) -> tuple[int, str]:
+    return (INSTALL_SCRIPTS.index(script[0]), script[1])
+
+
+def dependency_installs(
+    ctx: FetchContext, req: Requirement, pinned: tuple[str, ...] = ()
+) -> DependencyInstalls:
+    """The releases of a new dependency that GRN-C008 reads, each with
+    ``_dependency_release``: the versions a lockfile pins (``pinned``), else
+    every version npm lists that satisfies the range, whenever it was
+    published (npm can pick any of them: the ``latest`` tag, a deprecated
+    version skipped, an ``engines`` preference, a tree reused), and every
+    version, prereleases too, for ``*``, ``x``, ``latest`` or an empty range,
+    where npm installs whatever ``latest`` points to. More than
+    ``MAX_DEPENDENCY_VERSIONS`` aren't read. Raises ``NetError`` when a
+    request fails; anything else that stops the read is in ``problem``.
+    """
+    name = req.package
+    rng = requirement_range(req)
+    out = DependencyInstalls(name, req.spec, pinned=bool(pinned))
+    pack = packument(ctx, name)
+    if pack is None:
+        return replace(out, problem=f"npm has no package {name}")
+    versions = _table(pack, "versions")
+    if pinned:
+        wanted = sorted(set(pinned))
+        gone = [v for v in wanted if v not in versions]
+        if gone:
+            return replace(
+                out, problem=f"the lockfile pins {name} {gone[0]}, which npm doesn't list"
+            )
+    else:
+        try:
+            wanted = npm_range.readable(rng, versions)
+        except ValueError:
+            return replace(out, problem=f"Garnet can't read the range {rng!r}")
+        if not wanted:
+            return replace(out, problem=f"no version of {name} matches {rng or '*'}")
+    if len(wanted) > MAX_DEPENDENCY_VERSIONS:
+        return replace(
+            out,
+            problem=f"{len(wanted)} versions of {name} could install ({wanted[0]} to "
+            f"{wanted[-1]}); Garnet reads a young dependency's releases only up to "
+            f"{MAX_DEPENDENCY_VERSIONS}",
+        )
+    return replace(
+        out, releases=tuple(_dependency_release(ctx, name, v, versions[v]) for v in wanted)
+    )
+
+
+def _dependency_release(ctx: FetchContext, name: str, version: str, doc: Any) -> DependencyRelease:
+    """One release of a new dependency: its provenance (verified with
+    Sigstore), and the install scripts and ``binding.gyp`` of its tarball and
+    of the registry's copy of package.json. Raises ``NetError``."""
+    filename = tarball_name(name, version)
+    out = DependencyRelease(name, version, files=(filename,))
+    if not isinstance(doc, dict):
+        return replace(out, problem=f"npm's record of {name} {version} is malformed")
+    dist = _table(doc, "dist")
+    integrity = _integrity(dist)
+    if integrity is None:
+        return replace(out, problem=f"{name} {version} has no integrity hash")
+    user = doc.get("_npmUser") or {}
+    trusted = bool(user.get("trustedPublisher")) if isinstance(user, dict) and user else None
+    if dist.get("attestations"):
+        prov = _fetch_provenance(ctx, name, version, filename, integrity, trusted)
+    else:
+        prov = FileProvenance(filename=filename, present=False, verified=False)
+    out = replace(out, provenance=(prov,))
+
+    url = dist.get("tarball")
+    if not isinstance(url, str) or urlsplit(url).scheme != "https":
+        return replace(out, problem=f"{name} {version} has no tarball URL")
+    resp = ctx.http.get(url, max_bytes=ctx.limits.max_artifact_bytes)
+    if resp.status != 200:
+        raise NetError(f"download {filename}: HTTP {resp.status}")
+    if _compute_sri(integrity, resp.content) != integrity:
+        return replace(out, problem=f"{filename} doesn't match the registry's integrity hash")
+    hooks = install_hooks(filename, resp.content, ctx.limits)
+    if hooks.problem is not None:
+        return replace(out, problem=hooks.problem)
+    # npm runs what the package.json on disk says; the registry's copy can
+    # differ (manifest confusion), so a script in either counts.
+    listed = install_scripts(json.dumps(doc).encode())
+    scripts = tuple(sorted(set(hooks.scripts) | set(listed), key=_script_order))
+    return replace(
+        out,
+        install_scripts=scripts,
+        binding_gyp=hooks.binding_gyp,
+        gypfile_off=hooks.gypfile_off and doc.get("gypfile") is not True,
     )
 
 

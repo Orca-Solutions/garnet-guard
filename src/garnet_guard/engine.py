@@ -12,13 +12,14 @@ from pathlib import Path
 from . import __version__
 from . import policy as pol
 from .checks import ALL_CHECKS, DOCS
-from .checks.content import new_requirement_names
+from .checks.content import new_requirement_names, owned_young_dependencies
 from .checks.docs import rule_url
 from .checks.trust import coverage_notes
 from .ecosystems import github, gittree, npm, pypi
 from .models import (
     Change,
     ChangeResult,
+    DependencyInstalls,
     DependencyProfile,
     Evidence,
     FactError,
@@ -29,10 +30,13 @@ from .models import (
     ProjectReleases,
     RawFinding,
     ReleaseFacts,
+    Requirement,
     Severity,
     Verdict,
 )
 from .net import Http, NetError
+
+ChangeKey = tuple[str, str, str | None, str]
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,19 @@ class Options:
     check_known_bad: bool = True
     # The day ignores expire against. None means today in UTC.
     today: date | None = None
+    # Per change (ecosystem, package, baseline, candidate): the versions the
+    # lockfiles that change came from pin, by (ecosystem, normalized name).
+    # GRN-C008 reads a young dependency's pinned versions instead of every
+    # version its range allows.
+    pins: Mapping[ChangeKey, Mapping[tuple[str, str], tuple[str, ...]]] = field(
+        default_factory=dict
+    )
+    # Per change: what in a lockfile it came from means a package may install
+    # from somewhere other than the registry (an option line in a
+    # requirements file, an entry from git, a URL or another index;
+    # ``workspace.installs_elsewhere``). GRN-C008 then reads nothing for a
+    # young dependency and keeps its severity.
+    installs_elsewhere: Mapping[ChangeKey, str] = field(default_factory=dict)
 
 
 ECOSYSTEMS = ("pypi", "npm")
@@ -72,6 +89,7 @@ class Fetcher:
         )
         self._npm = npm.FetchContext(http=self.http, limits=options.limits, tags=tags)
         self._profiles: dict[tuple[str, str], DependencyProfile] = {}
+        self._dep_installs: dict[tuple[str, str, str, tuple[str, ...]], DependencyInstalls] = {}
         self._profiles_lock = threading.Lock()
 
     def __enter__(self) -> Fetcher:
@@ -117,19 +135,41 @@ class Fetcher:
                 self._profiles[key] = hit
         return hit
 
+    def dependency_installs(
+        self, ecosystem: str, req: Requirement, pinned: tuple[str, ...] = ()
+    ) -> DependencyInstalls:
+        """The releases of a new dependency GRN-C008 reads, once per run.
+        Raises ``NetError``."""
+        key = (ecosystem, req.package, req.spec, pinned)
+        with self._profiles_lock:
+            hit = self._dep_installs.get(key)
+        if hit is None:
+            if ecosystem == "npm":
+                hit = npm.dependency_installs(self._npm, req, pinned)
+            else:
+                hit = pypi.dependency_installs(self._pypi, req, pinned)
+            with self._profiles_lock:
+                self._dep_installs[key] = hit
+        return hit
+
 
 def with_dependency_profiles(
-    fetcher: Fetcher, base: ReleaseFacts | None, cand: ReleaseFacts
+    fetcher: Fetcher,
+    base: ReleaseFacts | None,
+    cand: ReleaseFacts,
+    pins: Mapping[tuple[str, str], tuple[str, ...]] | None = None,
+    installs_elsewhere: str | None = None,
 ) -> ReleaseFacts:
     """The candidate with a registry profile for each dependency the baseline
     didn't declare (GRN-C008). A lookup that fails is a GRN-E001 on the
     candidate naming GRN-C008, so the rule never passes a name it couldn't see.
-    Profiles the facts already carry (an incident replay) are kept.
+    Profiles the facts already carry (an incident replay) are kept. Then reads
+    the releases ``with_dependency_installs`` needs.
     """
     known = {p.name for p in cand.dependencies}
     names = [n for n in new_requirement_names(base, cand) if n not in known]
     if not names:
-        return cand
+        return with_dependency_installs(fetcher, base, cand, pins, installs_elsewhere)
     profiles: list[DependencyProfile] = []
     errors: list[FactError] = []
     for name in names:
@@ -141,9 +181,71 @@ def with_dependency_profiles(
                     "GRN-E001", f"registry lookup for dependency {name}: {err}", ("GRN-C008",)
                 )
             )
-    return replace(
+    cand = replace(
         cand,
         dependencies=cand.dependencies + tuple(profiles),
+        errors=cand.errors + tuple(errors),
+    )
+    return with_dependency_installs(fetcher, base, cand, pins, installs_elsewhere)
+
+
+def install_lookup_error(err: Exception, package: str, version: str) -> FactError:
+    """GRN-E001 for a dependency's releases Garnet couldn't read. A response it
+    couldn't parse counts the same as one that never came."""
+    why = str(err) if isinstance(err, NetError) else f"unreadable response ({type(err).__name__})"
+    return FactError(
+        "GRN-E001",
+        f"releases of dependency {package} that {version} could install: {why}",
+        ("GRN-C008",),
+    )
+
+
+def with_dependency_installs(
+    fetcher: Fetcher,
+    base: ReleaseFacts | None,
+    cand: ReleaseFacts,
+    pins: Mapping[tuple[str, str], tuple[str, ...]] | None = None,
+    installs_elsewhere: str | None = None,
+) -> ReleaseFacts:
+    """The candidate with the releases GRN-C008 reads for each young
+    dependency that shares an owner with the trusted package, read after the
+    profiles: the versions ``pins`` (the lockfiles this change came from)
+    gives for it, else every published version its range allows. A read
+    that fails is a GRN-E001 naming GRN-C008, and the rule keeps its
+    severity for that dependency. Releases the facts already carry are kept.
+    Nothing is read, and each dependency's ``problem`` says why, when the
+    pins map it to ``()`` (the install wrapper: not a PyPI file it resolved)
+    or a lockfile the change came from ``installs_elsewhere``.
+    """
+    known = {d.name for d in cand.dependency_installs}
+    wanted = [r for r in owned_young_dependencies(base, cand) if r.package not in known]
+    if not wanted:
+        return cand
+    got: list[DependencyInstalls] = []
+    errors: list[FactError] = []
+    for r in wanted:
+        if installs_elsewhere is not None:
+            why = (
+                f"the lockfile has {installs_elsewhere}, so {r.package} can install from "
+                "somewhere other than the registry and Garnet can't tell which release that is"
+            )
+            got.append(DependencyInstalls(r.package, r.spec, problem=why))
+            continue
+        pinned = (pins or {}).get((cand.ecosystem, normalize(cand.ecosystem, r.package)))
+        if pinned == ():
+            why = (
+                f"what installs {r.package} isn't a registry release Garnet can read (a file "
+                "from another index, or a copy already installed, whose index isn't known)"
+            )
+            got.append(DependencyInstalls(r.package, r.spec, problem=why))
+            continue
+        try:
+            got.append(fetcher.dependency_installs(cand.ecosystem, r, pinned or ()))
+        except (NetError, ValueError, TypeError, KeyError, AttributeError) as err:
+            errors.append(install_lookup_error(err, r.package, cand.version))
+    return replace(
+        cand,
+        dependency_installs=cand.dependency_installs + tuple(got),
         errors=cand.errors + tuple(errors),
     )
 
@@ -380,11 +482,18 @@ def evaluate(
             results = []
             for c, base, cand in pending:
                 b = base.result() if base else None
+                key = (c.ecosystem, c.package, c.baseline, c.candidate)
                 results.append(
                     run_checks(
                         c,
                         b,
-                        with_dependency_profiles(fetcher, b, cand.result()),
+                        with_dependency_profiles(
+                            fetcher,
+                            b,
+                            cand.result(),
+                            opts.pins.get(key),
+                            opts.installs_elsewhere.get(key),
+                        ),
                         policy=policy,
                         today=opts.today,
                     )

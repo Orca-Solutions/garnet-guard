@@ -32,6 +32,29 @@ def logical_lines(text: str) -> list[tuple[int, str]]:
     return out
 
 
+_OPTION = re.compile(r"^(--[A-Za-z][A-Za-z-]*|-[A-Za-z])")
+
+
+def unsure_source(text: str) -> str | None:
+    """The first line, anywhere in the file, after which Garnet can't tell
+    where pip installs a package from, said without its value (which can
+    hold credentials), or None. That is any option line but ``--hash``
+    (pip accepts abbreviated options and attached values, ``-ihttps://…``,
+    ``--extra-ind``, and ``-r``/``-c`` bring in files Garnet doesn't read
+    here), and any URL, path or editable requirement."""
+    for _, line in logical_lines(text):
+        if line.startswith("-"):
+            if line.startswith("--hash"):
+                continue
+            m = _OPTION.match(line)
+            return m.group(1) if m else "an option"
+        if "://" in line or line.startswith((".", "/", "~")) or " @ " in line:
+            return "a URL or path requirement"
+        if _NAMED.match(line) is None:
+            return "a line Garnet can't read"
+    return None
+
+
 def parse(text: str) -> list[Pin]:
     """Pins from a requirements file.
 
@@ -65,7 +88,7 @@ def parse(text: str) -> list[Pin]:
             if private_index:
                 pins.append(Pin(name, version, line_no, "unsupported", "private index"))
             else:
-                pins.append(Pin(name, version, line_no))
+                pins.append(Pin(name, version, line_no, marker=bool(m.group(4))))
             continue
         m = _NAMED.match(line)
         if m:

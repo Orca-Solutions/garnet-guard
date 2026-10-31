@@ -49,7 +49,7 @@ def parse(text: str) -> list[Pin]:
         line = lines[i] if i < len(lines) else 0
         ok, why = _on_pypi(pkg)
         if ok and version:
-            pins.append(Pin(name, str(version), line))
+            pins.append(Pin(name, str(version), line, marker=bool(pkg.get("marker"))))
         else:
             pins.append(
                 Pin(

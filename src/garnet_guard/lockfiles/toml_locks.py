@@ -56,7 +56,8 @@ def parse_uv(text: str) -> list[Pin]:
         if registry is not None and str(registry).rstrip("/") + "/" in {
             s.rstrip("/") + "/" for s in PYPI_INDEXES
         }:
-            pins.append(Pin(name, str(version) if version else None, line))
+            marked = bool(pkg.get("resolution-markers"))
+            pins.append(Pin(name, str(version) if version else None, line, marker=marked))
         elif "virtual" in source or "editable" in source:
             continue  # the project itself or a workspace member, not a dependency
         else:
@@ -78,15 +79,17 @@ def parse_poetry(text: str) -> list[Pin]:
         version = pkg.get("version")
         line = lines[i] if i < len(lines) else 0
         source = pkg.get("source")
+        # Older poetry.lock files record the package's own markers.
+        marked = bool(pkg.get("markers"))
         if not source:
-            pins.append(Pin(name, str(version) if version else None, line))
+            pins.append(Pin(name, str(version) if version else None, line, marker=marked))
             continue
         kind = str(source.get("type", "unknown"))
         url = str(source.get("url", ""))
         if kind == "legacy" and url.rstrip("/") + "/" in {
             s.rstrip("/") + "/" for s in PYPI_INDEXES
         }:
-            pins.append(Pin(name, str(version) if version else None, line))
+            pins.append(Pin(name, str(version) if version else None, line, marker=marked))
         else:
             detail = f"{kind} source" if kind != "legacy" else "private index"
             pins.append(Pin(name, str(version) if version else None, line, "unsupported", detail))

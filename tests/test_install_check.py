@@ -715,3 +715,57 @@ def test_package_text_is_escaped(tmp_path: Path) -> None:
     text = stdout.getvalue()
     assert "\x1b" not in text and "‮" not in text and "\x07" not in text
     assert json.dumps(text)  # still printable
+
+
+# --- GRN-C008 reads what the resolution installs ---------------------------
+
+
+def _options_seen() -> tuple[list[Options], check.Evaluate]:
+    seen: list[Options] = []
+    inner = evaluator()
+
+    def run(changes: list[Change], policy: Policy, options: Options) -> list[ChangeResult]:
+        seen.append(options)
+        return inner(changes, policy, options)
+
+    return seen, run
+
+
+def test_pip_passes_the_resolution_as_pins(tmp_path: Path) -> None:
+    seen, ev = _options_seen()
+    run = FakeRunner(pip_answers("pip-report-requests-2.32.3.json"))
+    run_pip(tmp_path, ["install", "requests==2.32.3"], run, evaluate=ev)
+    (options,) = seen
+    (table,) = options.pins.values()
+    assert list(options.pins) == [("pypi", "requests", "2.32.2", "2.32.3")]
+    assert table[("pypi", "requests")] == ("2.32.3",)  # resolved from PyPI
+    # already installed: pip inspect doesn't say from which index, so not read
+    assert table[("pypi", "urllib3")] == ()
+    assert options.installs_elsewhere == {}
+
+
+def test_uv_passes_the_lockfile_pins(tmp_path: Path) -> None:
+    seen, ev = _options_seen()
+    run = FakeRunner(uv_answers())
+    run_uv(uv_project(tmp_path / "p"), "lock", [], run, evaluate=ev)
+    (options,) = seen
+    (table,) = options.pins.values()
+    assert table[("pypi", "requests")] == ("2.34.2",)
+
+
+def test_uv_lock_with_a_package_from_another_index_reads_nothing(tmp_path: Path) -> None:
+    private = 'source = { registry = "https://private.invalid/simple" }'
+    head = HEAD_LOCK.replace(
+        'name = "certifi"\nversion = "2026.10.23"\nsource = { registry = "https://pypi.org/simple" }',
+        f'name = "certifi"\nversion = "2026.10.23"\n{private}',
+    )
+    assert head != HEAD_LOCK
+    base = head.replace(
+        'name = "requests"\nversion = "2.34.2"', 'name = "requests"\nversion = "2.34.1"'
+    )
+    seen, ev = _options_seen()
+    run = FakeRunner(uv_answers(head=head))
+    run_uv(uv_project(tmp_path / "p", lock=base), "lock", [], run, evaluate=ev)
+    (options,) = seen
+    assert list(options.installs_elsewhere.values()) == ["an entry from outside the registry"]
+    assert list(options.pins.values()) == [{}]

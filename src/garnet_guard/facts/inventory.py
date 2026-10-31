@@ -578,6 +578,7 @@ def declared_requirements(
         return None
     out: list[Requirement] = []
     seen: set[str] = set()
+    others: dict[str, list[Requirement]] = {}
     for raw in msg.get_all("Requires-Dist") or []:
         line = " ".join(str(raw).split())
         if not line:
@@ -591,15 +592,19 @@ def declared_requirements(
                 continue
             name = canonicalize_name(m.group(0))
         else:
-            if req.marker is not None and "extra" in str(req.marker):
-                continue
             name = canonicalize_name(req.name)
             url = req.url
+            if req.marker is not None and "extra" in str(req.marker):
+                # Installed only with the extra, so not a dependency of its
+                # own, but a second requirement for one declared without.
+                others.setdefault(name, []).append(Requirement(name, line, source=url))
+                continue
         if name in seen:
+            others.setdefault(name, []).append(Requirement(name, line, source=url))
             continue
         seen.add(name)
         out.append(Requirement(name, line, source=url))
-    return tuple(out)
+    return tuple(r.with_others(others.get(r.name, [])) for r in out)
 
 
 def _pyproject_entry_points(pyproject: bytes) -> set[str]:
