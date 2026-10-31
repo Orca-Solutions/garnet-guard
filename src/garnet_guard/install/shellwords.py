@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .gate import PM_WORD, fold, has_pm_word
-from .runner import loader_preload
+from .runner import LIBC_MODULE_PATHS, loader_preload
 
 # What the pre-scan writes in place of characters the shell would expand,
 # so a word that held one is still known after shlex has removed the quotes.
@@ -58,7 +58,7 @@ _RELEVANT_ENV = re.compile(r"^(?:PIP_|UV_|PYTHON|VIRTUAL_ENV$|PATH$|CONDA_PREFIX
 def _relevant(name: str) -> bool:
     """Whether a variable's value matters to the check: pip's, uv's and
     Python's settings, and the loader settings the hooks ask about."""
-    return bool(_RELEVANT_ENV.match(name)) or loader_preload(name)
+    return bool(_RELEVANT_ENV.match(name)) or loader_preload(name) or name in LIBC_MODULE_PATHS
 
 
 # pip's general options, before the subcommand, and whether each takes a

@@ -45,7 +45,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,7 +55,7 @@ from ..policy import PolicyError
 from ..report import escape
 from . import check, gate, pip, shellwords, uv
 from .check import Deps, Outcome
-from .runner import loader_preload
+from .runner import LIBC_MODULE_PATHS, loader_preload
 
 DEADLINE_SECONDS = 240.0
 CONFIG_TIMEOUT_SECONDS = 300
@@ -201,6 +201,7 @@ def _one(
         or _discovery_why(item, env)
         or _committed_why(item)
         or _in_project_why(item, env)
+        or _chosen_why(item, env)
     )
     if why:
         answer.cant.append(escape(why))
@@ -288,17 +289,27 @@ def _preload_why(
     already in the hook's own environment is loaded into Garnet too, so only
     one the command sets or changes counts.
     """
-    names = sorted(n for n, v in item.env.items() if loader_preload(n) and env.get(n) != v)
-    if not names:
-        return None
     tool = "pip" if isinstance(item, shellwords.PipCommand) else "uv"
-    which = ", ".join(names)
-    return (
-        f"{item.text}: not checked. The command sets {which}, which makes the system's loader "
-        f"load a library of its choosing into {tool} when it starts. That library can change "
-        f"what {tool} installs, so a check without it wouldn't describe this command, and "
-        f"Garnet Guard doesn't start {tool} with it before you approve the command."
-    )
+    names = sorted(n for n, v in item.env.items() if loader_preload(n) and env.get(n) != v)
+    if names:
+        which = ", ".join(names)
+        return (
+            f"{item.text}: not checked. The command sets {which}, which makes the system's "
+            f"loader load a library of its choosing into {tool} when it starts. That library "
+            f"can change what {tool} installs, so a check without it wouldn't describe this "
+            f"command, and Garnet Guard doesn't start {tool} with it before you approve the "
+            "command."
+        )
+    names = [n for n in sorted(LIBC_MODULE_PATHS) if item.env.get(n) != env.get(n)]
+    if names:
+        which = ", ".join(names)
+        return (
+            f"{item.text}: not checked. The command sets {which}, which tells the C library "
+            "where to load character-set conversion modules and locale files from, so code of "
+            f"the command's choosing could load into {tool} when it starts. Garnet Guard "
+            f"doesn't start {tool} with it before you approve the command."
+        )
+    return None
 
 
 # What uv reads to choose the Python it starts (python-preference defaults
@@ -449,6 +460,31 @@ def project_program(
     ``bin/pip`` there is the project's code: the hook doesn't start it before
     the user approves the command.
     """
+    roots = _project_roots(item, env)
+    if not roots:
+        return None
+    venvs = [root / ".venv" for root in roots]
+    active = item.env.get("VIRTUAL_ENV")
+    if active:
+        # Only a folder that is a virtual environment, and not the project
+        # itself: a command can set VIRTUAL_ENV to anything.
+        folder = Path(os.path.normpath(os.path.join(item.cwd, active)))
+        if (folder / "pyvenv.cfg").is_file() and not any(_same(folder, str(r)) for r in roots):
+            venvs.append(folder)
+    for program in _programs(item):
+        written = os.path.normpath(program)
+        for path in _forms(Path(program)):
+            root = next((r for r in roots if _within(path, r)), None)
+            if root is not None and not any(_within(path, v) for v in venvs):
+                shown = written if str(path) == written else f"{written} (a link to {path})"
+                return shown, str(root)
+    return None
+
+
+def _project_roots(
+    item: shellwords.PipCommand | shellwords.UvCommand, env: Mapping[str, str]
+) -> list[Path]:
+    """The project folders ``project_program`` describes."""
     cwd = Path(item.cwd)
     starts = [cwd]
     if isinstance(item, shellwords.UvCommand):
@@ -472,24 +508,63 @@ def project_program(
         # unless it is the filesystem root, the home folder or above it.
         if not found and here.parent != here and not _within(Path(home), here):
             roots.append(here)
-    if not roots:
-        return None
-    venvs = [root / ".venv" for root in roots]
-    active = item.env.get("VIRTUAL_ENV")
-    if active:
-        # Only a folder that is a virtual environment, and not the project
-        # itself: a command can set VIRTUAL_ENV to anything.
-        folder = Path(os.path.normpath(os.path.join(item.cwd, active)))
-        if (folder / "pyvenv.cfg").is_file() and not any(_same(folder, str(r)) for r in roots):
-            venvs.append(folder)
+    return roots
+
+
+def _chosen_why(
+    item: shellwords.PipCommand | shellwords.UvCommand, env: Mapping[str, str]
+) -> str | None:
+    """Why the hook asks before starting a program it can't place.
+
+    Each program the check would start (and pip's script, which the command
+    runs) must be what the hook's own PATH finds for its name, or in a
+    virtual environment (a folder with a ``pyvenv.cfg``): the project's
+    ``.venv``, the hook's own ``VIRTUAL_ENV``, or any venv outside the
+    project. Compared by real path. Anything else (``/tmp/x/uv add six``,
+    ``uv sync -p /tmp/x/python``) is a program the command chose, which may
+    have been written just before it.
+    """
+    roots = [r for root in _project_roots(item, env) for r in _forms(root)]
+    path = env.get("PATH", "")
     for program in _programs(item):
-        written = os.path.normpath(program)
-        for path in _forms(Path(program)):
-            root = next((r for r in roots if _within(path, r)), None)
-            if root is not None and not any(_within(path, v) for v in venvs):
-                shown = written if str(path) == written else f"{written} (a link to {path})"
-                return shown, str(root)
+        real = _real(program)
+        name = os.path.basename(program)
+        found = shutil.which(name, path=path) if path else None
+        if found and _real(found) == real:
+            continue
+        if _venv_ok(program, roots, env):
+            continue
+        finds = f"PATH finds {found}" if found else f"PATH has no {name}"
+        return (
+            f"{item.text}: not checked. {os.path.normpath(program)} isn't the {name} your PATH "
+            f"finds ({finds}) or a program in a virtual environment, so it is a program this "
+            "command chose, which Garnet Guard doesn't start before you approve the command."
+        )
     return None
+
+
+def _real(program: str) -> str:
+    try:
+        return os.path.realpath(program)
+    except (OSError, ValueError):
+        return os.path.normpath(program)
+
+
+def _venv_ok(program: str, roots: Sequence[Path], env: Mapping[str, str]) -> bool:
+    """Whether ``program`` is in a virtual environment the hook trusts."""
+    bindir = os.path.dirname(os.path.normpath(program))
+    if os.path.basename(bindir) not in ("bin", "Scripts"):
+        return False
+    venv = os.path.dirname(bindir)
+    if not os.path.isfile(os.path.join(venv, "pyvenv.cfg")):
+        return False
+    real = Path(_real(venv))
+    if any(real.is_relative_to(_real(str(r / ".venv"))) for r in roots):
+        return True
+    own = env.get("VIRTUAL_ENV")
+    if own and os.path.isabs(own) and str(real) == _real(own):
+        return True
+    return not any(real.is_relative_to(r) for r in roots)
 
 
 def _forms(path: Path) -> list[Path]:
