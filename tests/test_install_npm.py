@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from garnet_guard.install import check, npm, shellwords, wrapper
+from garnet_guard.install import check, gate, hooks, npm, preload, shellwords, wrapper
 from garnet_guard.install.check import Outcome
 from garnet_guard.install.runner import Ran
 from garnet_guard.models import Severity
@@ -70,6 +70,7 @@ def npm_answers(  # type: ignore[no-untyped-def]
         assert argv[0] == NPM
         if argv[1] not in ("ci", "rebuild"):  # every npm the check runs: no node preloads
             assert not {k for k in env if k.upper() in npm.NODE_PRELOAD}
+            assert not {k for k in env if preload.is_loader_preload(k)}  # nor the loader's
         if argv[1:] == ["--version"]:
             return Ran(0, f"{version}\n".encode())
         if argv[1:3] == ["config", "get"]:
@@ -809,3 +810,315 @@ def test_untested_npm_versions_are_cant_check(version: str, tmp_path: Path) -> N
     out = run_npm(root, "install", [], run)
     assert out.status == "cant_check" and [c[0][1] for c in run.calls] == ["--version"]
     assert any("checks with npm 10 and 11" in r for r in out.reasons)
+
+
+# --- re-review findings (2026-10-31) ----------------------------------------
+
+SHA = "0123456789abcdef0123456789abcdef01234567"
+GIT = f"github:o/r#{SHA}"
+# Each ran the git dependency's prepare script on npm 10.9.4 (WORKING_RECORD.md),
+# and so did their aliases (home, issues, author, info).
+FETCHING = ["docs", "bugs", "repo", "fund", "owner ls", "publish --dry-run", "view", "home",
+            "issues", "author ls", "info"]  # fmt: skip
+
+
+@pytest.mark.parametrize("command", FETCHING)
+@pytest.mark.parametrize("form", ["npm {c} {spec}", "npm -- {c} {spec}", "npm {c} -- {spec}"])
+def test_a_quiet_command_given_a_spec_npm_would_fetch_asks(
+    command: str, form: str, tmp_path: Path
+) -> None:
+    text = form.format(c=command, spec=GIT)
+    found = shellwords.find_commands(text, cwd=str(tmp_path), env={"PATH": "/nonexistent"})
+    assert len(found) == 1 and isinstance(found[0], shellwords.Unsupported)
+    assert found[0].ask and GIT in found[0].why and "isn't a registry package" in found[0].why
+
+
+@pytest.mark.parametrize("command", FETCHING)
+@pytest.mark.parametrize(
+    "form", ["npm {c}", "npm {c} left-pad", "npm -- {c} left-pad@1.3.0", "npm {c} -- @scope/x@^2"]
+)
+def test_a_quiet_command_given_registry_specs_gets_no_answer(
+    command: str, form: str, tmp_path: Path
+) -> None:
+    assert _shape(form.format(c=command), str(tmp_path)) == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "npm explain ./vendor/x",
+        "npm ls git+https://example.com/x.git",
+        "npm star github:o/r",
+        "npm unpublish ./x.tgz",
+        "npm dist-tag add github:o/r beta",
+        "npm deprecate https://example.com/x.tgz old",
+        "npm access get status ./x",
+        "npm docs --registry https://r.example/ x",  # a value counts: asks rather than guess
+    ],
+)
+def test_every_command_that_takes_specs_asks_for_one_npm_would_fetch(
+    command: str, tmp_path: Path
+) -> None:
+    assert _shape(command, str(tmp_path)) == [f"unsupported npm {command.split()[1]}"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "npm run test:unit",
+        "npm test -- src/x.test.js",
+        "npm run build -- --out ./dist",
+        "npm start ./server.js",
+        "npm config set registry https://r.example/",
+        "npm help install",
+        "npm search github:o/r",
+        "npm version patch",
+    ],
+)
+def test_commands_whose_arguments_are_never_specs_stay_quiet(command: str, tmp_path: Path) -> None:
+    assert _shape(command, str(tmp_path)) == []
+
+
+def test_quiet_command_tests_every_word_for_spec_commands() -> None:
+    assert npm.quiet_command({"docs"}, ["left-pad", "@scope/x@1.0.0"])
+    assert not npm.quiet_command({"docs"}, ["left-pad", GIT])
+    assert npm.quiet_command({"run", "run-script"}, ["./anything", "github:o/r"])
+    assert not npm.quiet_command({"run", "docs"}, ["github:o/r"])
+    assert npm.fetched_spec({"owner"}, ["ls", GIT]) == GIT
+    assert npm.fetched_spec({"run"}, [GIT]) is None
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
+        "DYLD_FRAMEWORK_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_PRINT_LIBRARIES",
+        "LD_PRELOAD_64", "LD_32_PRELOAD", "ld_preload",
+    ],
+)  # fmt: skip
+def test_loader_preload_names(name: str) -> None:
+    assert preload.is_loader_preload(name)
+
+
+@pytest.mark.parametrize("name", ["PATH", "LDFLAGS", "LD_DEBUG", "LD_BIND_NOW", "NODE_OPTIONS"])
+def test_other_names_are_not_loader_preloads(name: str) -> None:
+    assert not preload.is_loader_preload(name)
+
+
+def test_loader_preloads_never_reach_the_check(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    run = FakeRunner(npm_answers())  # asserts no loader preload on every check run
+    loader = {
+        "LD_PRELOAD": "./pre.so",
+        "LD_AUDIT": "./a.so",
+        "LD_LIBRARY_PATH": "./lib",
+        "DYLD_INSERT_LIBRARIES": "./pre.dylib",
+        "DYLD_FRAMEWORK_PATH": "./fw",
+    }
+    env = {"PATH": "/bin", **loader}
+    out = run_npm(root, "install", ["left-pad@1.3.0"], run, env=env)
+    assert out.status == "pass"
+    assert [c[0][1] for c in run.calls] == ["--version", "config", "install"]
+    assert npm.check_env(env) == {"PATH": "/bin", "npm_config_update_notifier": "false"}
+    assert not set(loader) & set(npm.resolve_env(env, tmp_path))
+    assert out.handoff is not None and out.handoff.env == env  # the hand-off keeps them
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+@pytest.mark.parametrize(
+    "command",
+    [
+        "LD_PRELOAD=./pre.so npm i left-pad@1.3.0",
+        "env DYLD_INSERT_LIBRARIES=./pre.dylib npm install left-pad@1.3.0",
+        "export LD_AUDIT=./a.so; npm ci",
+        "sudo LD_LIBRARY_PATH=./lib npm update",
+    ],
+)
+def test_hook_asks_when_the_command_sets_a_loader_preload(
+    agent: str,
+    command: str,
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    root = project(Path(where["cwd"]) / "demo")
+    run = FakeRunner(npm_answers())
+    inner = spec(answer(agent, event(command, str(root)), where, deps=deps(run)))
+    assert inner["permissionDecision"] == ("ask" if agent == "claude-code" else "deny")
+    name = command.split("=")[0].split()[-1]
+    reason = inner["permissionDecisionReason"]
+    assert f"sets {name}" in reason and "loader" in reason
+    assert not run.calls  # npm never started before approval
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_hook_asks_when_a_loader_preload_value_expands(
+    agent: str,
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    root = project(Path(where["cwd"]) / "demo")
+    run = FakeRunner(npm_answers())
+    inner = spec(answer(agent, event("LD_PRELOAD=$X npm i x", str(root)), where, deps=deps(run)))
+    assert inner["permissionDecision"] == ("ask" if agent == "claude-code" else "deny")
+    assert "LD_PRELOAD" in inner["permissionDecisionReason"] and not run.calls
+
+
+def test_hook_checks_without_a_loader_preload_the_command_doesnt_set(
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    # Already in the agent's environment, not set by the command: checked as
+    # usual, and npm runs without it (npm_answers asserts that on each run).
+    root = project(Path(where["cwd"]) / "demo")
+    npm_exe = str(Path(where["PATH"]) / "npm")
+
+    def answers(argv: list[str], cwd: Path, env: dict[str, str]) -> Ran:
+        assert argv[0] == npm_exe
+        return npm_answers()([NPM, *argv[1:]], cwd, env)
+
+    run = FakeRunner(answers)
+    stdout, stderr = io.StringIO(), io.StringIO()
+    env = {"PATH": where["PATH"], "HOME": where["HOME"], "LD_LIBRARY_PATH": "/opt/lib"}
+    hooks.handle(
+        "claude-code",
+        event("npm install left-pad@1.3.0", str(root)),
+        stdout=stdout,
+        stderr=stderr,
+        env=env,
+        deps=deps(run),
+        exit_now=lambda code: None,
+    )
+    inner = spec(json.loads(stdout.getvalue()))
+    assert "permissionDecision" not in inner
+    assert "left-pad 1.2.0 -> 1.3.0" in inner["additionalContext"]
+    assert [c[0][1] for c in run.calls] == ["--version", "config", "install"]
+
+
+def test_set_by_command_names_only_what_the_line_changed() -> None:
+    outer = {"PATH": "/bin", "LD_LIBRARY_PATH": "/opt/lib"}
+    assert preload.set_by_command({**outer, "X": "1"}, outer) == []
+    assert preload.set_by_command({**outer, "LD_LIBRARY_PATH": "./lib"}, outer) == [
+        "LD_LIBRARY_PATH"
+    ]
+    assert preload.set_by_command(
+        {**outer, "DYLD_INSERT_LIBRARIES": "x", "LD_PRELOAD": "y"}, outer
+    ) == ["DYLD_INSERT_LIBRARIES", "LD_PRELOAD"]
+
+
+def _link(path: Path, target: Path) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(target)
+    return str(path)
+
+
+def _check_with(exe: str, root: Path, tmp_path: Path, run: FakeRunner) -> Outcome:
+    work = tmp_path / f"work-{len(list(tmp_path.glob('work-*')))}"
+    work.mkdir()
+    return check.check_npm(
+        exe, "install", ["left-pad@1.3.0"], cwd=root, env={"PATH": str(Path(exe).parent)},
+        command="npm install left-pad@1.3.0", deps=deps(run), workdir=work,
+    )  # fmt: skip
+
+
+def test_an_npm_linked_into_another_projects_node_modules_is_never_started(
+    tmp_path: Path,
+) -> None:
+    root = project(tmp_path / "demo")
+    cli = Path(_program(tmp_path / "other" / "node_modules" / "npm" / "bin" / "npm-cli.js"))
+    exe = _link(tmp_path / "home" / "bin" / "npm", cli)
+    run = FakeRunner(npm_answers())
+    out = _check_with(exe, root, tmp_path, run)
+    assert out.status == "cant_check" and not run.calls
+    assert any("a link to" in r and "in a node_modules folder" in r for r in out.reasons)
+
+
+def test_an_npm_linked_into_another_prefixs_lib_is_never_started(tmp_path: Path) -> None:
+    # The installers' layout, but the link leaves its own prefix.
+    root = project(tmp_path / "demo")
+    cli = Path(_program(tmp_path / "other" / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js"))
+    exe = _link(tmp_path / "prefix" / "bin" / "npm", cli)
+    run = FakeRunner(npm_answers())
+    out = _check_with(exe, root, tmp_path, run)
+    assert out.status == "cant_check" and not run.calls
+
+
+def test_the_npm_node_installs_in_its_prefix_is_started(tmp_path: Path) -> None:
+    # <prefix>/bin/npm -> ../lib/node_modules/npm/bin/npm-cli.js: node's
+    # tarballs, nvm and Homebrew install npm this way.
+    root = project(tmp_path / "demo")
+    _program(tmp_path / "prefix" / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js")
+    exe = _link(tmp_path / "prefix" / "bin" / "npm", Path("../lib/node_modules/npm/bin/npm-cli.js"))
+
+    def answers(argv: list[str], cwd: Path, env: dict[str, str]) -> Ran:
+        assert argv[0] == exe
+        return npm_answers()([NPM, *argv[1:]], cwd, env)
+
+    run = FakeRunner(answers)
+    out = _check_with(exe, root, tmp_path, run)
+    assert out.status == "pass", out.reasons
+
+
+def test_a_node_linked_into_node_modules_is_never_started(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    real_node = Path(_program(tmp_path / "other" / "node_modules" / "node" / "bin" / "node"))
+    node = _link(tmp_path / "bin" / "node", real_node)
+    exe = _program(tmp_path / "bin" / "npm", "#!/usr/bin/env node\n")
+    run = FakeRunner(npm_answers())
+    work = tmp_path / "work"
+    work.mkdir()
+    out = check.check_npm(
+        exe, "install", [], cwd=root, env={"PATH": str(Path(node).parent)},
+        command="npm install", deps=deps(run), workdir=work,
+    )  # fmt: skip
+    assert out.status == "cant_check" and not run.calls
+    assert any("the node npm starts with" in r and "a link to" in r for r in out.reasons)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "node ./node_modules/npm/index.js i x",
+        "node node_modules/npm i x",
+        "node /opt/x/lib/node_modules/npm/lib/cli.js install x",
+        "nodejs ./node_modules/npx/bin/x.js npm i x",
+        "node22 ./vendor/npm-cli.js i x",
+        "node ./tools/npx-cli.mjs npm i x",
+        "node --no-warnings ./node_modules/npm/bin/npm-cli.js ci",
+    ],
+)
+def test_node_running_npms_own_files_is_cant_tell(command: str, tmp_path: Path) -> None:
+    assert gate.has_pm_word(command)  # the hook's fast path passes it on
+    assert _shape(command, str(tmp_path)) == ["unclear"]
+
+
+def test_node_running_npms_files_from_an_argument_list_is_cant_tell(tmp_path: Path) -> None:
+    found = shellwords.find_commands(
+        ["node", "C:\\p\\node_modules\\npm\\index.js", "i", "x"],
+        cwd=str(tmp_path),
+        env={"PATH": "/nonexistent"},
+    )
+    assert len(found) == 1 and isinstance(found[0], shellwords.Unclear)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "node build.js",
+        "node ./node_modules/vite/bin/vite.js build",
+        "node ./node_modules/npm-run-all/bin/run-p/index.js a b",
+        "node ./scripts/npmrc-check.js",
+    ],
+)
+def test_node_running_other_files_gets_no_answer(command: str, tmp_path: Path) -> None:
+    assert _shape(command, str(tmp_path)) == []
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_hook_asks_for_node_running_npms_files(
+    agent: str,
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    root = project(Path(where["cwd"]) / "demo")
+    run = FakeRunner(npm_answers())
+    command = "node ./node_modules/npm/index.js i left-pad@1.3.0"
+    inner = spec(answer(agent, event(command, str(root)), where, deps=deps(run)))
+    assert inner["permissionDecision"] == ("ask" if agent == "claude-code" else "deny")
+    assert "can't tell which npm this runs" in inner["permissionDecisionReason"]
+    assert not run.calls

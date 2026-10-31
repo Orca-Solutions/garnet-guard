@@ -50,7 +50,7 @@ from typing import Any, TextIO
 
 from ..policy import PolicyError
 from ..report import escape
-from . import check, gate, pip, shellwords, uv
+from . import check, gate, pip, preload, shellwords, uv
 from .check import Deps, Outcome
 
 DEADLINE_SECONDS = 240.0
@@ -192,6 +192,11 @@ def _one(
             answer.details.append(escape(note))
         if skip:
             return
+    preloads = _loader_preloads(item, env)
+    if preloads:
+        answer.cant.append(escape(preloads))
+        answer.details.append(escape(preloads))
+        return
     committed = _committed(item)
     if committed:
         why = (
@@ -281,6 +286,27 @@ def _uv_run_scope(item: shellwords.UvCommand) -> tuple[bool, str | None]:
             f"resolve this project without building: {what}."
         )
     return False, None
+
+
+def _loader_preloads(
+    item: shellwords.PipCommand | shellwords.UvCommand | shellwords.NpmCommand,
+    env: Mapping[str, str],
+) -> str | None:
+    """Why an npm command that sets a loader preload (``LD_PRELOAD=./x.so npm
+    i …``) isn't checked: the library it names loads into npm, node and every
+    program they start once the command runs. The check itself runs npm
+    without it."""
+    if not isinstance(item, shellwords.NpmCommand):
+        return None
+    names = preload.set_by_command(item.env, env)
+    if not names:
+        return None
+    return (
+        f"{item.text}: not checked. The command sets {', '.join(names)}, which makes the "
+        "system's loader load a library into npm, node and every program they start, and "
+        "Garnet Guard can't tell what that library does. Run the command without it to have "
+        "it checked."
+    )
 
 
 def _committed(

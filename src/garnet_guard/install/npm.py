@@ -35,6 +35,7 @@ from typing import Any
 from ..lockfiles import LockfileError, parse
 from ..lockfiles.npm import looks_like_git, split_spec, valid_name
 from .pip import Refusal
+from .preload import without_loader_preloads
 
 LOCKFILES = ("npm-shrinkwrap.json", "package-lock.json")  # npm prefers the first
 COPIED = ("package.json", *LOCKFILES, ".npmrc")
@@ -137,28 +138,40 @@ def checked_subcommand(word: str) -> str | None:
     return next(iter(found)) if len(found) == 1 and found <= set(CHECKED) else None
 
 
-# Commands that install nothing and fetch no package Garnet hasn't seen,
-# whatever their arguments; the project's own scripts (run, test) included.
-QUIET_COMMANDS = frozenset(
+# Commands that install nothing and fetch no package, whatever their
+# arguments: the project's own scripts (run, test) and the words passed to
+# them, setting names, search terms, user and team names. None of their
+# arguments is a package spec.
+_NO_SPEC_COMMANDS = frozenset(
     {
-        "access", "adduser", "bugs", "completion", "config", "deprecate", "undeprecate",
-        "dist-tag", "docs", "doctor", "explain", "fund", "get", "help", "help-search", "hook",
-        "ll", "login", "logout", "ls", "org", "owner", "ping", "pkg", "prefix", "profile",
-        "publish", "query", "repo", "restart", "root", "run", "run-script", "sbom", "search",
-        "set", "star", "stars", "start", "stop", "team", "test", "token", "unpublish",
-        "unstar", "version", "whoami",
+        "adduser", "completion", "config", "doctor", "get", "help", "help-search", "login",
+        "logout", "org", "ping", "pkg", "prefix", "profile", "restart", "root", "run",
+        "run-script", "search", "set", "stars", "start", "stop", "team", "test", "token",
+        "version", "whoami",
     }
 )  # fmt: skip
+# Commands that take package specs and install nothing when every spec is a
+# registry one. npm 10.9.4 fetches any other spec to read its manifest, and
+# packs a git one, which runs its prepare script: docs, bugs, repo, fund,
+# owner ls, publish --dry-run and view each ran it for github:o/r#<commit>
+# (WORKING_RECORD.md). The others here didn't in that experiment, and are
+# treated the same, since their code reads specs the same way.
+_SPEC_COMMANDS = frozenset(
+    {
+        "access", "bugs", "deprecate", "dist-tag", "docs", "explain", "fund", "hook", "ll",
+        "ls", "owner", "publish", "query", "repo", "sbom", "star", "undeprecate", "unpublish",
+        "unstar", "view",
+    }
+)  # fmt: skip
+QUIET_COMMANDS = _NO_SPEC_COMMANDS | _SPEC_COMMANDS
 # Quiet unless given a word that makes them fetch or install: ``npm init
 # <initializer>`` runs npm exec, ``audit fix`` installs, ``cache add`` and
-# ``pack <spec>`` fetch (which packs a git dependency), ``view`` of a spec
-# that isn't a registry one fetches it.
+# ``pack <spec>`` fetch (which packs a git dependency).
 _QUIET_UNLESS = {
     "init": lambda words: not words,
     "audit": lambda words: "fix" not in words,
     "cache": lambda words: "add" not in words,
     "pack": lambda words: not words,
-    "view": lambda words: all(registry_spec(w) for w in words),
 }
 EXEC_COMMANDS = frozenset({"exec"})
 # Package managers, which npx or npm exec can start (``npx npm i x``).
@@ -167,14 +180,30 @@ PACKAGE_MANAGERS = frozenset({"npm", "npx", "pnpm", "pnpx", "yarn", "yarnpkg", "
 
 def quiet_command(commands: set[str], words: Sequence[str]) -> bool:
     """True when every command in ``commands`` installs nothing with these
-    arguments (``words``: the ones after the subcommand that aren't options)."""
+    arguments (``words``: the ones after the subcommand that aren't options,
+    option values and words after ``--`` included). A command that takes
+    package specs is quiet only when every word is a registry spec."""
     if not commands:
         return False
     for command in commands:
+        if command in _NO_SPEC_COMMANDS:
+            continue
+        if command in _SPEC_COMMANDS:
+            if all(registry_spec(w) for w in words):
+                continue
+            return False
         test = _QUIET_UNLESS.get(command)
-        if not (command in QUIET_COMMANDS or (test is not None and test(list(words)))):
+        if test is None or not test(list(words)):
             return False
     return True
+
+
+def fetched_spec(commands: set[str], words: Sequence[str]) -> str | None:
+    """The first word that npm would fetch for a command in ``commands`` that
+    takes package specs: one that isn't a registry spec. None otherwise."""
+    if not commands & _SPEC_COMMANDS:
+        return None
+    return next((w for w in words if not registry_spec(w)), None)
 
 
 def runs_package_manager(args: Sequence[str]) -> bool:
@@ -487,14 +516,16 @@ def config_refusals(text: str) -> tuple[list[Refusal], bool]:
 
 # Environment variables that make node load code before npm runs: a
 # --require or --import in NODE_OPTIONS, a fallback module folder, the REPL's
-# module. They are taken out of every npm run during the check.
+# module. They are taken out of every npm run during the check, and so are
+# the loader's (preload.LOADER_PRELOAD: LD_PRELOAD, DYLD_INSERT_LIBRARIES, …).
 NODE_PRELOAD = frozenset({"NODE_OPTIONS", "NODE_PATH", "NODE_REPL_EXTERNAL_MODULE"})
 TESTED_MAJORS = (10, 11)
 
 
 def check_env(env: Mapping[str, str]) -> dict[str, str]:
-    """The user's environment for npm during the check, without node preloads."""
-    out = {k: v for k, v in env.items() if k.upper() not in NODE_PRELOAD}
+    """The user's environment for npm during the check, without node's or the
+    loader's preloads."""
+    out = {k: v for k, v in without_loader_preloads(env).items() if k.upper() not in NODE_PRELOAD}
     out["npm_config_update_notifier"] = "false"
     return out
 
@@ -531,13 +562,24 @@ def _interpreter(program: Path, path: str) -> Path | None:
     return Path(parts[0])
 
 
+def _installed_npm(program: Path, real: Path) -> bool:
+    """True when ``program`` is the link node's installers make for npm
+    (node's tarballs, nvm, Homebrew): ``<prefix>/bin/npm`` to
+    ``<prefix>/lib/node_modules/npm/bin/npm-cli.js``."""
+    prefix = program.absolute().parent.parent.resolve()
+    expected = prefix / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js"
+    return program.name == "npm" and program.parent.name == "bin" and real == expected
+
+
 def program_refusal(npm_exe: str, project: Path, cwd: Path, path: str) -> str | None:
     """Why Garnet won't start this npm (or the node its ``#!`` line names), if so.
 
     The hook runs before the user approves the command, so it doesn't start
     an npm or node from the project, from its repository, or from any
-    node_modules folder (``node_modules/.bin/npm``), committed or not, nor
-    corepack's npm shim, which runs the npm version ``packageManager`` names.
+    node_modules folder (``node_modules/.bin/npm``, or a link to one),
+    committed or not, nor corepack's npm shim, which runs the npm version
+    ``packageManager`` names. Each test is made on the path PATH gives and on
+    the real path it resolves to.
     """
     places = [p.resolve() for p in (project, cwd)]
     repo = _repo_root(project)
@@ -555,6 +597,8 @@ def program_refusal(npm_exe: str, project: Path, cwd: Path, path: str) -> str | 
                 f"{what} on PATH is corepack's shim, which runs the npm version the project's "
                 "packageManager names; Garnet Guard runs npm itself"
             )
+        if "node_modules" in real.parts and not (what == "npm" and _installed_npm(program, real)):
+            return f"{what} on PATH is {program}, a link to {real}, in a node_modules folder"
         for place in places:
             if real == place or place in real.parents:
                 return f"{what} on PATH is {program}, inside the project or its repository"

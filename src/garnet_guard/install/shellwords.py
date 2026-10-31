@@ -36,6 +36,7 @@ from typing import Literal
 
 from . import npm as npm_commands
 from .gate import PM_WORD, fold, has_pm_word
+from .preload import is_loader_preload
 
 # What the pre-scan writes in place of characters the shell would expand,
 # so a word that held one is still known after shlex has removed the quotes.
@@ -52,9 +53,16 @@ _PIP = re.compile(r"^pip(?:3(?:\.\d+)?)?(?:\.exe)?$")
 _PYTHON = re.compile(r"^(?:(?:python|pypy)(?:\d+(?:\.\d+)?)?[tdm]?|py)(?:\.exe)?$")
 # Environment variables that change which package manager runs or where it
 # installs. An unknown value for one of these makes later commands unclear.
+# The loader's preload settings (LD_PRELOAD, DYLD_INSERT_LIBRARIES, …) count
+# too: :func:`_relevant`.
 _RELEVANT_ENV = re.compile(
     r"^(?:PIP_|UV_|PYTHON|VIRTUAL_ENV$|PATH$|CONDA_PREFIX$|npm_config_|NPM_CONFIG_)"
 )
+
+
+def _relevant(name: str) -> bool:
+    return _RELEVANT_ENV.match(name) is not None or is_loader_preload(name)
+
 
 # pip's general options, before the subcommand, and whether each takes a
 # value (pip 26.2.2, main_parser's general group, aliases included). pip
@@ -111,6 +119,11 @@ _NPM_WHY = (
 _NPM_ASK_WHY = (
     "It may install packages or run their scripts, and Garnet Guard checks only npm install, "
     "ci and update."
+)
+_NPM_FETCH_WHY = (
+    "It names {}, which isn't a registry package. npm may fetch it to read its package.json, "
+    "and npm 10 runs a git package's prepare script when it does. Garnet Guard checks only "
+    "npm install, ci and update."
 )
 _NPX_PM_WHY = "It runs a package manager through npx or npm exec, which Garnet Guard can't check."
 _NPM_PROGRAM_WHY = (
@@ -405,7 +418,7 @@ def _simple(
     while i < len(words) and (m := _ASSIGNMENT.match(words[i])):
         name, value = m[1], m[2]
         if _expands(value):
-            if _RELEVANT_ENV.match(name) and _has_pm_word(words[i + 1 :]):
+            if _relevant(name) and _has_pm_word(words[i + 1 :]):
                 return Unclear(f"Garnet Guard can't tell the value of {name} here.", text)
         else:
             prefix[name] = _literal(value, env)
@@ -633,7 +646,7 @@ def _export(words: tuple[str, ...], state: _State) -> None:
         if not m:
             continue
         if _expands(m[2]):
-            if _RELEVANT_ENV.match(m[1]):
+            if _relevant(m[1]):
                 state.env_unknown = f"an earlier export set {m[1]} to a value Garnet can't read"
             continue
         state.env[m[1]] = _literal(m[2], state.env)
@@ -710,9 +723,7 @@ def _recognize(
         return Unsupported("npx", _NPM_WHY, text)
     if tool == "npm":
         return _npm_kind(args, text)
-    if tool in ("node", "nodejs", "corepack") and any(
-        os.path.basename(a).split(".")[0] in ("npm", "npx", "npm-cli", "npx-cli") for a in args
-    ):
+    if _NODE.match(tool) and any(_npm_script(a) for a in args):
         return Unclear(_NPM_PROGRAM_WHY, text)
     if tool in _JS_INSTALLS:
         sub = _subcommand(args, frozenset())[0]
@@ -732,6 +743,24 @@ def _recognize(
 _TOOL_WHY = (
     "It installs a tool into an environment of its own, which Garnet Guard doesn't check yet."
 )
+# node (``node22``, ``nodejs``, ``node.exe``) and corepack, which can start
+# npm from its files: ``node ./node_modules/npm/index.js i x``.
+_NODE = re.compile(r"^(?:node(?:js)?[\d.]*|corepack)$", re.IGNORECASE)
+_NPM_FILES = frozenset({"npm", "npx", "npm-cli", "npx-cli"})
+
+
+def _npm_script(word: str) -> bool:
+    """True when ``word`` may be npm's or npx's own code: a file named npm,
+    npx, npm-cli or npx-cli (any extension), or a path inside an
+    ``npm`` or ``npx`` folder of a node_modules folder."""
+    parts = [p.lower() for p in re.split(r"[\\/]+", word) if p]
+    if parts and parts[-1].split(".")[0] in _NPM_FILES:
+        return True
+    return any(
+        a == "node_modules" and b in ("npm", "npx") for a, b in zip(parts, parts[1:], strict=False)
+    )
+
+
 _UV_RUN_WITH = frozenset({"--with", "--with-requirements", "--with-editable"})
 _JS_INSTALLS = {"pnpm": _PNPM_INSTALLS, "yarn": _YARN_INSTALLS}
 
@@ -824,7 +853,11 @@ def _npm_kind(args: Sequence[str], text: str) -> Literal["npm"] | Unsupported | 
         if npm_commands.runs_package_manager(rest):
             return Unsupported(f"npm {sub}", _NPX_PM_WHY, text, ask=True)
         return Unsupported(f"npm {sub}", _NPM_WHY, text)
-    if npm_commands.quiet_command(commands, [w for w in rest if not w.startswith("-")]):
+    words = [w for w in rest if not w.startswith("-")]
+    spec = npm_commands.fetched_spec(commands, words)
+    if spec is not None:
+        return Unsupported(f"npm {sub}", _NPM_FETCH_WHY.format(spec), text, ask=True)
+    if npm_commands.quiet_command(commands, words):
         return None
     return Unsupported(f"npm {sub}", _NPM_ASK_WHY, text, ask=True)
 
