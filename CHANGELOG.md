@@ -21,7 +21,7 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 - The text report wrote a line break inside a lockfile version, or any other field, as a new line, so the rest could pass for a line of the report. It is shown as `\x0a` now, like other control characters.
 - `--policy-change` compared ignore names PEP 503 normalized whatever the ecosystem, so an ignore moved from `foo_bar` to `foo-bar`, two different npm packages, wasn't listed. Only an ignore with `ecosystem = "pypi"` is compared normalized now; matching already compared npm names exactly.
 
-## 0.2.0 (2026-12-01)
+## 0.2.0 (2026-10-31)
 
 The first full release, for launch. It adds seven content and trust rules to the ones in 0.1.0a1, widens the sensitive call set, and reads the wheel pip would install. With every rule it ships, the backtest warns on all 52 replayed malicious releases (47 PyPI, 5 npm), and flags 606 of 18,181 everyday updates of the top 1,000 PyPI and npm packages for a look (3.3%), none a false claim. An ignore now expires within 12 months, so a policy with a longer `until` has to shorten it (Changed, below).
 
