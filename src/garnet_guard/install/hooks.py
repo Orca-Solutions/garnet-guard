@@ -15,7 +15,11 @@ stdout and always exits 0 (diagnostics go to stderr):
   which has no ``ask`` and lets a call through when a hook fails; on Claude
   Code the same text goes in ``additionalContext``, since an ``ask`` reason
   is shown only to the user. uvx, uv tool, ``uv run --with`` and poetry
-  install packages Garnet can't see, so they are can't check too;
+  install packages Garnet can't see, so they are can't check too, and so is
+  a command that sets a loader preload (runner.LOADER_PRELOAD) or runs a pip,
+  uv or Python that is committed to the project, or inside it and outside
+  its virtual environment: the hook doesn't start those before the user
+  approves the command;
 - npm, pnpm, yarn and ``uv pip``, which Garnet doesn't check yet: a note,
   no decision;
 - ``uv run``: checked as the ``uv sync`` it starts with, and no answer when
@@ -51,6 +55,7 @@ from ..policy import PolicyError
 from ..report import escape
 from . import check, gate, pip, shellwords, uv
 from .check import Deps, Outcome
+from .runner import loader_preload
 
 DEADLINE_SECONDS = 240.0
 CONFIG_TIMEOUT_SECONDS = 300
@@ -191,12 +196,8 @@ def _one(
             answer.details.append(escape(note))
         if skip:
             return
-    committed = _committed(item)
-    if committed:
-        why = (
-            f"{item.text}: Garnet Guard doesn't run a package manager or Python that is "
-            f"committed to the repository ({committed}), before you approve the command."
-        )
+    why = _preload_why(item, env) or _committed_why(item) or _in_project_why(item, env)
+    if why:
         answer.cant.append(escape(why))
         answer.details.append(escape(why))
         return
@@ -269,6 +270,145 @@ def _uv_run_scope(item: shellwords.UvCommand) -> tuple[bool, str | None]:
             f"resolve this project without building: {what}."
         )
     return False, None
+
+
+def _preload_why(
+    item: shellwords.PipCommand | shellwords.UvCommand, env: Mapping[str, str]
+) -> str | None:
+    """Why the hook asks when the command sets a loader preload (runner.LOADER_PRELOAD).
+
+    The library it names loads into pip or uv when the command runs, and can
+    change what they install, so a check without it wouldn't describe the
+    command; the check never starts pip or uv with it either. A setting
+    already in the hook's own environment is loaded into Garnet too, so only
+    one the command sets or changes counts.
+    """
+    names = sorted(n for n, v in item.env.items() if loader_preload(n) and env.get(n) != v)
+    if not names:
+        return None
+    tool = "pip" if isinstance(item, shellwords.PipCommand) else "uv"
+    which = ", ".join(names)
+    return (
+        f"{item.text}: not checked. The command sets {which}, which makes the system's loader "
+        f"load a library of its choosing into {tool} when it starts. That library can change "
+        f"what {tool} installs, so a check without it wouldn't describe this command, and "
+        f"Garnet Guard doesn't start {tool} with it before you approve the command."
+    )
+
+
+def _committed_why(item: shellwords.PipCommand | shellwords.UvCommand) -> str | None:
+    committed = _committed(item)
+    if not committed:
+        return None
+    return (
+        f"{item.text}: Garnet Guard doesn't run a package manager or Python that is "
+        f"committed to the repository ({committed}), before you approve the command."
+    )
+
+
+def _in_project_why(
+    item: shellwords.PipCommand | shellwords.UvCommand, env: Mapping[str, str]
+) -> str | None:
+    found = project_program(item, env)
+    if not found:
+        return None
+    program, root = found
+    return (
+        f"{item.text}: not checked. {program} is inside the project ({root}) and outside its "
+        "virtual environment, so it is the project's own code, which Garnet Guard doesn't "
+        "start, or vouch for, before you approve the command."
+    )
+
+
+def _programs(item: shellwords.PipCommand | shellwords.UvCommand) -> list[str]:
+    """The package manager the command runs, and every Python the check would start."""
+    cwd = Path(item.cwd)
+    if isinstance(item, shellwords.PipCommand):
+        programs = [item.exe, item.python]
+        given = pip.plan(item.args, cwd=cwd, env=item.env).python
+        if given:
+            programs.append(check.pip_python(given, cwd))
+    else:
+        programs = [item.uv, *uv.interpreters(item.args, item.env, cwd)]
+    return [os.path.join(item.cwd, p) for p in dict.fromkeys(programs) if p]
+
+
+def project_program(
+    item: shellwords.PipCommand | shellwords.UvCommand, env: Mapping[str, str]
+) -> tuple[str, str] | None:
+    """A program the check would start that is inside the project, and the project.
+
+    The program is named as written, with its real path when that is the
+    one inside.
+
+    The project is the nearest folder at or above the working directory (and
+    uv's ``--directory`` or ``--project``) that holds ``.git``, and the
+    nearest that holds ``pyproject.toml``; not the home folder in the hook's
+    own environment ``env`` (a command can set ``HOME``). A program
+    counts when its path or its real path (symlinks followed) is in one,
+    unless that path is in the project's ``.venv`` or the active
+    ``VIRTUAL_ENV`` (a folder with a ``pyvenv.cfg``, other than the project
+    itself). Like a committed one, an untracked ``bin/uv`` or
+    ``bin/pip`` there is the project's code: the hook doesn't start it before
+    the user approves the command.
+    """
+    cwd = Path(item.cwd)
+    starts = [cwd]
+    if isinstance(item, shellwords.UvCommand):
+        try:
+            starts.append(uv.plan("lock", item.args, cwd=cwd, env=item.env).start)
+        except uv.UvError:
+            pass
+    home = env.get("HOME") or os.path.expanduser("~")
+    roots: list[Path] = []
+    for start in starts:
+        here = Path(os.path.normpath(os.path.join(item.cwd, start)))
+        for marker in (".git", "pyproject.toml"):
+            for folder in (here, *here.parents):
+                if os.path.lexists(folder / marker):
+                    if not _same(folder, home):
+                        roots.append(folder)
+                    break
+    if not roots:
+        return None
+    venvs = [root / ".venv" for root in roots]
+    active = item.env.get("VIRTUAL_ENV")
+    if active:
+        # Only a folder that is a virtual environment, and not the project
+        # itself: a command can set VIRTUAL_ENV to anything.
+        folder = Path(os.path.normpath(os.path.join(item.cwd, active)))
+        if (folder / "pyvenv.cfg").is_file() and not any(_same(folder, str(r)) for r in roots):
+            venvs.append(folder)
+    for program in _programs(item):
+        written = os.path.normpath(program)
+        for path in _forms(Path(program)):
+            root = next((r for r in roots if _within(path, r)), None)
+            if root is not None and not any(_within(path, v) for v in venvs):
+                shown = written if str(path) == written else f"{written} (a link to {path})"
+                return shown, str(root)
+    return None
+
+
+def _forms(path: Path) -> list[Path]:
+    """``path`` as written (made normal) and with symlinks followed."""
+    out = [Path(os.path.normpath(path))]
+    try:
+        out.append(path.resolve())
+    except (OSError, RuntimeError):
+        pass
+    return out
+
+
+def _within(path: Path, folder: Path) -> bool:
+    """Whether ``path`` is ``folder`` or under it, as written or with symlinks followed."""
+    return any(path.is_relative_to(f) for f in _forms(folder))
+
+
+def _same(folder: Path, other: str) -> bool:
+    try:
+        return os.path.samefile(folder, other)
+    except OSError:
+        return False
 
 
 def _committed(item: shellwords.PipCommand | shellwords.UvCommand) -> str | None:

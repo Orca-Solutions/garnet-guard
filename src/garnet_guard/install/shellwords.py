@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .gate import PM_WORD, fold, has_pm_word
+from .runner import loader_preload
 
 # What the pre-scan writes in place of characters the shell would expand,
 # so a word that held one is still known after shlex has removed the quotes.
@@ -52,6 +53,13 @@ _PYTHON = re.compile(r"^(?:(?:python|pypy)(?:\d+(?:\.\d+)?)?[tdm]?|py)(?:\.exe)?
 # Environment variables that change which package manager runs or where it
 # installs. An unknown value for one of these makes later commands unclear.
 _RELEVANT_ENV = re.compile(r"^(?:PIP_|UV_|PYTHON|VIRTUAL_ENV$|PATH$|CONDA_PREFIX$)")
+
+
+def _relevant(name: str) -> bool:
+    """Whether a variable's value matters to the check: pip's, uv's and
+    Python's settings, and the loader settings the hooks ask about."""
+    return bool(_RELEVANT_ENV.match(name)) or loader_preload(name)
+
 
 # pip's general options, before the subcommand, and whether each takes a
 # value (pip 26.2.2, main_parser's general group, aliases included). pip
@@ -125,6 +133,7 @@ class PipCommand:
     cwd: str
     env: Mapping[str, str]  # assignments in effect for this command
     text: str
+    exe: str | None = None  # the program the command runs: the pip script, or the python
 
 
 @dataclass(frozen=True)
@@ -383,7 +392,7 @@ def _simple(
     while i < len(words) and (m := _ASSIGNMENT.match(words[i])):
         name, value = m[1], m[2]
         if _expands(value):
-            if _RELEVANT_ENV.match(name) and _has_pm_word(words[i + 1 :]):
+            if _relevant(name) and _has_pm_word(words[i + 1 :]):
                 return Unclear(f"Garnet Guard can't tell the value of {name} here.", text)
         else:
             prefix[name] = _literal(value, env)
@@ -611,7 +620,7 @@ def _export(words: tuple[str, ...], state: _State) -> None:
         if not m:
             continue
         if _expands(m[2]):
-            if _RELEVANT_ENV.match(m[1]):
+            if _relevant(m[1]):
                 state.env_unknown = f"an earlier export set {m[1]} to a value Garnet can't read"
             continue
         state.env[m[1]] = _literal(m[2], state.env)
@@ -822,9 +831,9 @@ def _locate(
         return UvCommand(exe, sub or "", args[:at] + args[at + 1 :], cwd, dict(env), text)
     if _PYTHON.match(os.path.basename(prog)):
         _, pip_args = _python_module(args)
-        return PipCommand(exe, prog, pip_args, cwd, dict(env), text)
+        return PipCommand(exe, prog, pip_args, cwd, dict(env), text, exe)
     python = interpreter_for_pip(exe, path) if exe else None
-    return PipCommand(python, prog, args, cwd, dict(env), text)
+    return PipCommand(python, prog, args, cwd, dict(env), text, exe)
 
 
 # uv run's options that take a value (uv 0.11.32), besides the global ones.
