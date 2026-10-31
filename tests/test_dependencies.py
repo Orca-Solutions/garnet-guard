@@ -56,7 +56,7 @@ def test_requires_dist_skips_extras_and_keeps_markers() -> None:
         )
     )
     assert reqs == (
-        Requirement("requests", "Requests>=2.31"),
+        Requirement("requests", "Requests>=2.31", also=("requests[socks]",)),
         Requirement("tomli", 'tomli>=1; python_version < "3.11"'),
     )
 
@@ -341,9 +341,9 @@ def _c008(base: ReleaseFacts, cand: ReleaseFacts) -> Any:
 def test_young_dependency_from_a_trusted_owner_still_warns() -> None:
     # A maintainer who splits out a helper often publishes the release that
     # uses it the same day, but whoever holds a maintainer's account can do the
-    # same: the shared owner alone never lowers the finding. Only a release
-    # that was read and has no install-time hook and provenance from the
-    # trusted repository does (tests/test_dependency_releases.py).
+    # same: the shared owner alone never lowers the finding. Only releases
+    # that were read and have no install-time hook and provenance from the
+    # trusted repository do (tests/test_dependency_releases.py).
     helper = replace(_profile("helper", 0), owners=("amy",))
     base = _npm_rel("1.0", owners=("amy", "bob"))
     cand = replace(_npm_rel("1.1", Requirement("helper", "helper@^1.0.0")), dependencies=(helper,))
@@ -351,7 +351,7 @@ def test_young_dependency_from_a_trusted_owner_still_warns() -> None:
     assert f.severity == Severity.WARN
     assert "helper was first released 0 day(s) before it" in f.title
     assert "owned by amy, who also own(s) demo" in f.evidence[0].summary
-    assert "kept at warn: the release of helper that 1.1 would install wasn't read" in (
+    assert "kept at warn: the releases of helper that 1.1 could install weren't read" in (
         f.evidence[0].summary
     )
     other = replace(helper, owners=("mallory",))

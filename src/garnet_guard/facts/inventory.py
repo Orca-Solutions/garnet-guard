@@ -578,6 +578,7 @@ def declared_requirements(
         return None
     out: list[Requirement] = []
     seen: set[str] = set()
+    others: dict[str, list[str]] = {}
     for raw in msg.get_all("Requires-Dist") or []:
         line = " ".join(str(raw).split())
         if not line:
@@ -596,10 +597,11 @@ def declared_requirements(
             name = canonicalize_name(req.name)
             url = req.url
         if name in seen:
+            others.setdefault(name, []).append(line)
             continue
         seen.add(name)
         out.append(Requirement(name, line, source=url))
-    return tuple(out)
+    return tuple(replace(r, also=tuple(others[r.name])) if r.name in others else r for r in out)
 
 
 def _pyproject_entry_points(pyproject: bytes) -> set[str]:

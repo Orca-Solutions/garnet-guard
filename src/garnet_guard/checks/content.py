@@ -9,12 +9,18 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import datetime
 
+from packaging.requirements import InvalidRequirement
+from packaging.requirements import Requirement as _PyRequirement
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.tags import Tag
+from packaging.utils import InvalidWheelFilename, parse_wheel_filename
+from packaging.version import InvalidVersion
 
 from ..models import (
     ArtifactFacts,
     CallSite,
     Change,
+    DependencyInstalls,
     DependencyProfile,
     DependencyRelease,
     EntryPoint,
@@ -868,10 +874,13 @@ def _young(p: DependencyProfile, uploaded: datetime | None) -> int | None:
 def owned_young_dependencies(
     base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> tuple[Requirement, ...]:
-    """The new registry dependencies whose release the engine reads for
+    """The new registry dependencies whose releases the engine reads for
     GRN-C008: first released less than ``YOUNG_DEPENDENCY_DAYS`` before the
     candidate, with an owner the trusted package has too. Needs the profiles
-    in ``cand.dependencies``. In declaration order, one per package."""
+    in ``cand.dependencies``. One declared more than once or under an
+    environment marker isn't read: which release installs then depends on
+    the machine, so it keeps the rule's severity (``_not_one_range``). In
+    declaration order, one per package."""
     if base is None:
         return ()
     new, _, _, _ = _dependency_changes(base, cand)
@@ -883,14 +892,38 @@ def owned_young_dependencies(
         p = profiles.get(r.package)
         if r.source is not None or p is None or not p.on_registry or r.package in out:
             continue
+        if _not_one_range(r, cand.ecosystem) is not None:
+            continue
         if _young(p, uploaded) is not None and trusted_owners & set(p.owners):
             out[r.package] = r
     return tuple(out.values())
 
 
+def _not_one_range(r: Requirement, ecosystem: str) -> str | None:
+    """Why a requirement doesn't name one range of releases, or None."""
+    if r.also:
+        others = "; ".join(_clip(a, 80) for a in r.also[:3])
+        return f"{r.name} is declared more than once ({others} as well), so which release installs depends on how they combine"
+    if ecosystem != "pypi":
+        return None
+    try:
+        marker = _PyRequirement(r.spec).marker
+    except InvalidRequirement:
+        return f"Garnet can't read the requirement {_clip(r.spec, 80)}"
+    if marker is not None:
+        return f"the requirement has an environment marker ({_clip(str(marker), 80)}), so whether and which release installs depends on the machine"
+    return None
+
+
+# GitHub repository ids are unique on github.com only; a GitLab project id
+# can carry the same number.
+_GITHUB = "github.com/"
+
+
 def _verified_repos(rel: ReleaseFacts) -> tuple[set[str], set[str], bool]:
-    """The repositories (lowercased) and GitHub repository ids of a release's
-    verified attestations, and whether any file's provenance is unknown."""
+    """The repositories (lowercased) and github.com repository ids of a
+    release's verified attestations, and whether any file's provenance is
+    unknown."""
     repos: set[str] = set()
     ids: set[str] = set()
     unknown = False
@@ -900,9 +933,20 @@ def _verified_repos(rel: ReleaseFacts) -> tuple[set[str], set[str], bool]:
             unknown = True
         elif p.verified and p.repository:
             repos.add(p.repository.lower())
-            if p.repository_id:
+            if p.repository_id and p.repository.lower().startswith(_GITHUB):
                 ids.add(p.repository_id)
     return repos, ids, unknown
+
+
+def _same_repo(p: FileProvenance, repos: set[str], ids: set[str]) -> bool:
+    """Whether a verified attestation names one of the trusted repositories,
+    by name or, on github.com, by repository id (a rename keeps the id)."""
+    repo = (p.repository or "").lower()
+    if not repo:
+        return False
+    if repo in repos:
+        return True
+    return repo.startswith(_GITHUB) and p.repository_id is not None and p.repository_id in ids
 
 
 def _scripts_said(scripts: tuple[tuple[str, str], ...]) -> str:
@@ -910,6 +954,35 @@ def _scripts_said(scripts: tuple[tuple[str, str], ...]) -> str:
         f"{'an' if n[0] in 'aeiou' else 'a'} {n} script ({_clip(cmd, 80)})" for n, cmd in scripts
     ]
     return " and ".join(said)
+
+
+# The Pythons a wheel has to install on for GRN-C008 to call a release free
+# of build code: CPython releases with support on 2026-10-31.
+CURRENT_PYTHONS = ("3.11", "3.12", "3.13", "3.14", "3.15")
+_PURE = Tag("py3", "none", "any")
+
+
+def _pure_wheel(filename: str) -> bool:
+    """A wheel pip installs on every platform with Python 3: tagged
+    ``py3-none-any`` (``py2.py3-none-any`` includes it)."""
+    try:
+        _, _, _, tags = parse_wheel_filename(filename)
+    except (InvalidWheelFilename, InvalidVersion):
+        return False
+    return _PURE in tags
+
+
+def _leaves_out(requires_python: str) -> str | None:
+    """The first current Python a Requires-Python value leaves out, or the
+    value itself when it can't be read."""
+    try:
+        spec = SpecifierSet(requires_python)
+    except InvalidSpecifier:
+        return requires_python
+    for py in CURRENT_PYTHONS:
+        if not spec.contains(f"{py}.0", prereleases=True):
+            return py
+    return None
 
 
 def _hooks(rel: DependencyRelease, ecosystem: str) -> list[str]:
@@ -922,30 +995,37 @@ def _hooks(rel: DependencyRelease, ecosystem: str) -> list[str]:
         if rel.binding_gyp and not rel.gypfile_off and not named & {"install", "preinstall"}:
             out.append("has a binding.gyp, for which npm runs node-gyp rebuild")
         return out
-    wheels = [f for f in rel.files if f.endswith(".whl")]
     sdist = any(not f.endswith(".whl") for f in rel.files)
     if not rel.files:
         out.append("has no files on PyPI")
-    elif not wheels:
-        out.append("has no wheel, so pip builds it from the sdist and runs its build code")
-    elif sdist and not any(f[: -len(".whl")].endswith("-none-any") for f in wheels):
-        out.append("has wheels only for some platforms, so pip builds the sdist where none fits")
-    out += [
-        f"installs the .pth file {_clip(p, 120)}, which Python reads at every start"
-        for p in rel.pth_files
-    ]
+    elif not any(_pure_wheel(f) for f in rel.files):
+        out.append(
+            "has no py3-none-any wheel, so pip builds the sdist and runs its build code where no wheel fits"
+            if sdist
+            else "has no py3-none-any wheel, so where no wheel fits pip installs another version"
+        )
+    for rp in rel.requires_python:
+        left_out = _leaves_out(rp)
+        if left_out is not None:
+            out.append(
+                f"requires Python {_clip(rp, 40)}, so pip on Python {left_out} installs another version"
+                if left_out != rp
+                else f"has a Requires-Python Garnet can't read ({_clip(rp, 40)})"
+            )
+    for path in rel.startup_files:
+        base = path.rsplit("/", 1)[-1].lower()
+        does = "reads" if base.endswith(".pth") else "runs"
+        out.append(f"installs {_clip(path, 120)}, which Python {does} at every start")
     return out
 
 
-def _provenance_from(base: ReleaseFacts, rel: DependencyRelease) -> tuple[str | None, list[str]]:
+def _provenance_from(
+    base: ReleaseFacts, rel: DependencyRelease, repos: set[str], ids: set[str]
+) -> tuple[str | None, list[str]]:
     """The repository the release is attested from when every file has
-    verified provenance from the trusted release's repository, else why not."""
-    repos, ids, unknown = _verified_repos(base)
+    verified provenance from one of the trusted release's repositories,
+    else why not."""
     what = f"{rel.name} {rel.version}"
-    if not repos:
-        if unknown:
-            return None, [f"Garnet couldn't verify the provenance of {base.package} {base.version}"]
-        return None, [f"{base.package} {base.version} has no verified provenance to compare with"]
     provs: tuple[FileProvenance, ...] = rel.provenance
     if not provs or len(provs) != len(rel.files):
         return None, [f"Garnet couldn't look up the provenance of every file of {what}"]
@@ -954,11 +1034,9 @@ def _provenance_from(base: ReleaseFacts, rel: DependencyRelease) -> tuple[str | 
     failed = [p for p in provs if p.present and p.verification_ran and not p.verified]
     elsewhere = sorted(
         {
-            p.repository or "an unnamed repository"
+            p.repository or "no repository"
             for p in provs
-            if p.verified
-            and (p.repository or "").lower() not in repos
-            and not (p.repository_id and p.repository_id in ids)
+            if p.verified and not _same_repo(p, repos, ids)
         }
     )
     why: list[str] = []
@@ -978,39 +1056,74 @@ def _provenance_from(base: ReleaseFacts, rel: DependencyRelease) -> tuple[str | 
     if elsewhere:
         trusted = " or ".join(sorted(repos))
         why.append(
-            f"{what} has provenance from {', '.join(elsewhere)}, not {trusted} like {base.package} {base.version}"
+            f"{what} has provenance naming {', '.join(elsewhere)}, not {trusted} like {base.package} {base.version}"
         )
     if why:
         return None, why
     return provs[0].repository, []
 
 
+def _versions_said(installs: DependencyInstalls, cand: ReleaseFacts) -> str:
+    versions = ", ".join(r.version for r in installs.releases)
+    if installs.pinned:
+        return f"{installs.name} {versions}, as the lockfile pins it"
+    plural = "every version" if len(installs.releases) > 1 else "the only version"
+    return (
+        f"{installs.name} {versions}, {plural} {_clip(installs.spec, 80)} could install "
+        f"from {cand.version}'s upload until the lookup"
+    )
+
+
 def _same_owner_verdict(
-    base: ReleaseFacts, cand: ReleaseFacts, r: Requirement, rel: DependencyRelease | None
+    base: ReleaseFacts, cand: ReleaseFacts, r: Requirement, installs: DependencyInstalls | None
 ) -> tuple[bool, str]:
     """Whether a young dependency with a shared owner drops to info, and the
-    evidence that says why or why not."""
-    if rel is None:
+    evidence that says why or why not. Every release a user could install
+    has to be read and come out clean."""
+    not_one = _not_one_range(r, cand.ecosystem)
+    if not_one is not None:
+        return False, f"kept at warn: {not_one}"
+    if installs is None:
         return False, (
-            f"kept at warn: the release of {r.package} that {cand.version} would install "
-            "wasn't read"
+            f"kept at warn: the releases of {r.package} that {cand.version} could install "
+            "weren't read"
         )
-    if rel.version is None:
-        return False, f"kept at warn: {_clip(rel.problem or 'no version to read', 160)}"
-    what = f"{rel.name} {rel.version}"
-    hooks = [f"{what} {h}" for h in _hooks(rel, cand.ecosystem)]
-    repo, why = _provenance_from(base, rel)
-    # A read that stopped part way leaves the rest unknown: it never counts as clean.
-    stopped = [_clip(rel.problem, 160)] if rel.problem is not None else []
-    reasons = hooks + why + stopped
-    if reasons or repo is None:
-        return False, f"kept at warn: {', and '.join(reasons)}"
+    reasons: list[str] = []
+    repos, ids, unknown = _verified_repos(base)
+    if not repos:
+        reasons.append(
+            f"Garnet couldn't verify the provenance of {base.package} {base.version}"
+            if unknown
+            else f"{base.package} {base.version} has no verified provenance to compare with"
+        )
+    if installs.problem is not None:
+        reasons.append(_clip(installs.problem, 200))
+    elif not installs.releases:
+        reasons.append(f"no release of {installs.name} to read")
+    attested: list[str | None] = []
+    for rel in installs.releases:
+        what = f"{rel.name} {rel.version}"
+        reasons += [f"{what} {h}" for h in _hooks(rel, cand.ecosystem)]
+        if repos:
+            repo, why = _provenance_from(base, rel, repos, ids)
+            reasons += why
+            attested.append(repo)
+        # A read that stopped part way leaves the rest unknown: never clean.
+        if rel.problem is not None:
+            reasons.append(_clip(rel.problem, 160))
+    if not reasons and (not attested or any(a is None for a in attested)):
+        reasons.append(f"the provenance of {installs.name} names no repository")
+    if reasons:
+        return False, f"kept at warn: {', and '.join(dict.fromkeys(reasons))}"
     clean = (
-        f"no install scripts in {what}"
+        "no install scripts"
         if cand.ecosystem == "npm"
-        else f"{what} installs from a wheel with no .pth file"
+        else "a py3-none-any wheel, no file that runs at start-up"
     )
-    return True, f"info: same owner, {clean}, provenance from {repo}"
+    return True, (
+        f"info: same owner, {clean}, provenance from {attested[0]}, in "
+        f"{_versions_said(installs, cand)}"
+    )
 
 
 def _installs(r: Requirement) -> str:
@@ -1031,8 +1144,8 @@ def new_dependency(
     registry, one the registry doesn't have, and one whose first release came
     within ``YOUNG_DEPENDENCY_DAYS`` of this release (or after it). A young
     dependency that an account owning the trusted package owns too drops to
-    info only when the release the candidate would install
-    (``cand.dependency_releases``) has no install-time hook and every file has
+    info only when every release a user of the candidate could install
+    (``cand.dependency_installs``) has no install-time hook and every file has
     verified provenance from a repository the trusted release is attested
     from: whoever holds a maintainer's account could publish both, but an
     attestation from the trusted package's repository also takes access to
@@ -1048,7 +1161,7 @@ def new_dependency(
     registry = _REGISTRY.get(change.ecosystem, "the registry")
     page = _REGISTRY_PAGE.get(change.ecosystem, "{}")
     profiles = {p.name: p for p in cand.dependencies}
-    releases = {d.name: d for d in cand.dependency_releases}
+    installs = {d.name: d for d in cand.dependency_installs}
     trusted_owners = set(base.owners)
     uploaded = _uploaded(cand)
     evidence: list[Evidence] = []
@@ -1126,7 +1239,7 @@ def new_dependency(
             parts.append(f"owned by {', '.join(shared[:3])}, who also own(s) {base.package}")
         lowered = False
         if young is not None and shared:
-            lowered, said = _same_owner_verdict(base, cand, r, releases.get(r.package))
+            lowered, said = _same_owner_verdict(base, cand, r, installs.get(r.package))
             parts.append(said)
         if young is not None and not lowered:
             since = (

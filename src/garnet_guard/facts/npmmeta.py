@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..models import FactError, FileEntry, JsUse, Limits, Requirement
 from ..safe_archive import ArchiveError, LimitExceeded, open_archive
@@ -101,19 +101,26 @@ def declared_dependencies(package_json: bytes) -> tuple[Requirement, ...]:
     )
     out: list[Requirement] = []
     seen: set[str] = set()
+    others: dict[str, list[str]] = {}
     for table, label in _DEPENDENCY_TABLES:
         deps = doc.get(table)
         if not isinstance(deps, dict):
             continue
         for name, spec in deps.items():
-            if not isinstance(name, str) or name in seen:
+            if not isinstance(name, str):
                 continue
             if table == "peerDependencies" and name in optional_peers:
                 continue
-            seen.add(name)
             rng = spec if isinstance(spec, str) else json.dumps(spec, sort_keys=True)
-            out.append(_dependency(name, rng.strip(), label))
-    return tuple(out)
+            req = _dependency(name, rng.strip(), label)
+            if name in seen:
+                # npm lets optionalDependencies override dependencies, and
+                # installs peers too: the same name twice is a second range.
+                others.setdefault(name, []).append(req.spec)
+                continue
+            seen.add(name)
+            out.append(req)
+    return tuple(replace(r, also=tuple(others[r.name])) if r.name in others else r for r in out)
 
 
 def inspect_tarball(filename: str, data: bytes, limits: Limits) -> NpmInspection:
@@ -186,11 +193,20 @@ def install_hooks(filename: str, data: bytes, limits: Limits) -> InstallHooks:
     """Read a tarball's root package.json and look for a root binding.gyp.
 
     Lists the archive and reads only ``package.json``; nothing is unpacked.
+    npm strips the first folder of every entry, so a tarball whose entries
+    don't all sit under one top-level folder could install another
+    ``package.json`` than the one read here; it isn't read. ``binding.gyp``
+    is matched in any case, as a case-insensitive file system finds it.
     """
     try:
         reader = open_archive(data, filename, limits)
         entries = reader.entries()
-        prefix = _strip_prefix([e.path for e in entries])
+        tops = {e.path.split("/", 1)[0] for e in entries}
+        if len(tops) != 1 or not all("/" in e.path for e in entries):
+            return InstallHooks(
+                problem=f"{filename}'s files don't all sit under one top-level folder"
+            )
+        prefix = next(iter(tops)) + "/"
         paths = {e.path[len(prefix) :]: e.path for e in entries}
         if "package.json" not in paths:
             return InstallHooks(problem=f"{filename} has no package.json")
@@ -205,7 +221,7 @@ def install_hooks(filename: str, data: bytes, limits: Limits) -> InstallHooks:
         return InstallHooks(problem=f"{filename}: package.json isn't a JSON object")
     return InstallHooks(
         scripts=install_scripts(body),
-        binding_gyp="binding.gyp" in paths,
+        binding_gyp=any(p.lower() == "binding.gyp" for p in paths),
         gypfile_off=doc.get("gypfile") is False,
     )
 

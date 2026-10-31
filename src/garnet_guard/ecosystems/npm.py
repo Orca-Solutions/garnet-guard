@@ -15,7 +15,9 @@ from urllib.parse import quote, urlsplit
 
 from ..facts.npmmeta import INSTALL_SCRIPTS, inspect_tarball, install_hooks, install_scripts
 from ..models import (
+    MAX_DEPENDENCY_VERSIONS,
     ArtifactFacts,
+    DependencyInstalls,
     DependencyProfile,
     DependencyRelease,
     FactError,
@@ -485,34 +487,72 @@ def _script_order(script: tuple[str, str]) -> tuple[int, str]:
     return (INSTALL_SCRIPTS.index(script[0]), script[1])
 
 
-def dependency_release(ctx: FetchContext, req: Requirement, at: datetime) -> DependencyRelease:
-    """The release of a new dependency that a version published at ``at``
-    would install (GRN-C008): the newest version that satisfies the range and
-    was published by then. Reads its provenance (verified with Sigstore) and
-    its tarball's install scripts and ``binding.gyp``, from the tarball and
-    from the registry's copy of package.json. Raises ``NetError`` when a
-    request fails; anything else that stops the read is in ``problem``.
+def _installable(
+    rng: str, versions: dict[str, Any], times: dict[str, Any], at: datetime
+) -> tuple[list[str], str | None]:
+    """The versions a range could install from ``at`` until now: the newest
+    match published by ``at``, then every match published after it. With
+    the reason when there are none. Raises ``ValueError`` for a range it
+    can't read."""
+    when = {v: t for v in versions if (t := _parse_time(times.get(v))) is not None}
+    matches = npm_range.matching(rng, when)
+    by_then = [v for v in matches if when[v] <= at]
+    if not by_then:
+        return [], f"no version matching {rng or '*'} was published by {at:%Y-%m-%d %H:%M} UTC"
+    return [by_then[-1], *(v for v in matches if when[v] > at)], None
+
+
+def dependency_installs(
+    ctx: FetchContext, req: Requirement, at: datetime, pinned: tuple[str, ...] = ()
+) -> DependencyInstalls:
+    """The releases of a new dependency that a user of a version published at
+    ``at`` could install (GRN-C008), each read with ``_dependency_release``.
+
+    ``pinned`` are the versions a lockfile pins, which are read instead of
+    the range's. Without a pin, that is the newest version satisfying the
+    range by ``at`` and every satisfying version published since, up to
+    ``MAX_DEPENDENCY_VERSIONS``. Raises ``NetError`` when a request fails;
+    anything else that stops the read is in ``problem``.
     """
     name = req.package
     rng = requirement_range(req)
-    out = DependencyRelease(name, req.spec, None)
+    out = DependencyInstalls(name, req.spec, pinned=bool(pinned))
     pack = packument(ctx, name)
     if pack is None:
         return replace(out, problem=f"npm has no package {name}")
     times, versions = _table(pack, "time"), _table(pack, "versions")
-    published = [v for v in versions if (t := _parse_time(times.get(v))) is not None and t <= at]
-    try:
-        version = npm_range.best_match(rng, published)
-    except ValueError:
-        return replace(out, problem=f"Garnet can't read the range {rng!r}")
-    if version is None:
+    if pinned:
+        wanted = sorted(set(pinned))
+        gone = [v for v in wanted if v not in versions]
+        if gone:
+            return replace(
+                out, problem=f"the lockfile pins {name} {gone[0]}, which npm doesn't list"
+            )
+    else:
+        try:
+            wanted, why = _installable(rng, versions, times, at)
+        except ValueError:
+            return replace(out, problem=f"Garnet can't read the range {rng!r}")
+        if why is not None:
+            return replace(out, problem=why)
+    if len(wanted) > MAX_DEPENDENCY_VERSIONS:
         return replace(
             out,
-            problem=f"no version matching {rng or '*'} was published by {at:%Y-%m-%d %H:%M} UTC",
+            problem=f"{len(wanted)} versions of {name} could install ({wanted[0]} to "
+            f"{wanted[-1]}); Garnet reads a young dependency's releases only up to "
+            f"{MAX_DEPENDENCY_VERSIONS}",
         )
+    return replace(
+        out, releases=tuple(_dependency_release(ctx, name, v, versions[v]) for v in wanted)
+    )
+
+
+def _dependency_release(ctx: FetchContext, name: str, version: str, doc: Any) -> DependencyRelease:
+    """One release of a new dependency: its provenance (verified with
+    Sigstore), and the install scripts and ``binding.gyp`` of its tarball and
+    of the registry's copy of package.json. Raises ``NetError``."""
     filename = tarball_name(name, version)
-    out = replace(out, version=version, files=(filename,))
-    doc = versions[version]
+    out = DependencyRelease(name, version, files=(filename,))
     if not isinstance(doc, dict):
         return replace(out, problem=f"npm's record of {name} {version} is malformed")
     dist = _table(doc, "dist")

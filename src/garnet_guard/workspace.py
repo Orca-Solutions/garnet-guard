@@ -132,6 +132,16 @@ def changes_for(
     return changes, unchecked
 
 
+def pinned_versions(head_name: str, head: bytes) -> dict[tuple[str, str], tuple[str, ...]]:
+    """The versions a lockfile pins from PyPI, by ("pypi", normalized name).
+    GRN-C008 reads these for a young dependency instead of its whole range."""
+    out: dict[tuple[str, str], set[str]] = {}
+    for p in parse(head_name, head):
+        if p.source == "pypi" and p.version:
+            out.setdefault(("pypi", p.package), set()).add(p.version)
+    return {k: tuple(sorted(v)) for k, v in out.items()}
+
+
 def dedupe(changes: list[Change]) -> list[Change]:
     """One change per (package, baseline, candidate), keeping the first lockfile."""
     seen: dict[tuple[str, str | None, str], Change] = {}

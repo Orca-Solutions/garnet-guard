@@ -26,7 +26,15 @@ from .policy import (
 )
 from .report import escape, to_json, to_text
 from .sarif import to_sarif
-from .workspace import Unchecked, changes_for, dedupe, discover, git_show, plain_file
+from .workspace import (
+    Unchecked,
+    changes_for,
+    dedupe,
+    discover,
+    git_show,
+    pinned_versions,
+    plain_file,
+)
 
 _FAIL_ON = {"warn": Severity.WARN, "block": Severity.BLOCK, "never": Severity.OFF}
 
@@ -223,6 +231,7 @@ def _check(args: argparse.Namespace) -> int:
 
     changes: list[Change] = []
     unchecked: list[Unchecked] = []
+    pins: dict[tuple[str, str], tuple[str, ...]] = {}
     for head in heads:
         if not plain_file(head, cwd):
             if head.is_symlink() or head.exists():
@@ -230,12 +239,15 @@ def _check(args: argparse.Namespace) -> int:
             raise UsageError(f"no such lockfile: {head}")
         base = Path(args.base).read_bytes() if args.base else git_show(args.git_base, head, cwd=cwd)
         name = os.path.relpath(head, cwd) if head.is_absolute() else head.as_posix()
-        found, skipped = changes_for(name, head.read_bytes(), base)
+        body = head.read_bytes()
+        found, skipped = changes_for(name, body, base)
         changes += found
         unchecked += skipped
+        for key, versions in pinned_versions(name, body).items():
+            pins[key] = tuple(sorted(set(pins.get(key, ())) | set(versions)))
 
     token = os.environ.get(args.github_token_env) or None
-    options = Options(github_token=token, today=today)
+    options = Options(github_token=token, today=today, pins=pins)
     results = evaluate(dedupe(changes), policy=policy, options=options)
     results += [
         unchecked_result(u.change, u.rule_id, u.detail, policy=policy, today=today)

@@ -18,8 +18,10 @@ from packaging.version import InvalidVersion, Version
 from ..facts.inventory import file_reader, inspect_artifact, site_path, wheel_files, wheel_own
 from ..facts.pyindex import sensitive_calls
 from ..models import (
+    MAX_DEPENDENCY_VERSIONS,
     ArtifactFacts,
     CallSite,
+    DependencyInstalls,
     DependencyProfile,
     DependencyRelease,
     FactError,
@@ -727,18 +729,47 @@ def _registry_files(entries: Any) -> list[RegistryFile]:
     return sorted(out, key=lambda f: f.filename)
 
 
-def dependency_release(ctx: FetchContext, req: Requirement, at: datetime) -> DependencyRelease:
-    """The release of a new dependency that a version published at ``at``
-    would install (GRN-C008): the newest version that matches the
-    requirement's specifier and had a file on PyPI by then.
+def _requires_python(entries: Any) -> tuple[str, ...]:
+    """The distinct Requires-Python values of a release's files."""
+    found = {
+        u["requires_python"].strip()
+        for u in (entries if isinstance(entries, list) else [])
+        if isinstance(u, dict) and isinstance(u.get("requires_python"), str)
+    }
+    return tuple(sorted(v for v in found if v))
 
-    Lists its files, reads each wheel's file list (never its code) for
-    ``.pth`` files that land in site-packages, and verifies each file's PEP 740
-    provenance. Raises ``NetError`` when a request fails; anything else that
-    stops the read is in ``problem``.
+
+# Files Python runs or reads at every start when they land in site-packages.
+_STARTUP_NAMES = ("sitecustomize.py", "usercustomize.py")
+_DATA_DATA = re.compile(r"^[^/]+\.data/data/")
+
+
+def _startup_file(path: str) -> bool:
+    """A wheel file that Python reads or runs at every start once installed: a
+    .pth, sitecustomize.py or usercustomize.py in site-packages itself, or
+    anywhere under ``.data/data/``, which installs relative to the prefix
+    and can land in site-packages (``lib/python3.12/site-packages/x.pth``)."""
+    base = path.rsplit("/", 1)[-1].lower()
+    if not (base.endswith(".pth") or base in _STARTUP_NAMES):
+        return False
+    return "/" not in site_path(path) or bool(_DATA_DATA.match(path))
+
+
+def dependency_installs(
+    ctx: FetchContext, req: Requirement, at: datetime, pinned: tuple[str, ...] = ()
+) -> DependencyInstalls:
+    """The releases of a new dependency that a user of a version published at
+    ``at`` could install (GRN-C008), each read with ``_dependency_release``.
+
+    ``pinned`` are the versions a lockfile pins, which are read instead of
+    the specifier's. Without a pin, that is the newest version matching the
+    requirement's specifier with a file on PyPI by ``at``, and every matching
+    version first uploaded since, up to ``MAX_DEPENDENCY_VERSIONS``. Raises
+    ``NetError`` when a request fails; anything else that stops the read is
+    in ``problem``.
     """
     name = normalize(req.package)
-    out = DependencyRelease(name, req.spec, None)
+    out = DependencyInstalls(name, req.spec, pinned=bool(pinned))
     try:
         specifier = PackagingRequirement(req.spec).specifier
     except InvalidRequirement:
@@ -750,28 +781,68 @@ def dependency_release(ctx: FetchContext, req: Requirement, at: datetime) -> Dep
         raise NetError(f"PyPI JSON API returned HTTP {resp.status} for {name}")
     data = resp.json()
     releases = data.get("releases") if isinstance(data, dict) else None
-    available: dict[Version, str] = {}
-    for raw, entries in (releases if isinstance(releases, dict) else {}).items():
+    if not isinstance(releases, dict):
+        releases = {}
+    first: dict[Version, tuple[str, datetime]] = {}
+    for raw, entries in releases.items():
         stamps = [f.uploaded_at for f in _registry_files(entries) if f.uploaded_at is not None]
-        if not stamps or min(stamps) > at:
+        if not stamps:
             continue
         try:
-            available[Version(raw)] = raw
+            first[Version(raw)] = (raw, min(stamps))
         except InvalidVersion:
             continue
-    matching = list(specifier.filter(available))
-    if not matching:
+    if pinned:
+        # A lockfile may spell a version differently (1.0 and 1.0.0 are one release).
+        listed = {v: raw for v, (raw, _) in first.items()}
+        wanted = []
+        for pin in sorted(set(pinned)):
+            try:
+                raw = listed.get(Version(pin))
+            except InvalidVersion:
+                raw = None
+            if raw is None:
+                return replace(
+                    out, problem=f"the lockfile pins {name} {pin}, which PyPI doesn't list"
+                )
+            wanted.append(raw)
+    else:
+        by_then = list(specifier.filter(v for v, (_, t) in first.items() if t <= at))
+        if not by_then:
+            return replace(
+                out,
+                problem=f"no version matching {specifier or 'any'} had a file on PyPI by "
+                f"{at:%Y-%m-%d %H:%M} UTC",
+            )
+        later = sorted(specifier.filter(v for v, (_, t) in first.items() if t > at))
+        wanted = [first[v][0] for v in [max(by_then), *later]]
+    if len(wanted) > MAX_DEPENDENCY_VERSIONS:
         return replace(
             out,
-            problem=f"no version matching {specifier or 'any'} had a file on PyPI by "
-            f"{at:%Y-%m-%d %H:%M} UTC",
+            problem=f"{len(wanted)} versions of {name} could install ({wanted[0]} to "
+            f"{wanted[-1]}); Garnet reads a young dependency's releases only up to "
+            f"{MAX_DEPENDENCY_VERSIONS}",
         )
-    version = available[max(matching)]
-    files = _registry_files(releases.get(version) if isinstance(releases, dict) else None)
-    out = replace(out, version=version, files=tuple(f.filename for f in files))
-    provenance = tuple(_fetch_provenance(ctx, name, version, f) for f in files)
-    out = replace(out, provenance=provenance)
+    return replace(
+        out,
+        releases=tuple(_dependency_release(ctx, name, v, releases.get(v)) for v in wanted),
+    )
 
+
+def _dependency_release(
+    ctx: FetchContext, name: str, version: str, entries: Any
+) -> DependencyRelease:
+    """One release of a new dependency: its files and their Requires-Python,
+    each wheel's file list (never its code) for files Python reads at every
+    start, and each file's PEP 740 provenance. Raises ``NetError``."""
+    files = _registry_files(entries)
+    out = DependencyRelease(
+        name,
+        version,
+        files=tuple(f.filename for f in files),
+        requires_python=_requires_python(entries),
+    )
+    out = replace(out, provenance=tuple(_fetch_provenance(ctx, name, version, f) for f in files))
     wheels = [f for f in files if f.filename.endswith(".whl")]
     if len(wheels) > MAX_DEPENDENCY_WHEELS:
         return replace(
@@ -779,22 +850,18 @@ def dependency_release(ctx: FetchContext, req: Requirement, at: datetime) -> Dep
             problem=f"{name} {version} has {len(wheels)} wheels; Garnet reads a young "
             f"dependency's wheels only up to {MAX_DEPENDENCY_WHEELS}",
         )
-    pth: list[str] = []
+    startup: list[str] = []
     for f in wheels:
         got = ctx.http.get(f.url, max_bytes=ctx.limits.max_artifact_bytes)
         if got.status != 200:
             raise NetError(f"download {f.filename}: HTTP {got.status}")
         if hashlib.sha256(got.content).hexdigest() != f.sha256.lower():
             return replace(out, problem=f"{f.filename} doesn't match PyPI's sha256")
-        entries, _, errs = wheel_files(f.filename, got.content, ctx.limits)
+        listed, _, errs = wheel_files(f.filename, got.content, ctx.limits)
         if errs:
             return replace(out, problem=errs[0].summary)
-        pth += [
-            f"{f.filename}: {e.path}"
-            for e in entries
-            if e.kind == "pth" and "/" not in site_path(e.path)
-        ]
-    return replace(out, wheels_read=tuple(f.filename for f in wheels), pth_files=tuple(pth))
+        startup += [f"{f.filename}: {e.path}" for e in listed if _startup_file(e.path)]
+    return replace(out, wheels_read=tuple(f.filename for f in wheels), startup_files=tuple(startup))
 
 
 def _unfetchable(name: str, version: str, why: str) -> ReleaseFacts:

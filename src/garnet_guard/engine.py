@@ -19,8 +19,8 @@ from .ecosystems import github, gittree, npm, pypi
 from .models import (
     Change,
     ChangeResult,
+    DependencyInstalls,
     DependencyProfile,
-    DependencyRelease,
     Evidence,
     FactError,
     Finding,
@@ -55,6 +55,10 @@ class Options:
     check_known_bad: bool = True
     # The day ignores expire against. None means today in UTC.
     today: date | None = None
+    # Versions the head lockfiles pin, by (ecosystem, normalized name).
+    # GRN-C008 reads a young dependency's pinned versions instead of every
+    # version its range allows.
+    pins: Mapping[tuple[str, str], tuple[str, ...]] = field(default_factory=dict)
 
 
 ECOSYSTEMS = ("pypi", "npm")
@@ -73,7 +77,9 @@ class Fetcher:
         )
         self._npm = npm.FetchContext(http=self.http, limits=options.limits, tags=tags)
         self._profiles: dict[tuple[str, str], DependencyProfile] = {}
-        self._dep_releases: dict[tuple[str, str, str, datetime], DependencyRelease] = {}
+        self._dep_installs: dict[
+            tuple[str, str, str, datetime, tuple[str, ...]], DependencyInstalls
+        ] = {}
         self._profiles_lock = threading.Lock()
 
     def __enter__(self) -> Fetcher:
@@ -115,37 +121,40 @@ class Fetcher:
                 self._profiles[key] = hit
         return hit
 
-    def dependency_release(
-        self, ecosystem: str, req: Requirement, at: datetime
-    ) -> DependencyRelease:
-        """The release of a new dependency that a version published at ``at``
-        would install, read once per run. Raises ``NetError``."""
-        key = (ecosystem, req.package, req.spec, at)
+    def dependency_installs(
+        self, ecosystem: str, req: Requirement, at: datetime, pinned: tuple[str, ...] = ()
+    ) -> DependencyInstalls:
+        """The releases of a new dependency that a user of a version published
+        at ``at`` could install, read once per run. Raises ``NetError``."""
+        key = (ecosystem, req.package, req.spec, at, pinned)
         with self._profiles_lock:
-            hit = self._dep_releases.get(key)
+            hit = self._dep_installs.get(key)
         if hit is None:
             if ecosystem == "npm":
-                hit = npm.dependency_release(self._npm, req, at)
+                hit = npm.dependency_installs(self._npm, req, at, pinned)
             else:
-                hit = pypi.dependency_release(self._pypi, req, at)
+                hit = pypi.dependency_installs(self._pypi, req, at, pinned)
             with self._profiles_lock:
-                self._dep_releases[key] = hit
+                self._dep_installs[key] = hit
         return hit
 
 
 def with_dependency_profiles(
-    fetcher: Fetcher, base: ReleaseFacts | None, cand: ReleaseFacts
+    fetcher: Fetcher,
+    base: ReleaseFacts | None,
+    cand: ReleaseFacts,
+    pins: Mapping[tuple[str, str], tuple[str, ...]] | None = None,
 ) -> ReleaseFacts:
     """The candidate with a registry profile for each dependency the baseline
     didn't declare (GRN-C008). A lookup that fails is a GRN-E001 on the
     candidate naming GRN-C008, so the rule never passes a name it couldn't see.
     Profiles the facts already carry (an incident replay) are kept. Then reads
-    the releases ``with_dependency_releases`` needs.
+    the releases ``with_dependency_installs`` needs.
     """
     known = {p.name for p in cand.dependencies}
     names = [n for n in new_requirement_names(base, cand) if n not in known]
     if not names:
-        return with_dependency_releases(fetcher, base, cand)
+        return with_dependency_installs(fetcher, base, cand, pins)
     profiles: list[DependencyProfile] = []
     errors: list[FactError] = []
     for name in names:
@@ -162,7 +171,7 @@ def with_dependency_profiles(
         dependencies=cand.dependencies + tuple(profiles),
         errors=cand.errors + tuple(errors),
     )
-    return with_dependency_releases(fetcher, base, cand)
+    return with_dependency_installs(fetcher, base, cand, pins)
 
 
 def candidate_upload(cand: ReleaseFacts) -> datetime | None:
@@ -171,36 +180,46 @@ def candidate_upload(cand: ReleaseFacts) -> datetime | None:
     return min(stamps) if stamps else None
 
 
-def with_dependency_releases(
-    fetcher: Fetcher, base: ReleaseFacts | None, cand: ReleaseFacts
+def install_lookup_error(err: Exception, package: str, version: str) -> FactError:
+    """GRN-E001 for a dependency's releases Garnet couldn't read. A response it
+    couldn't parse counts the same as one that never came."""
+    why = str(err) if isinstance(err, NetError) else f"unreadable response ({type(err).__name__})"
+    return FactError(
+        "GRN-E001",
+        f"releases of dependency {package} that {version} could install: {why}",
+        ("GRN-C008",),
+    )
+
+
+def with_dependency_installs(
+    fetcher: Fetcher,
+    base: ReleaseFacts | None,
+    cand: ReleaseFacts,
+    pins: Mapping[tuple[str, str], tuple[str, ...]] | None = None,
 ) -> ReleaseFacts:
-    """The candidate with the release each young dependency that shares an
-    owner with the trusted package would install (GRN-C008), read after the
-    profiles. A read that fails is a GRN-E001 naming GRN-C008, and the rule
-    keeps its severity for that dependency. Releases the facts already carry
-    are kept.
+    """The candidate with the releases each young dependency that shares an
+    owner with the trusted package could install (GRN-C008), read after the
+    profiles: the versions ``pins`` (the head lockfiles) gives for it, else
+    every version its range allows from the candidate's upload until now. A
+    read that fails is a GRN-E001 naming GRN-C008, and the rule keeps its
+    severity for that dependency. Releases the facts already carry are kept.
     """
     at = candidate_upload(cand)
-    known = {d.name for d in cand.dependency_releases}
+    known = {d.name for d in cand.dependency_installs}
     wanted = [r for r in owned_young_dependencies(base, cand) if r.package not in known]
     if at is None or not wanted:
         return cand
-    got: list[DependencyRelease] = []
+    got: list[DependencyInstalls] = []
     errors: list[FactError] = []
     for r in wanted:
+        pinned = (pins or {}).get((cand.ecosystem, normalize(cand.ecosystem, r.package)), ())
         try:
-            got.append(fetcher.dependency_release(cand.ecosystem, r, at))
-        except NetError as err:
-            errors.append(
-                FactError(
-                    "GRN-E001",
-                    f"release of dependency {r.package} that {cand.version} would install: {err}",
-                    ("GRN-C008",),
-                )
-            )
+            got.append(fetcher.dependency_installs(cand.ecosystem, r, at, pinned))
+        except (NetError, ValueError, TypeError, KeyError, AttributeError) as err:
+            errors.append(install_lookup_error(err, r.package, cand.version))
     return replace(
         cand,
-        dependency_releases=cand.dependency_releases + tuple(got),
+        dependency_installs=cand.dependency_installs + tuple(got),
         errors=cand.errors + tuple(errors),
     )
 
@@ -434,7 +453,7 @@ def evaluate(
                     run_checks(
                         c,
                         b,
-                        with_dependency_profiles(fetcher, b, cand.result()),
+                        with_dependency_profiles(fetcher, b, cand.result(), opts.pins),
                         policy=policy,
                         today=opts.today,
                     )

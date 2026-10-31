@@ -174,20 +174,19 @@ def _satisfies(v: SemVer, cmps: list[_Cmp]) -> bool:
     return any(c.v.pre and c.v.core == v.core for c in cmps)
 
 
-def best_match(rng: str, versions: Iterable[str]) -> str | None:
-    """The highest of ``versions`` that satisfies ``rng``, or None.
+def matching(rng: str, versions: Iterable[str]) -> list[str]:
+    """The ``versions`` that satisfy ``rng``, lowest first.
 
-    ``latest`` counts as ``*``: of the versions given, the newest release.
-    Versions that aren't semver are skipped. Raises ``ValueError`` for a
-    range it can't read (another dist-tag, for one).
+    ``latest`` counts as ``*``. Versions that aren't semver are skipped.
+    Raises ``ValueError`` for a range it can't read (another dist-tag, for one).
     """
     text = rng.strip()
     sets = _sets("*" if text == "latest" else text)
-    best: tuple[SemVer, str] | None = None
-    for raw in versions:
-        v = parse(raw)
-        if v is None or not any(_satisfies(v, s) for s in sets):
-            continue
-        if best is None or v > best[0]:
-            best = (v, raw)
-    return best[1] if best else None
+    found = [(v, raw) for raw in versions if (v := parse(raw)) is not None]
+    return [raw for v, raw in sorted(found) if any(_satisfies(v, s) for s in sets)]
+
+
+def best_match(rng: str, versions: Iterable[str]) -> str | None:
+    """The highest of ``versions`` that satisfies ``rng``, or None (see ``matching``)."""
+    found = matching(rng, versions)
+    return found[-1] if found else None

@@ -36,12 +36,12 @@ from packaging.version import InvalidVersion, Version
 from garnet_guard import __version__, models
 from garnet_guard.checks.content import new_requirement_names, owned_young_dependencies
 from garnet_guard.ecosystems import github, gittree, npm, pypi
-from garnet_guard.engine import candidate_upload, run_checks
+from garnet_guard.engine import candidate_upload, install_lookup_error, run_checks
 from garnet_guard.models import (
     Change,
     ChangeResult,
+    DependencyInstalls,
     DependencyProfile,
-    DependencyRelease,
     FactError,
     Limits,
     ReleaseFacts,
@@ -254,43 +254,47 @@ class ProfileCache:
         tmp.replace(p)
 
 
-class DependencyReleaseCache:
+class DependencyInstallsCache:
     """Releases of young dependencies with a shared owner (GRN-C008), one JSON
-    file per (requirement, candidate upload time), cached like the profiles."""
+    file per (requirement, candidate upload time), cached like the profiles.
+    The releases include every matching version up to the first lookup, so a
+    rerun sees that day's answer."""
 
     def __init__(self, root: Path) -> None:
-        self.root = root / f"v{CACHE_FORMAT}-garnet-{__version__}" / "dependency-releases"
+        self.root = root / f"v{CACHE_FORMAT}-garnet-{__version__}" / "dependency-installs"
 
     def _path(self, ecosystem: str, req: Requirement, at: datetime) -> Path:
         key = json.dumps([req.package, req.spec, at.isoformat()]).encode()
         return self.root / ecosystem / f"{hashlib.sha256(key).hexdigest()[:32]}.json"
 
-    def get(self, ecosystem: str, req: Requirement, at: datetime) -> DependencyRelease | None:
+    def get(self, ecosystem: str, req: Requirement, at: datetime) -> DependencyInstalls | None:
         p = self._path(ecosystem, req, at)
         if not p.exists():
             return None
-        rel: DependencyRelease = decode(DependencyRelease, json.loads(p.read_text()))
-        return rel
+        found: DependencyInstalls = decode(DependencyInstalls, json.loads(p.read_text()))
+        return found
 
-    def put(self, ecosystem: str, req: Requirement, at: datetime, rel: DependencyRelease) -> None:
+    def put(
+        self, ecosystem: str, req: Requirement, at: datetime, found: DependencyInstalls
+    ) -> None:
         p = self._path(ecosystem, req, at)
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(encode(rel), sort_keys=True))
+        tmp.write_text(json.dumps(encode(found), sort_keys=True))
         tmp.replace(p)
 
 
-def with_dependency_releases(
-    ecosystem: str, base: ReleaseFacts, cand: ReleaseFacts, cache: DependencyReleaseCache
+def with_dependency_installs(
+    ecosystem: str, base: ReleaseFacts, cand: ReleaseFacts, cache: DependencyInstallsCache
 ) -> ReleaseFacts:
-    """The candidate with the release each young dependency with a shared
-    owner would install, as ``engine.with_dependency_releases`` does, cached
-    on disk."""
+    """The candidate with the releases each young dependency with a shared
+    owner could install, as ``engine.with_dependency_installs`` does without
+    lockfile pins, cached on disk."""
     at = candidate_upload(cand)
     wanted = owned_young_dependencies(base, cand)
     if at is None or not wanted:
         return cand
-    got: list[DependencyRelease] = []
+    got: list[DependencyInstalls] = []
     errors: list[FactError] = []
     todo: list[Requirement] = []
     for r in wanted:
@@ -306,26 +310,19 @@ def with_dependency_releases(
                 try:
                     if ecosystem == "npm":
                         nctx = npm.FetchContext(http=http, limits=Limits(), tags=tags)
-                        rel = npm.dependency_release(nctx, r, at)
+                        found = npm.dependency_installs(nctx, r, at)
                     else:
                         pctx = pypi.FetchContext(
                             http=http, limits=Limits(), tags=tags, trees=gittree.TreeLookup(http)
                         )
-                        rel = pypi.dependency_release(pctx, r, at)
-                except NetError as err:
-                    errors.append(
-                        FactError(
-                            "GRN-E001",
-                            f"release of dependency {r.package} that {cand.version} would "
-                            f"install: {err}",
-                            ("GRN-C008",),
-                        )
-                    )
+                        found = pypi.dependency_installs(pctx, r, at)
+                except (NetError, ValueError, TypeError, KeyError, AttributeError) as err:
+                    errors.append(install_lookup_error(err, r.package, cand.version))
                     continue
-                cache.put(ecosystem, r, at, rel)
-                got.append(rel)
+                cache.put(ecosystem, r, at, found)
+                got.append(found)
     return dataclasses.replace(
-        cand, dependency_releases=tuple(got), errors=cand.errors + tuple(errors)
+        cand, dependency_installs=tuple(got), errors=cand.errors + tuple(errors)
     )
 
 
@@ -447,11 +444,11 @@ def run_package(
     t0 = time.monotonic()
     facts = fetch_package(ecosystem, package, versions, cache)
     profiles = ProfileCache(cache.root.parent)
-    dep_releases = DependencyReleaseCache(cache.root.parent)
+    dep_installs = DependencyInstallsCache(cache.root.parent)
     rows: list[dict[str, Any]] = []
     for old, new in zip(versions, versions[1:], strict=False):
         cand = with_profiles(ecosystem, facts[old], facts[new], profiles)
-        cand = with_dependency_releases(ecosystem, facts[old], cand, dep_releases)
+        cand = with_dependency_installs(ecosystem, facts[old], cand, dep_installs)
         result = run_checks(Change(ecosystem, package, old, new), facts[old], cand)
         findings = finding_rows(result)
         warn_rules = sorted(
