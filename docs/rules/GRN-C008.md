@@ -10,7 +10,7 @@ status: implemented
 
 | | |
 |---|---|
-| Default severity | `warn` for a dependency that is new to the registry, missing from it, or installed from outside it; `info` for an established one |
+| Default severity | `warn` for a dependency that is new to the registry, missing from it, installed from outside it, or declared again to install something Garnet didn't look up; `info` for an established one |
 | Kind | diff rule: fires only when the trusted version had the property and the new version lost it, or the new version gained a risky property the trusted version lacked. |
 | Status | Implemented in 0.2 |
 
@@ -27,6 +27,8 @@ The rule reports every new dependency. It keeps its `warn` severity when the new
 
 - isn't on the registry at all;
 - installs from outside the registry: a git repository, a URL or a local path;
+- is declared a second time to install something else: another registry package or a source
+  outside the registry (see below);
 - was first released less than 90 days before the new version, or after it.
 
 On npm the first release is the date the registry created the package's record. When a name
@@ -47,6 +49,16 @@ A dependency the trusted version already had is reported when it now installs fr
 somewhere else: from a git repository or URL, or, on npm, a different package under the same
 name (`"lodash": "npm:other-package@1"`). An npm alias that is new is looked up under the
 package it installs.
+
+A name can be declared more than once: in `dependencies` and again in `optionalDependencies`,
+which npm lets override `dependencies`, or in two `Requires-Dist` lines with different markers
+on PyPI. Garnet compares and looks up the first declaration only. When another declaration of
+the name installs a different registry package (`"h2": "npm:young@^1"` beside
+`"h2": "npm:established@^1"`) or a source outside the registry (`github:`, a URL, a path,
+`file:`), the rule keeps its `warn` severity, names what that declaration installs and says
+Garnet didn't look it up. For a dependency the trusted version already had, this fires when
+the second declaration's target is new. A second declaration of the same package with another
+range doesn't count.
 
 A failed registry lookup is GRN-E001, and the dependency is listed with a note that the
 registry wasn't consulted. It is never passed.
