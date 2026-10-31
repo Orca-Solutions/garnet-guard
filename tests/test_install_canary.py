@@ -254,3 +254,144 @@ def test_uv_resolve_step_never_downloads_a_python(tmp_path: Path) -> None:
     )
     assert out.status == "cant_check"
     assert not marker.exists() and not (tmp_path / "pythons").exists()
+
+
+# --- npm ----------------------------------------------------------------------
+
+NPM = shutil.which("npm")
+
+
+def _marker_package(folder: Path, name: str, markers: Path, **extra: object) -> None:
+    """A package.json whose every lifecycle script writes a marker file."""
+    folder.mkdir(parents=True, exist_ok=True)
+    events = ("preinstall", "install", "postinstall", "prepare", "prepack")
+    scripts = {
+        e: f"node -e \"require('fs').writeFileSync('{markers / f'{name}-{e}'}', '')\""
+        for e in events
+    }
+    doc = {"name": name, "version": "1.0.0", "scripts": scripts, **extra}
+    (folder / "package.json").write_text(json.dumps(doc))
+
+
+def _npm_env(tmp_path: Path) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if not k.lower().startswith("npm_config_")}
+    env.update(
+        HOME=str(tmp_path),
+        npm_config_cache=str(tmp_path / "npm-cache"),
+        npm_config_userconfig=str(tmp_path / "npmrc"),
+        npm_config_offline="true",
+        GIT_CONFIG_NOSYSTEM="1",
+        GIT_CONFIG_GLOBAL=str(tmp_path / "gitconfig"),
+    )
+    return env
+
+
+def _git_repo(folder: Path) -> str:
+    git = ["git", "-c", "user.email=c@example.invalid", "-c", "user.name=c", "-C", str(folder)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "add", "."], check=True)
+    subprocess.run([*git, "commit", "-qm", "c"], check=True)
+    sha = subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True)
+    return sha.stdout.decode().strip()
+
+
+@pytest.mark.skipif(NPM is None, reason="npm isn't installed")
+def test_npm_resolve_step_runs_no_scripts(tmp_path: Path) -> None:
+    """The project's own lifecycle scripts don't run, the project isn't
+    written, and the resolve really writes a lockfile (offline: no deps)."""
+    assert NPM is not None
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    project = tmp_path / "demo"
+    _marker_package(project, "demo", markers)
+    before = (project / "package.json").read_bytes()
+    work = tmp_path / "work"
+    work.mkdir()
+    out = check.check_npm(
+        NPM,
+        "install",
+        [],
+        cwd=project,
+        env=_npm_env(tmp_path),
+        command="npm install",
+        deps=deps(check.run_program, evaluate=evaluator()),  # type: ignore[arg-type]
+        workdir=work,
+    )
+    assert out.status == "pass", out.reasons
+    assert not list(markers.iterdir())
+    assert (project / "package.json").read_bytes() == before
+    assert not (project / "package-lock.json").exists()
+    assert out.handoff is not None and out.handoff.copy is not None
+    assert out.handoff.copy.head("package-lock.json") is not None
+
+
+@pytest.mark.skipif(NPM is None, reason="npm isn't installed")
+def test_npm_resolve_env_never_runs_git_or_a_git_dependencys_scripts(tmp_path: Path) -> None:
+    """A git dependency (refused before npm runs, so npm is called directly
+    here) fails to resolve under Garnet's environment: npm can't start git."""
+    assert NPM is not None
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    _marker_package(tmp_path / "gitdep", "gitdep", markers)
+    _git_repo(tmp_path / "gitdep")
+    project = tmp_path / "demo"
+    project.mkdir()
+    spec = f"git+file://{tmp_path / 'gitdep'}"
+    (project / "package.json").write_text(json.dumps({"dependencies": {"gitdep": spec}}))
+    work = tmp_path / "work"
+    work.mkdir()
+    env = check.npm.resolve_env(_npm_env(tmp_path), work)
+    done = subprocess.run(
+        [NPM, "install", *check.npm.RESOLVE_TAIL],
+        cwd=project,
+        env=env,
+        capture_output=True,
+        check=False,
+    )
+    assert done.returncode != 0
+    assert not list(markers.iterdir()) and not (project / "package-lock.json").exists()
+
+
+@pytest.mark.network
+@pytest.mark.skipif(NPM is None, reason="npm isn't installed")
+def test_npm_hosted_git_dependency_prepare_is_stopped(tmp_path: Path) -> None:
+    """npm 10 packs a git-host dependency pinned to a commit to read its
+    manifest, which runs its prepare script even with --ignore-scripts.
+    git's url.insteadOf points the host at a local repository. Plain npm runs
+    the script when it falls back to cloning (this needs codeload.github.com
+    to answer with an HTTP error); under Garnet's environment it never does."""
+    assert NPM is not None
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    repo = tmp_path / "gitdep"
+    _marker_package(repo, "gitdep", markers)
+    sha = _git_repo(repo)
+    (tmp_path / "gitconfig").write_text(
+        f'[url "file://{repo}"]\n\tinsteadOf = https://github.com/garnet-canary/gitdep.git\n'
+        "\tinsteadOf = git@github.com:garnet-canary/gitdep.git\n"
+        "\tinsteadOf = ssh://git@github.com/garnet-canary/gitdep.git\n"
+    )
+    spec = f"github:garnet-canary/gitdep#{sha}"
+    work = tmp_path / "work"
+    work.mkdir()
+    env = _npm_env(tmp_path)
+    env.pop("npm_config_offline")
+    for n, run_env in enumerate((env, check.npm.resolve_env(env, work))):
+        project = tmp_path / f"demo-{n}"
+        project.mkdir()
+        (project / "package.json").write_text(json.dumps({"dependencies": {"gitdep": spec}}))
+        subprocess.run(
+            [NPM, "install", *check.npm.RESOLVE_TAIL],
+            cwd=project,
+            env=run_env,
+            capture_output=True,
+            check=False,
+            timeout=240,
+        )
+        ran = list(markers.iterdir())
+        if n == 0 and not ran:
+            pytest.skip("this npm (or network) doesn't reach the prepare step")
+        if n == 1:
+            assert not ran
+        for path in ran:
+            path.unlink()

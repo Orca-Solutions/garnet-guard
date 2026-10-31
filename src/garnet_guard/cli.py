@@ -162,17 +162,18 @@ def _parser() -> argparse.ArgumentParser:
     )
     pc.add_argument("path", nargs="?", metavar="PATH", help="the policy file")
 
-    for tool, what in (
-        ("pip", "pip install"),
-        ("uv", "uv add, remove, lock or sync"),
+    for tool, what, off in (
+        ("pip", "pip install", "builds"),
+        ("uv", "uv add, remove, lock or sync", "builds"),
+        ("npm", "npm install, ci or update", "scripts and git"),
     ):
         w = sub.add_parser(
             tool,
             help=f"check a {what} command, then install only what was checked",
-            description=f"garnet {tool} … resolves the command with builds turned off, checks "
+            description=f"garnet {tool} … resolves the command with {off} turned off, checks "
             "every\ndependency change, then installs exactly what was checked. Nothing is "
-            "installed\nat or above fail_on, or when the command can't be resolved without "
-            "building.\n--garnet-force installs anyway. See docs/install-wrapper.md.",
+            "installed\nat or above fail_on, or when the command can't be resolved that way."
+            "\n--garnet-force installs anyway. See docs/install-wrapper.md.",
             epilog=_WRAPPER_EXIT_CODES,
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
@@ -203,7 +204,7 @@ def _policy_args(p: argparse.ArgumentParser) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run ``garnet`` and return its exit code. Any failure of Garnet itself is 3."""
     words = list(sys.argv[1:] if argv is None else argv)
-    if words[:1] in (["pip"], ["uv"]) and words[1:2] not in (["-h"], ["--help"]):
+    if words[:1] in (["pip"], ["uv"], ["npm"]) and words[1:2] not in (["-h"], ["--help"]):
         # The rest is the package manager's command line, not Garnet's options.
         return _guarded(lambda: _wrapper(words[0], words[1:]))
     try:
@@ -243,7 +244,7 @@ def _guarded(task: Callable[[], int]) -> int:
 def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "hook":
         return _hook(args.agent, args.run == "run")
-    if args.command in ("pip", "uv"):  # only reached for --help, handled by argparse
+    if args.command in ("pip", "uv", "npm"):  # only reached for --help, handled by argparse
         return 0
     if args.command == "version":
         print(f"garnet {__version__}")

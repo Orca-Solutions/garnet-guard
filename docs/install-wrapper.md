@@ -2,17 +2,20 @@
 
 Garnet Guard can check a dependency change before it is installed, in two ways:
 
-- **The wrapper.** Put `garnet` in front of a pip or uv command: `garnet pip install requests==2.32.3`, `garnet uv add httpx`. Garnet checks what the command would change and installs only what it checked.
-- **Agent hooks.** Claude Code and Codex run `garnet hook claude-code run` or `garnet hook codex run` before each shell command. When the command installs with pip or uv, the hook checks it and tells the agent what it found. The hook never installs anything.
+- **The wrapper.** Put `garnet` in front of a pip, uv or npm command: `garnet pip install requests==2.32.3`, `garnet uv add httpx`, `garnet npm install left-pad@1.3.0`. Garnet checks what the command would change and installs only what it checked.
+- **Agent hooks.** Claude Code and Codex run `garnet hook claude-code run` or `garnet hook codex run` before each shell command. When the command installs with pip, uv or npm, the hook checks it and tells the agent what it found. The hook never installs anything.
 
-Both are previews, on `main` for 0.3; 0.2.0 doesn't include them. npm, pnpm, yarn, poetry, `uv pip`, `uv tool`, `uvx` and `uv run --with` aren't checked yet: the hooks say so, and the wrapper doesn't accept them.
+Both are previews, on `main` for 0.3; 0.2.0 doesn't include them. pnpm, yarn, npx, `npm exec`, poetry, `uv pip`, `uv tool`, `uvx` and `uv run --with` aren't checked yet: the hooks say so, and the wrapper doesn't accept them.
 
 ## What the wrapper does
 
 ```text
 garnet pip install <pip install arguments> [--garnet-force]
 garnet uv add|remove|lock|sync <uv arguments> [--garnet-force]
+garnet npm install|ci|update <npm arguments> [--garnet-force]
 ```
+
+npm's aliases count too (`i`, `add`, `clean-install`, `up` and the rest). The steps below are pip's and uv's; [npm](#npm) has its own section.
 
 1. **Read the command without running anything.** Every `-r` and `-c` file is read too, recursively, for uv as for pip. Garnet refuses, as "can't check", anything that would build a package or that it can't compare with a PyPI release: `--no-binary`, `-e`/`--editable`, local paths and archives (read as pip reads them, after markers and extras are taken off, so `x.tar.gz[a]` and `x.tar.lzma` count), URLs and VCS requirements, uv's `--build`, path, git, URL, editable and workspace sources, `name @ <url>` direct references in `pyproject.toml`'s dependency tables, `--target`, `--prefix`, `--user` and a few others. pip settings in the environment or pip's configuration that add requirement files (`PIP_REQUIREMENT`, `PIP_CONSTRAINT`, `requirement` in `pip.conf`) are refused the same way. Values from pip's configuration are never printed, because they can hold index credentials, and the credentials in a URL (`https://user:token@host`) are shown as `****` in everything Garnet prints, the command included.
 2. **Resolve with builds turned off.**
@@ -60,6 +63,26 @@ What you can do:
 ```
 
 The comparison is skipped when the command limits releases by date or type (`--uploaded-prior-to`, `--only-final`, uv's `--exclude-newer` or a `--resolution` other than `highest`). A fallback in an indirect dependency isn't seen this way; installing exactly what was checked covers it.
+
+### npm
+
+```text
+$ garnet npm install esbuild@0.25.0
+esbuild (new) → 0.25.0: …
+Garnet Guard checked 26 dependency changes: …
+Wrote the checked package.json and package-lock.json.
+Running: npm ci --ignore-scripts
+added 3 packages in 896ms
+Install scripts that didn't run, because the package is new or changed: esbuild 0.25.0. Garnet Guard checked these packages but doesn't run code from one that changed. After reviewing them, run: npm rebuild esbuild@0.25.0
+```
+
+1. **Read the command and the project without running anything.** Garnet reads every argument with its own table of npm options. An option that isn't in it is "can't check", because npm expands abbreviations (`--glob` is `--global`) and takes any `--name=value` as a setting. Refused: `-g`/`--global`, `--location`, `--prefix`, workspaces (`-w`, `--workspaces`, a `workspaces` field in package.json or in a folder above it), `--no-save`, `--no-package-lock`, `--install-links`, `--script-shell`, and any package that isn't a registry release: git (`github:o/r`, `o/r`, `git+…`), URLs, tarballs, `file:` and `link:` folders. package.json's `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies` and `overrides` are read for the same sources. Then `npm config get` reads the settings npm would use here (every `.npmrc`, and `npm_config_*` in the environment); `global`, `location=global`, `package-lock=false`, `save=false`, `install-links`, a workspace and `omit-lockfile-registry-resolved` are refused, by name only. Nothing from `.npmrc` is printed.
+2. **Resolve with scripts and git turned off.** In a private copy of `package.json`, the lockfile (`npm-shrinkwrap.json` when there is one, else `package-lock.json`) and `.npmrc`, in a folder with the project's name (npm names the lockfile after it): `npm install|update <your arguments> --package-lock-only --ignore-scripts --no-audit --no-fund --allow-git=none --allow-remote=none --allow-file=none --allow-directory=none`, with `npm_config_ignore_scripts=true` and `npm_config_script_shell` and `npm_config_git` set to paths that don't exist. Why all of it: npm 10.9.4 runs a git dependency's `prepare` script during `--package-lock-only --ignore-scripts` when the dependency is on GitHub, GitLab or Bitbucket and pinned to a full commit, because pacote packs it to read its manifest. With the script shell missing, that script fails and so does the resolve. npm 11 honours `--ignore-scripts` there and refuses git sources with `--allow-git=none`; npm 10 ignores the `--allow-*` settings. `npm ci` resolves nothing; Garnet checks the lockfile on disk.
+3. **Compare and check.** The base is the lockfile committed at git `HEAD`, else the one on disk before the command. Any entry in the new lockfile that npm wouldn't fetch from a registry (git, `file:`, a tarball URL, plain HTTP, no `resolved` or integrity) and any link to a folder is "can't check", whatever brought it in: none of them has a release to compare with, and `npm ci --ignore-scripts` still runs `prepare` for git and folder dependencies on npm 10. A package from a private registry is reported as GRN-E005, as `garnet check` reports it.
+4. **Install exactly what was checked.** Garnet writes the checked `package.json` and lockfile back, only if no copied file changed meanwhile (for `npm ci`, it checks the same and writes nothing), then runs `npm ci --ignore-scripts` with your install options (`--omit`, `--include`, `--install-strategy`, `--registry`, …). `npm ci` replaces `node_modules` with exactly the lockfile. `--package-lock-only` stops after writing the files; `--dry-run` writes nothing.
+5. **Install scripts.** No package that is new or changed runs code while it installs, as pip installs only wheels and uv doesn't build a changed package. Packages that the base lockfile already had at the same version had their scripts run before, so `npm rebuild <name>@<version> …` runs theirs again (the native binary of an unchanged `esbuild` or `sharp` keeps working). Garnet then lists the new or changed packages whose scripts didn't run, with the `npm rebuild` command to run after reviewing them, and the project's own install-time scripts (`prepare` and the rest) that didn't run. With `--ignore-scripts` (yours, or `ignore-scripts=true` in `.npmrc`), no rebuild runs.
+
+There is no newest-release step for npm: scripts don't change what npm resolves, so turning them off can't make it pick an older release.
 
 ## Agent hooks
 
@@ -139,10 +162,11 @@ The hook reads one PreToolUse event on stdin, prints at most one JSON object on 
 | Findings at or above `fail_on` | `deny`, with each finding's rule, package, versions and evidence, and `garnet explain RULE` | same |
 | Can't check (refused, or needs a build) or can't tell (see below) | `ask`, with the reason, what Garnet could check without building, and a form it can check; the same text in `additionalContext`, because Claude Code shows an `ask` reason only to you | `deny`, with the same reason |
 | `uvx`, `uv tool install`, `uv run --with`, `uv run --script`, poetry | can't check: `ask`, with what isn't checked and why | `deny` |
-| npm, pnpm, yarn, `uv pip` | `additionalContext` and a `systemMessage` saying the install wasn't checked and why; no decision | same |
+| `npm install`, `npm ci`, `npm update` (and aliases) | checked like the wrapper's steps 1 to 3 above; the answers above apply | same |
+| pnpm, yarn, npx, `npm exec`, `npm install-test`, `uv pip` | `additionalContext` and a `systemMessage` saying the install wasn't checked and why; no decision | same |
 | `uv run` in a project | checked as the `uv sync` it starts with (below) | same |
 
-Pass and warn send no permission decision, so your own permission rules still apply: on Claude Code `allow` would skip the permission prompt, and on Codex `allow` without `updatedInput` fails the hook and drops its context. A `deny` holds in every Claude Code permission mode, `bypassPermissions` included. Text from packages is escaped, finding titles and evidence are in double quotes, and the answer says they are data; URL credentials are shown as `****`. A package manager or Python committed to the repository (a tracked venv, a `bin/uv`, an interpreter named by pip's `--python`, uv's `-p`/`--python`, `UV_PYTHON` or `.python-version`) isn't started before you approve the command; that is "can't check".
+Pass and warn send no permission decision, so your own permission rules still apply: on Claude Code `allow` would skip the permission prompt, and on Codex `allow` without `updatedInput` fails the hook and drops its context. A `deny` holds in every Claude Code permission mode, `bypassPermissions` included. Text from packages is escaped, finding titles and evidence are in double quotes, and the answer says they are data; URL credentials are shown as `****`. A package manager or Python committed to the repository (a tracked venv, a `bin/uv`, an `npm`, an interpreter named by pip's `--python`, uv's `-p`/`--python`, `UV_PYTHON` or `.python-version`) isn't started before you approve the command; that is "can't check".
 
 **`uv run`.** Unless given `--no-sync` or `--no-project`, `uv run` locks and syncs the project before it starts the command, with builds on. The hook checks that step as `uv sync` with the same options, and stays quiet when it would install nothing new against the `uv.lock` at `HEAD`, so `uv run pytest` in an unchanged project gets no answer. Outside a project there is nothing to sync and no answer. In a project Garnet can't resolve at all (a workspace, dynamic metadata, local sources; see Limits), `uv run` gets a "not checked" note rather than a question every time. A script with inline dependencies is can't check: `uv run x.py` with a `# /// script` block, read in the folder `--directory` or `UV_WORKING_DIR` names as well as the current one, `--script`, and a script uv reads from a URL or from standard input (`uv run https://…/x.py`, `uv run -`), which Garnet doesn't read. `uv run --with` is can't check in each spelling uv takes (`-w six`, `-wsix`, `-qw six`, `--with=six`).
 
@@ -164,7 +188,7 @@ Example answers, from `garnet hook claude-code run` on this machine (in the seco
 
 The command comes from an agent that may have read hostile text, so the hook only parses it, with Python's `shlex`. It never runs the command or any part of it; it runs only the pip or uv command it recognized, rebuilt as an argument list, for the resolve step above.
 
-It follows `&&`, `||`, `;`, `|`, `&` and newlines; drops redirections; reads the commands inside `if`/`then`/`else`, `while`/`until`/`for … do`, `{ … }` and function bodies; reads leading `NAME=value` assignments and literal `export`, `cd`, `pushd` and `source <venv>/bin/activate`; unwraps `sudo`, `env`, `command`, `time`, `nice`, `nohup`, `exec` and `timeout`; and reads one level of `bash -c '<literal script>'`, shell options before `-c` included. It reads pip's general options as pip does (aliases, and any unique prefix of a long option), and `python`, `python3.13t` or `pypy3` with `-m pip`. On Codex the command may arrive as an argument list, including `["bash", "-lc", "<script>"]`.
+It follows `&&`, `||`, `;`, `|`, `&` and newlines; drops redirections; reads the commands inside `if`/`then`/`else`, `while`/`until`/`for … do`, `{ … }` and function bodies; reads leading `NAME=value` assignments and literal `export`, `cd`, `pushd` and `source <venv>/bin/activate`; unwraps `sudo`, `env`, `command`, `time`, `nice`, `nohup`, `exec` and `timeout`; and reads one level of `bash -c '<literal script>'`, shell options before `-c` included. It reads pip's general options as pip does (aliases, and any unique prefix of a long option), and `python`, `python3.13t` or `pypy3` with `-m pip`. Before npm's subcommand it reads only `-s`, `-q`, `-d`, `--silent`, `--quiet`, `--verbose`, `--loglevel=<level>`, `--no-audit`, `--no-fund`, `--no-progress` and `--no-color`; any other option there (`npm --prefix web install`) is can't tell. On Codex the command may arrive as an argument list, including `["bash", "-lc", "<script>"]`.
 
 **Can't tell**, when a package-manager word is present: `$(…)`, backticks, `$VAR` or `${…}` in a package command, a program name that is one of these anywhere in the line (`$P install x`, `$(command -v pip) install x`, `${UV:-uv} add x`), a `uv run` target that is one of these, a `cd` to a path it can't read, `eval`, `xargs`, here-documents, unbalanced quotes, a nested `bash -c`, text piped into a shell (`echo "pip install x" | sh`), `python -m uv`, a pip or uv option before the subcommand that Garnet doesn't know, `uv run pip …`, a program it doesn't follow with `pip install` or `uv add` in its arguments (`stdbuf -oL pip install x`, `ssh host uv sync`), PowerShell commands and `source` of anything but a venv's `activate`.
 
@@ -172,7 +196,7 @@ It follows `&&`, `||`, `;`, `|`, `&` and newlines; drops redirections; reads the
 
 ### After the hook
 
-The hook checks; then the agent's own command runs. pip and uv resolve again at that point, with builds on, and `uv run` and `uv sync` build any locked package that has no wheel for your platform. The newest-release check above catches the common way that resolution differs from the checked one, but a release published between the check and the install, or a different index answer, isn't covered. For an install of exactly what was checked, have the agent run the wrapper (`garnet pip install …`, `garnet uv add …`) instead.
+The hook checks; then the agent's own command runs. pip and uv resolve again at that point, with builds on, and `uv run` and `uv sync` build any locked package that has no wheel for your platform. npm resolves again too, and runs the install scripts of every package, new and changed ones included, unless the command has `--ignore-scripts`. The newest-release check above catches the common way that resolution differs from the checked one, but a release published between the check and the install, or a different index answer, isn't covered. For an install of exactly what was checked, have the agent run the wrapper (`garnet pip install …`, `garnet uv add …`) instead.
 
 ### Sources
 
@@ -187,5 +211,6 @@ The hook fields and behaviour on this page were checked on 2026-10-30 against:
 
 - pip: `--user`, `--target`, `--prefix` and `--root` installs, `--group`, and requirements read from scripts are "can't check". `pip inspect` (pip 22.2 or later) is needed for the base.
 - uv: single projects only; workspaces and path, git, URL, editable or workspace sources are "can't check". A packaged project whose metadata is dynamic (for example `dynamic = ["version"]`) is "can't check", because uv would run the project's build backend to read it. In such a project the hook gives `uv run` a "not checked" note, so its sync runs unchecked. uv's `-r` files in pyproject, setup.py or pylock format are "can't check".
-- A package installed from an index other than PyPI is reported as GRN-E005, not compared.
+- npm: single projects only; workspaces, `--prefix`, global installs and git, URL, tarball, `file:` and `link:` dependencies are "can't check", and so is a lockfile whose `omit-lockfile-registry-resolved` leaves out each package's registry. The hand-off is `npm ci`, which removes `node_modules` and installs the lockfile from scratch. Tested with npm 10.9.4 and 11.21.1 on Linux. pnpm and yarn wait for their own resolve and hand-off steps: pnpm 10 config dependencies and `.pnpmfile.cjs` run code while resolving, and Yarn 2+ plugins and `yarnPath` are code from the repository.
+- A package installed from an index other than PyPI, or an npm registry other than npm's, is reported as GRN-E005, not compared.
 - The hooks were run on Linux with bash. Windows isn't tested: Codex runs hook commands there with `cmd.exe`, which doesn't read the printed command's POSIX quoting.

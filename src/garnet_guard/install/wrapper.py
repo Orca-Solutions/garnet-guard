@@ -1,4 +1,5 @@
-"""``garnet pip install …`` and ``garnet uv add|remove|lock|sync …`` (SPEC §10.3).
+"""``garnet pip install …``, ``garnet uv add|remove|lock|sync …`` and
+``garnet npm install|ci|update …`` (SPEC §10.3).
 
 Check first, then install exactly what was checked:
 
@@ -6,7 +7,10 @@ Check first, then install exactly what was checked:
   so it can only install the wheels Garnet compared, by hash;
 - uv writes the checked ``pyproject.toml`` and ``uv.lock`` back (only if
   neither changed meanwhile) and runs ``uv sync --frozen``, which installs
-  from that lockfile without resolving again.
+  from that lockfile without resolving again;
+- npm writes the checked ``package.json`` and lockfile back the same way and
+  runs ``npm ci --ignore-scripts``, then ``npm rebuild`` for the install
+  scripts of packages that didn't change.
 
 At or above ``fail_on`` nothing is installed. When Garnet can't resolve the
 command without building, nothing is installed either, and the message
@@ -26,7 +30,7 @@ from pathlib import Path
 from typing import TextIO
 
 from ..report import escape
-from . import check, pip, shellwords, uv
+from . import check, npm, pip, shellwords, uv
 from .check import Deps, Handoff, Outcome
 
 FORCE = "--garnet-force"
@@ -84,7 +88,7 @@ def main(
         except WrapperUsage as err:
             print(f"garnet: {err}", file=sys.stderr)
             return 3
-        except (pip.PipError, uv.UvError) as err:
+        except (pip.PipError, uv.UvError, npm.NpmError) as err:
             print(f"garnet: {escape(check.redact(str(err)))}", file=sys.stderr)
             return 3
         return act(outcome, force=force, deps=deps, stdout=out)
@@ -102,6 +106,23 @@ def _check(
         return check.check_pip(
             find_pip_python(env),
             args,
+            cwd=cwd,
+            env=env,
+            command=shown,
+            deps=deps,
+            workdir=workdir,
+        )
+    if tool == "npm":
+        sub, at = shellwords.subcommand(args, npm.VALUE_OPTIONS)
+        if sub not in npm.SUBCOMMANDS:
+            raise WrapperUsage(
+                "garnet npm checks npm install, ci and update: garnet npm install <args>. "
+                "pnpm and yarn aren't checked yet."
+            )
+        return check.check_npm(
+            shutil.which("npm", path=env.get("PATH", "")),
+            npm.SUBCOMMANDS[sub],
+            args[:at] + args[at + 1 :],
             cwd=cwd,
             env=env,
             command=shown,
@@ -149,8 +170,9 @@ def act(outcome: Outcome, *, force: bool, deps: Deps, stdout: TextIO) -> int:
             for pin in check.pins_to_try(outcome):
                 say(f"  - Check a version that resolves without building: garnet {pin}")
             plain = escape(outcome.command)
+            code = "install scripts" if outcome.tool == "npm" else "build code"
             say(f"  - Run {plain} yourself. Garnet Guard doesn't check that, and it may run")
-            say("    build code from the packages above.")
+            say(f"    {code} from the packages above.")
             say(f"  - Run it unchecked through Garnet Guard: garnet {plain} {FORCE}")
             return 3
         if outcome.original is None:  # no program found to run
@@ -171,7 +193,9 @@ def act(outcome: Outcome, *, force: bool, deps: Deps, stdout: TextIO) -> int:
     if handoff is None:
         return 0
     wrote = False
-    if handoff.write_back and handoff.copy is not None:
+    if handoff.copy is not None:
+        # Also with nothing to write (uv sync, npm ci): the files the package
+        # manager installs from must still be the ones that were checked.
         try:
             written = uv.write_back(handoff.copy, handoff.write_back)
         except uv.Changed as changed:
@@ -202,8 +226,12 @@ def _run(
     print(f"Running: {escape(check.redact(handoff.shown))}", file=stdout)
     stdout.flush()
     code = deps.run(handoff.argv, cwd=handoff.cwd, env=handoff.env, capture=False).returncode
-    if code == 0:
-        return 0
-    files = " Garnet Guard had already written the checked files (above)." if written else ""
-    print(f"{tool} exited with {code}.{files} Garnet Guard exits 3.", file=stdout)
-    return 3
+    if code != 0:
+        files = " Garnet Guard had already written the checked files (above)." if written else ""
+        print(f"{tool} exited with {code}.{files} Garnet Guard exits 3.", file=stdout)
+        return 3
+    if handoff.then is not None:
+        code = _run(handoff.then, stdout, deps, tool=tool, written=written)
+    for note in handoff.notes:
+        print(check.redact(note), file=stdout)
+    return code

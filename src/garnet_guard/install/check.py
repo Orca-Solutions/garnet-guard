@@ -34,6 +34,7 @@ from packaging.version import InvalidVersion, Version
 from .. import engine
 from ..engine import Options, Report, report, unchecked_result
 from ..lockfiles import LockfileError
+from ..lockfiles import parse as parse_lock
 from ..models import (
     Change,
     ChangeResult,
@@ -46,7 +47,7 @@ from ..models import (
 from ..policy import load_policy
 from ..report import escape, to_text
 from ..workspace import Unchecked, changes_for, dedupe, git_show
-from . import pip, uv
+from . import npm, pip, uv
 from .runner import Ran, Registry, Runner, TimedOut
 from .runner import run as run_program
 
@@ -109,7 +110,8 @@ class Blocker:
 
 @dataclass(frozen=True)
 class Handoff:
-    """A program to run after the check (wrapper only), and uv files to write first."""
+    """A program to run after the check (wrapper only), the checked files to
+    write first, a program to run after it succeeds, and lines to print last."""
 
     argv: tuple[str, ...]
     cwd: Path
@@ -117,16 +119,19 @@ class Handoff:
     shown: str  # how to show it to the user
     write_back: tuple[str, ...] = ()
     copy: uv.Copy | None = None
+    then: Handoff | None = None  # npm rebuild of the unchanged packages' install scripts
+    notes: tuple[str, ...] = ()  # escaped
 
 
 Status = Literal["pass", "warn", "stop", "cant_check", "uv_only"]
+Tool = Literal["pip", "uv", "npm"]
 
 
 @dataclass
 class Outcome:
     """What the check found for one command."""
 
-    tool: Literal["pip", "uv"]
+    tool: Tool
     command: str  # the command as written, for messages (escape before printing)
     status: Status
     report: Report | None = None
@@ -143,7 +148,7 @@ class Outcome:
         return len(self.report.results) if self.report else 0
 
 
-def _cant(tool: Literal["pip", "uv"], command: str, *reasons: str, **kw: object) -> Outcome:
+def _cant(tool: Tool, command: str, *reasons: str, **kw: object) -> Outcome:
     out = Outcome(tool, command, "cant_check", exit_code=3, reasons=list(reasons))
     for key, value in kw.items():
         setattr(out, key, value)
@@ -234,7 +239,7 @@ def _blocker(requirement: str, package: str | None, deps: Deps) -> Blocker:
 
 
 def _finish(
-    tool: Literal["pip", "uv"],
+    tool: Tool,
     command: str,
     changes: list[Change],
     unchecked: list[Unchecked],
@@ -469,7 +474,7 @@ def _pip_newest(
 
 
 def _refused(
-    tool: Literal["pip", "uv"], command: str, refusals: Sequence[pip.Refusal], original: Handoff
+    tool: Tool, command: str, refusals: Sequence[pip.Refusal], original: Handoff
 ) -> Outcome:
     lines = [f"{r.what}: {r.why}." for r in refusals]
     return _cant(tool, command, *lines, original=original)
@@ -629,6 +634,171 @@ def _uv_newest(
     if not needs:
         return None
     return replace(_blocker(needs[0], f"{name} {newest}", deps), instead=f"{name} {locked}")
+
+
+# --- npm --------------------------------------------------------------------
+
+
+def check_npm(
+    npm_exe: str | None,
+    subcommand: str,
+    args: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    command: str,
+    deps: Deps,
+    workdir: Path,
+) -> Outcome:
+    """Check ``npm install|ci|update …`` in a private copy of the project.
+
+    ``subcommand`` is canonical (``npm.SUBCOMMANDS``). install and update
+    resolve with ``--package-lock-only`` and scripts and git off; ci checks
+    the lockfile on disk. The base is the lockfile at git HEAD, else the
+    one on disk before the command.
+    """
+    if npm_exe is None:
+        return _cant("npm", command, "Garnet Guard can't find npm on PATH.")
+    original = Handoff((npm_exe, subcommand, *args), cwd, env, command)
+    plan = npm.plan(subcommand, args)
+    if plan.refusals:
+        return _refused("npm", command, plan.refusals, original)
+    project = npm.find_project(cwd)
+    lockfile = npm.lockfile_name(project)
+    folder = _private(workdir / "project") / project.name
+    folder.mkdir(mode=0o700)
+    try:
+        copy = uv.copy_project(project, folder, npm.COPIED, npm.MAX_FILE_BYTES)
+        refusals = npm.project_refusals(project, copy.originals.get("package.json"))
+    except (uv.UvError, npm.NpmError) as err:
+        return _cant("npm", command, f"{err}.", original=original)
+    if refusals:
+        return _refused("npm", command, refusals, original)
+    if copy.originals.get("package.json") is None and subcommand != "install":
+        return _cant("npm", command, f"there's no package.json in {project}.", original=original)
+    # The user's settings, as npm in the project reads them (the copy holds
+    # its .npmrc). npm config get runs no package code.
+    config = deps.run(
+        [npm_exe, "config", "get", *npm.CONFIG_KEYS],
+        cwd=copy.root,
+        env={**env, "npm_config_update_notifier": "false"},
+        timeout=deps.timeout(),
+    )
+    if config.returncode != 0:
+        return _cant(
+            "npm",
+            command,
+            "Garnet Guard couldn't read npm's settings (npm config get failed).",
+            original=original,
+        )
+    bad, config_ignores = npm.config_refusals(config.stdout.decode("utf-8", "replace"))
+    if bad:
+        return _refused("npm", command, bad, original)
+
+    renv = npm.resolve_env(env, workdir)
+    if subcommand != "ci":
+        ran = deps.run(
+            [npm_exe, subcommand, *plan.resolve, *npm.RESOLVE_TAIL],
+            cwd=copy.root,
+            env=renv,
+            timeout=deps.timeout(),
+        )
+        if ran.returncode != 0:
+            return _cant(
+                "npm",
+                command,
+                "npm couldn't resolve this with scripts and git turned off:\n" + tool_message(ran),
+                original=original,
+            )
+    head = copy.head(lockfile)
+    if head is None:
+        why = f"npm wrote no {lockfile}." if subcommand != "ci" else f"there's no {lockfile}."
+        return _cant("npm", command, why, original=original)
+    try:
+        lines = npm.lock_refusals(lockfile, head)
+    except npm.NpmError as err:
+        return _cant("npm", command, f"{err}.", original=original)
+    if lines:
+        return _cant("npm", command, *lines, original=original)
+
+    base = deps.committed_lock(project / lockfile)
+    if base is None:
+        base = copy.originals.get(lockfile)
+    changes, unchecked = changes_for(lockfile, head, base)
+    out = Outcome("npm", command, "pass", original=original)
+    rep, fail_on = _finish("npm", command, changes, unchecked, cwd=cwd, deps=deps)
+
+    names = ("package.json", lockfile) if subcommand != "ci" else ()
+    if plan.dry_run:
+        out.handoff = None
+        return _verdict(out, rep, fail_on)
+    if plan.lock_only:
+        out.handoff = Handoff((), cwd, env, "", names, copy)
+        return _verdict(out, rep, fail_on)
+    argv = (npm_exe, "ci", "--ignore-scripts", *plan.handoff)
+    shown = shlex.join(("npm", *argv[1:]))
+    then, notes = _npm_scripts(head, base, plan, config_ignores, copy, project, npm_exe, env)
+    out.handoff = Handoff(argv, project, env, shown, names, copy, then, notes)
+    return _verdict(out, rep, fail_on)
+
+
+def _npm_scripts(
+    head: bytes,
+    base: bytes | None,
+    plan: npm.Plan,
+    config_ignores: bool,
+    copy: uv.Copy,
+    project: Path,
+    npm_exe: str,
+    env: Mapping[str, str],
+) -> tuple[Handoff | None, tuple[str, ...]]:
+    """npm rebuild for the unchanged packages' install scripts, and what to say
+    about the ones that don't run.
+
+    npm ci runs with --ignore-scripts, so no package that changed runs code
+    as it installs, as uv's --no-build-package does for a changed package.
+    Unchanged packages had their scripts run before, so npm rebuild runs
+    them again, unless the user turned scripts off.
+    """
+    trusted: set[tuple[str, str]] = set()
+    if base is not None:
+        try:
+            trusted = {
+                (p.package, p.version or "")
+                for p in parse_lock("package-lock.json", base)
+                if p.source == "registry"
+            }
+        except LockfileError:
+            trusted = set()
+    found = npm.scripted(head)
+    unchanged = [s for s in found if (s.package, s.version) in trusted]
+    changed = [s for s in found if (s.package, s.version) not in trusted]
+    notes = []
+    if changed:
+        listed = ", ".join(f"{s.package} {s.version}" for s in changed)
+        specs = " ".join(f"{s.folder}@{s.version}" for s in changed)
+        notes.append(
+            escape(
+                f"Install scripts that didn't run, because the package is new or changed: "
+                f"{listed}. Garnet Guard checked these packages but doesn't run code from "
+                f"one that changed. After reviewing them, run: npm rebuild {specs}"
+            )
+        )
+    own = npm.root_scripts(copy.head("package.json"))
+    if own:
+        notes.append(
+            escape(
+                "The project's own install scripts didn't run ("
+                + ", ".join(own)
+                + "). To run one: npm run <name>"
+            )
+        )
+    then = None
+    if unchanged and not (plan.ignore_scripts or config_ignores):
+        specs_t = tuple(f"{s.folder}@{s.version}" for s in unchanged)
+        argv = (npm_exe, "rebuild", *specs_t)
+        then = Handoff(argv, project, env, shlex.join(("npm", *argv[1:])))
+    return then, tuple(notes)
 
 
 # --- What to say ------------------------------------------------------------

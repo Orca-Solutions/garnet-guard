@@ -1,0 +1,565 @@
+"""``garnet npm install|ci|update`` and the hooks' npm commands, with recorded
+npm answers in place of npm and stand-ins for the checks. No network."""
+
+from __future__ import annotations
+
+import io
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from garnet_guard.install import check, npm, shellwords, wrapper
+from garnet_guard.install.check import Outcome
+from garnet_guard.install.runner import Ran
+from garnet_guard.models import Severity
+from tests.test_install_check import FakeRunner, deps, evaluator
+from tests.test_install_hooks import AGENTS, answer, event, spec, where  # noqa: F401
+
+NPM = "/bin/npm"
+CONFIG = "".join(f"{k}={v}\n" for k, v in npm.CONFIG_EXPECTED.items()) + "ignore-scripts=false\n"
+
+
+def entry(name: str, version: str, **extra: Any) -> dict[str, Any]:
+    tail = name.rpartition("/")[2]
+    return {
+        "version": version,
+        "resolved": f"https://registry.npmjs.org/{name}/-/{tail}-{version}.tgz",
+        "integrity": "sha512-AAAA",
+        **extra,
+    }
+
+
+def lock(**entries: dict[str, Any]) -> str:
+    """A package-lock.json (lockfileVersion 3) with these node_modules entries."""
+    packages: dict[str, Any] = {"": {"name": "demo", "version": "1.0.0"}}
+    for key, value in entries.items():
+        packages[key if "/" in key else f"node_modules/{key}"] = value
+    doc = {"name": "demo", "version": "1.0.0", "lockfileVersion": 3, "packages": packages}
+    return json.dumps(doc, indent=2) + "\n"
+
+
+BASE = lock(**{"left-pad": entry("left-pad", "1.2.0"), "esbuild": entry("esbuild", "0.25.0", hasInstallScript=True)})  # fmt: skip
+HEAD = lock(
+    **{
+        "left-pad": entry("left-pad", "1.3.0", hasInstallScript=True),
+        "esbuild": entry("esbuild", "0.25.0", hasInstallScript=True),
+    }
+)
+MANIFEST = '{"name": "demo", "version": "1.0.0", "dependencies": {"left-pad": "1.2.0"}}\n'
+
+
+def project(root: Path, manifest: str = MANIFEST, lockfile: str | None = BASE) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "package.json").write_text(manifest)
+    if lockfile is not None:
+        (root / "package-lock.json").write_text(lockfile)
+    return root
+
+
+def npm_answers(  # type: ignore[no-untyped-def]
+    head: str = HEAD,
+    *,
+    config: str = CONFIG,
+    fail: str | None = None,
+    seen: list[Any] | None = None,
+):
+    def answer(argv: list[str], cwd: Path, env: dict[str, str]) -> Ran:
+        assert argv[0] == NPM
+        if argv[1:3] == ["config", "get"]:
+            assert argv[3:] == list(npm.CONFIG_KEYS)
+            return Ran(0, config.encode())
+        if argv[1] in ("ci", "rebuild"):  # the hand-off, after the check
+            return Ran(0)
+        # The resolve step: in the copy, with scripts and git off.
+        assert argv[-len(npm.RESOLVE_TAIL) :] == list(npm.RESOLVE_TAIL)
+        assert env["npm_config_ignore_scripts"] == "true"
+        for key in ("npm_config_script_shell", "npm_config_git"):
+            assert not Path(env[key]).exists() and Path(env[key]).is_absolute()
+        assert not [k for k in env if k.lower() == "npm_config_ignore_scripts" and k != k.lower()]
+        assert not (cwd / "node_modules").exists()
+        if seen is not None:
+            seen.append((argv, cwd, env))
+        if fail is not None:
+            return Ran(1, b"", fail.encode())
+        (cwd / "package-lock.json").write_text(head)
+        text = (cwd / "package.json").read_text()
+        (cwd / "package.json").write_text(text.replace('"1.2.0"', '"^1.3.0"'))
+        return Ran(0)
+
+    return answer
+
+
+def run_npm(root: Path, sub: str, args: list[str], run: FakeRunner, **kw: Any) -> Outcome:
+    work = root.parent / f"work-{len(list(root.parent.glob('work-*')))}"
+    work.mkdir()
+    return check.check_npm(
+        NPM,
+        sub,
+        args,
+        cwd=root,
+        env=kw.pop("env", {"PATH": "/bin", "NPM_CONFIG_IGNORE_SCRIPTS": "false"}),
+        command=f"npm {sub} " + " ".join(args),
+        deps=deps(run, **kw),
+        workdir=work,
+    )
+
+
+# --- reading the command ----------------------------------------------------
+
+
+def test_plan_splits_options_between_the_resolve_and_npm_ci() -> None:
+    plan = npm.plan(
+        "install",
+        [
+            "-D",
+            "left-pad@^1.3.0",
+            "--legacy-peer-deps",
+            "--omit",
+            "dev",
+            "--registry=https://r.example/",
+            "--no-audit",
+        ],  # fmt: skip
+    )
+    assert not plan.refusals
+    assert plan.specs == ["left-pad@^1.3.0"]
+    assert plan.resolve == [
+        "-D",
+        "left-pad@^1.3.0",
+        "--legacy-peer-deps",
+        "--registry=https://r.example/",
+        "--no-audit",
+    ]
+    assert plan.handoff == [
+        "--legacy-peer-deps",
+        "--omit=dev",
+        "--registry=https://r.example/",
+        "--no-audit",
+    ]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["-g", "x"],
+        ["--global", "x"],
+        ["--glob", "x"],  # npm expands abbreviations; Garnet doesn't, and refuses
+        ["--prefix", "web", "x"],
+        ["--no-save", "x"],
+        ["--no-package-lock"],
+        ["--ignore-scripts=false"],
+        ["--script-shell", "sh"],
+        ["--install-links"],
+        ["-w", "a", "x"],
+        ["--workspaces"],
+        ["-DE"],
+        ["github:o/r"],
+        ["o/r"],
+        ["x@github:o/r#abc"],
+        ["git+https://example.invalid/r.git"],
+        ["https://example.invalid/x-1.0.0.tgz"],
+        ["./vendor/x"],
+        ["../x"],
+        ["/abs/x"],
+        ["x.tgz"],
+        ["x@file:../x"],
+        ["x@link:../x"],
+        ["x@npm:y@file:../y"],
+        ["--registry"],
+    ],
+)
+def test_plan_refusals(args: list[str]) -> None:
+    assert npm.plan("install", args).refusals
+
+
+@pytest.mark.parametrize(
+    "spec", ["x", "x@1", "x@^1.2.3 || 2", "@s/x@latest", "x@npm:@s/y@~1.0", "x@*", "x@1.x"]
+)
+def test_registry_specs(spec: str) -> None:
+    assert npm.registry_spec(spec)
+    assert not npm.plan("install", [spec]).refusals
+
+
+def test_ci_takes_no_packages() -> None:
+    assert npm.plan("ci", ["left-pad"]).refusals
+    assert not npm.plan("ci", ["--omit=dev", "--no-audit"]).refusals
+
+
+# --- install ----------------------------------------------------------------
+
+
+def test_install_checks_in_a_copy_then_writes_back_and_runs_npm_ci(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    seen: list[Any] = []
+    run = FakeRunner(npm_answers(seen=seen))
+    out = run_npm(root, "install", ["left-pad@1.3.0", "--no-audit"], run)
+    assert out.status == "pass", out.reasons
+    argv, cwd, _ = seen[0]
+    assert argv[:4] == [NPM, "install", "left-pad@1.3.0", "--no-audit"]
+    assert cwd != root and cwd.name == "demo"  # a copy; npm names the lockfile after it
+    assert out.report is not None
+    assert [
+        (r.change.package, r.change.baseline, r.change.candidate) for r in out.report.results
+    ] == [("left-pad", "1.2.0", "1.3.0")]
+    assert (root / "package-lock.json").read_text() == BASE  # nothing written by the check
+    handoff = out.handoff
+    assert handoff is not None
+    assert list(handoff.argv) == [NPM, "ci", "--ignore-scripts", "--no-audit"]
+    assert handoff.write_back == ("package.json", "package-lock.json")
+    # esbuild didn't change, so its install script runs again; left-pad's doesn't.
+    assert handoff.then is not None and list(handoff.then.argv) == [
+        NPM,
+        "rebuild",
+        "esbuild@0.25.0",
+    ]
+    stdout = io.StringIO()
+    assert wrapper.act(out, force=False, deps=deps(run), stdout=stdout) == 0
+    text = stdout.getvalue()
+    assert "Wrote the checked package.json and package-lock.json." in text
+    assert "Running: npm ci --ignore-scripts --no-audit\n" in text
+    assert "Running: npm rebuild esbuild@0.25.0\n" in text
+    assert "because the package is new or changed: left-pad 1.3.0" in text
+    assert "npm rebuild left-pad@1.3.0" in text
+    assert (root / "package-lock.json").read_text() == HEAD
+    assert [c[0][1] for c in run.calls[-2:]] == ["ci", "rebuild"]
+    assert all(c[1] == root for c in run.calls[-2:])
+
+
+def test_users_ignore_scripts_runs_no_rebuild(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    out = run_npm(
+        root, "install", ["left-pad@1.3.0", "--ignore-scripts"], FakeRunner(npm_answers())
+    )
+    assert out.handoff is not None and out.handoff.then is None
+    config = CONFIG.replace("ignore-scripts=false", "ignore-scripts=true")
+    out = run_npm(root, "install", ["left-pad@1.3.0"], FakeRunner(npm_answers(config=config)))
+    assert out.handoff is not None and out.handoff.then is None
+
+
+def test_no_base_lockfile_runs_no_install_script(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo", lockfile=None)
+    out = run_npm(root, "install", [], FakeRunner(npm_answers()))
+    assert out.status == "pass" and out.report is not None
+    assert {r.change.package for r in out.report.results} == {"left-pad", "esbuild"}
+    assert out.handoff is not None and out.handoff.then is None
+    assert any("esbuild 0.25.0, left-pad 1.3.0" in n for n in out.handoff.notes)
+
+
+def test_base_is_the_committed_lockfile(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo", lockfile=HEAD)  # already changed on disk
+    committed = BASE.encode()
+    out = run_npm(
+        root, "install", [], FakeRunner(npm_answers()), committed_lock=lambda path: committed
+    )
+    assert out.report is not None
+    assert [(r.change.baseline, r.change.candidate) for r in out.report.results] == [
+        ("1.2.0", "1.3.0")
+    ]
+
+
+def test_block_installs_and_writes_nothing(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    run = FakeRunner(npm_answers())
+    out = run_npm(
+        root,
+        "install",
+        ["left-pad@1.3.0"],
+        run,
+        evaluate=evaluator({"left-pad": ("GRN-T001", Severity.BLOCK)}),
+    )
+    assert out.status == "stop"
+    stdout = io.StringIO()
+    assert wrapper.act(out, force=False, deps=deps(run), stdout=stdout) == 2
+    assert "Nothing was installed" in stdout.getvalue()
+    assert (root / "package-lock.json").read_text() == BASE
+    assert all(c[2] for c in run.calls)  # captured check runs only
+
+
+def test_package_lock_only_and_dry_run(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    run = FakeRunner(npm_answers())
+    out = run_npm(root, "install", ["left-pad@1.3.0", "--package-lock-only"], run)
+    assert out.handoff is not None and not out.handoff.argv
+    assert wrapper.act(out, force=False, deps=deps(run), stdout=io.StringIO()) == 0
+    assert (root / "package-lock.json").read_text() == HEAD
+    assert not [c for c in run.calls if c[0][1] in ("ci", "rebuild")]
+
+    root = project(tmp_path / "dry")
+    out = run_npm(root, "install", ["left-pad@1.3.0", "--dry-run"], FakeRunner(npm_answers()))
+    assert out.status == "pass" and out.handoff is None
+    assert wrapper.act(out, force=False, deps=deps(run), stdout=io.StringIO()) == 0
+    assert (root / "package-lock.json").read_text() == BASE
+
+
+def test_update_resolves_with_npm_update(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    seen: list[Any] = []
+    out = run_npm(root, "update", ["left-pad"], FakeRunner(npm_answers(seen=seen)))
+    assert out.status == "pass"
+    assert seen[0][0][:3] == [NPM, "update", "left-pad"]
+
+
+def test_failed_resolve_is_cant_check_without_credentials(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    err = "npm error code E401\nnpm error 401 https://user:s3cret@r.example/x\n"
+    out = run_npm(root, "install", ["x"], FakeRunner(npm_answers(fail=err)))
+    assert out.status == "cant_check" and out.exit_code == 3
+    text = " ".join(check.reason_lines(out))
+    assert "scripts and git turned off" in text and "E401" in text and "s3cret" not in text
+
+
+# --- what makes it "can't check" --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"version": "1.0.0", "resolved": "git+ssh://git@github.com/o/r.git#" + "a" * 40},
+        {"version": "1.0.0", "resolved": "file:../x-1.0.0.tgz"},
+        {"version": "1.0.0", "resolved": "https://example.invalid/x-1.0.0.tgz"},
+        {"version": "1.0.0", "resolved": "http://registry.npmjs.org/x/-/x-1.0.0.tgz"},
+        {"version": "1.0.0"},
+    ],
+)
+def test_non_registry_lockfile_entries_are_cant_check(bad: dict[str, Any], tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    head = lock(**{"left-pad": entry("left-pad", "1.3.0"), "x": bad})
+    run = FakeRunner(npm_answers(head))
+    out = run_npm(root, "install", [], run)
+    assert out.status == "cant_check", out.reasons
+    assert any("package-lock.json x:" in r for r in out.reasons)
+    assert out.handoff is None
+
+
+def test_a_link_in_the_lockfile_is_cant_check(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    head = lock(
+        **{"node_modules/x": {"resolved": "../x", "link": True}, "../x": {"version": "1.0.0"}}
+    )
+    out = run_npm(root, "install", [], FakeRunner(npm_answers(head)))
+    assert out.status == "cant_check"
+    assert any("a link to a folder" in r for r in out.reasons)
+
+
+def test_a_private_registry_is_a_finding_not_cant_check(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    private = {"version": "1.0.0", "resolved": "https://npm.example/x/-/x-1.0.0.tgz"}
+    head = lock(**{"left-pad": entry("left-pad", "1.3.0"), "x": private})
+    out = run_npm(root, "install", [], FakeRunner(npm_answers(head)))
+    assert out.status != "cant_check" and out.report is not None
+    found = [f for r in out.report.results for f in r.findings]
+    assert [(f.rule_id, f.change.package) for f in found] == [("GRN-E005", "x")]
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        '{"dependencies": {"x": "github:o/r#' + "a" * 40 + '"}}',
+        '{"devDependencies": {"x": "file:../x"}}',
+        '{"optionalDependencies": {"x": "https://example.invalid/x.tgz"}}',
+        '{"dependencies": {"x": "npm:y@git+https://example.invalid/y.git"}}',
+        '{"overrides": {"x": {"y": "o/r"}}}',
+        '{"workspaces": ["packages/*"]}',
+    ],
+)
+def test_project_refusals_run_nothing(manifest: str, tmp_path: Path) -> None:
+    root = project(tmp_path / "demo", manifest=manifest)
+    run = FakeRunner(npm_answers())
+    out = run_npm(root, "install", [], run)
+    assert out.status == "cant_check" and not run.calls
+
+
+def test_a_folder_inside_a_workspace_is_refused(tmp_path: Path) -> None:
+    project(tmp_path / "mono", manifest='{"workspaces": ["demo"]}')
+    root = project(tmp_path / "mono" / "demo")
+    run = FakeRunner(npm_answers())
+    out = run_npm(root, "install", [], run)
+    assert out.status == "cant_check" and not run.calls
+    assert any("workspaces" in r for r in out.reasons)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("package-lock", "false"),
+        ("save", "false"),
+        ("global", "true"),
+        ("location", "global"),
+        ("install-links", "true"),
+        ("workspace", "a"),
+        ("omit-lockfile-registry-resolved", "true"),
+    ],
+)
+def test_npm_settings_that_hide_what_is_installed(key: str, value: str, tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    config = CONFIG.replace(f"{key}={npm.CONFIG_EXPECTED[key]}\n", f"{key}={value}\n")
+    run = FakeRunner(npm_answers(config=config))
+    out = run_npm(root, "install", [], run)
+    assert out.status == "cant_check"
+    assert [c[0][1] for c in run.calls] == ["config"]  # nothing resolved
+    assert any(f"npm setting {key}" in r for r in out.reasons)
+
+
+def test_resolve_env_overrides_the_users_spellings(tmp_path: Path) -> None:
+    env = npm.resolve_env(
+        {"NPM_CONFIG_IGNORE_SCRIPTS": "false", "npm_config_Script_Shell": "sh", "HOME": "/h"},
+        tmp_path,
+    )
+    assert env["HOME"] == "/h" and env["npm_config_ignore_scripts"] == "true"
+    assert "NPM_CONFIG_IGNORE_SCRIPTS" not in env and "npm_config_Script_Shell" not in env
+    assert env["npm_config_script_shell"] == str(tmp_path / "no-scripts")
+
+
+# --- ci ---------------------------------------------------------------------
+
+
+def test_ci_checks_the_lockfile_on_disk_against_head(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo", lockfile=HEAD)
+    run = FakeRunner(npm_answers())
+    out = run_npm(root, "ci", [], run, committed_lock=lambda path: BASE.encode())
+    assert [c[0][1] for c in run.calls] == ["config"]  # no resolve
+    assert out.report is not None and len(out.report.results) == 1
+    assert out.handoff is not None and out.handoff.write_back == ()
+    assert list(out.handoff.argv) == [NPM, "ci", "--ignore-scripts"]
+
+
+def test_ci_refuses_a_lockfile_changed_after_the_check(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo", lockfile=HEAD)
+    run = FakeRunner(npm_answers())
+    out = run_npm(root, "ci", [], run)
+    (root / "package-lock.json").write_text(BASE)
+    stdout = io.StringIO()
+    assert wrapper.act(out, force=False, deps=deps(run), stdout=stdout) == 3
+    assert "package-lock.json changed while Garnet Guard was checking" in stdout.getvalue()
+    assert not [c for c in run.calls if c[0][1] == "ci"]
+
+
+def test_ci_without_a_lockfile_is_cant_check(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo", lockfile=None)
+    out = run_npm(root, "ci", [], FakeRunner(npm_answers()))
+    assert out.status == "cant_check" and "there's no package-lock.json." in out.reasons
+
+
+def test_shrinkwrap_is_the_lockfile_when_present(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo", lockfile=None)
+    (root / "npm-shrinkwrap.json").write_text(HEAD)
+    out = run_npm(
+        root, "ci", [], FakeRunner(npm_answers()), committed_lock=lambda path: BASE.encode()
+    )
+    assert out.report is not None
+    assert {r.change.lockfile for r in out.report.results} == {"npm-shrinkwrap.json"}
+
+
+def test_wrapper_main_routes_npm_aliases(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "npm").write_text("#!/bin/sh\n")
+    (tmp_path / "bin" / "npm").chmod(0o755)
+    seen: list[Any] = []
+
+    def answer(argv: list[str], cwd: Path, env: dict[str, str]) -> Ran:
+        seen.append(argv[1:3])
+        return Ran(1, b"", b"npm error offline")
+
+    run = FakeRunner(answer)
+    code = wrapper.main(
+        "npm",
+        ["isntall", "left-pad"],
+        deps=deps(run),
+        cwd=root,
+        env={"PATH": str(tmp_path / "bin")},
+        stdout=io.StringIO(),
+    )
+    assert code == 3 and seen == [["config", "get"]]
+    assert wrapper.main("npm", ["run", "build"], deps=deps(run), cwd=root, env={}) == 3
+
+
+# --- the hooks --------------------------------------------------------------
+
+
+def _shape(command: str, cwd: str) -> list[str]:
+    found = shellwords.find_commands(command, cwd=cwd, env={"PATH": "/nonexistent"})
+    out = []
+    for f in found:
+        if isinstance(f, shellwords.NpmCommand):
+            out.append(f"npm {f.subcommand} " + " ".join(f.args))
+        elif isinstance(f, shellwords.Unsupported):
+            out.append(f"unsupported {f.tool}")
+        elif isinstance(f, shellwords.Unclear):
+            out.append("unclear")
+        else:
+            out.append(type(f).__name__)
+    return [s.strip() for s in out]
+
+
+@pytest.mark.parametrize(
+    ("command", "shape"),
+    [
+        ("npm install left-pad", ["npm install left-pad"]),
+        ("npm i -D x", ["npm install -D x"]),
+        ("npm add x", ["npm install x"]),
+        ("npm ci", ["npm ci"]),
+        ("npm clean-install --omit=dev", ["npm ci --omit=dev"]),
+        ("npm up x", ["npm update x"]),
+        ("npm --loglevel=warn i x", ["npm install --loglevel=warn x"]),
+        ("npm -s ci", ["npm ci -s"]),
+        ("npm --prefix web install", ["unclear"]),
+        ("npm --loglevel warn install", ["unclear"]),
+        ("cd web && npm ci", ["npm ci"]),
+        ("npm install $PKG", ["unclear"]),
+        ("npm_config_registry=$R npm ci", ["unclear"]),
+        ("npm exec x", ["unsupported npm exec"]),
+        ("npm cit", ["unsupported npm cit"]),
+        ("npx x", ["unsupported npx"]),
+        ("pnpm add x", ["unsupported pnpm add"]),
+        ("npm run build", []),
+        ("npm test", []),
+        ("npm -v", []),
+        ("echo npm install x", []),
+    ],
+)
+def test_npm_command_shapes(command: str, shape: list[str], tmp_path: Path) -> None:
+    (tmp_path / "web").mkdir()
+    assert _shape(command, str(tmp_path)) == shape
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_hook_checks_npm_install_and_installs_nothing(
+    agent: str,
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    root = project(Path(where["cwd"]) / "demo")
+    npm_exe = str(Path(where["PATH"]) / "npm")
+
+    def answers(argv: list[str], cwd: Path, env: dict[str, str]) -> Ran:
+        assert argv[1] not in ("ci", "rebuild")  # the hook never installs
+        return npm_answers()([NPM, *argv[1:]], cwd, env)
+
+    run = FakeRunner(answers)
+    out = answer(agent, event("npm install left-pad@1.3.0", str(root)), where, deps=deps(run))
+    inner = spec(out)
+    assert "permissionDecision" not in inner
+    assert "left-pad 1.2.0 -> 1.3.0" in inner["additionalContext"]
+    assert run.calls[0][0][0] == npm_exe
+    assert (root / "package-lock.json").read_text() == BASE
+
+    git = FakeRunner(answers)
+    out = answer(agent, event("npm i github:o/r", str(root)), where, deps=deps(git))
+    inner = spec(out)
+    assert inner["permissionDecision"] == ("ask" if agent == "claude-code" else "deny")
+    assert "github:o/r: it installs from git" in inner["permissionDecisionReason"]
+    assert not git.calls
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_hook_npm_registry_credentials_never_shown(
+    agent: str,
+    where: dict[str, str],  # noqa: F811
+) -> None:
+    root = project(Path(where["cwd"]) / "demo")
+    err = "npm error 401 https://user:s3cret@r.example/x\n"
+    run = FakeRunner(lambda argv, cwd, env: npm_answers(fail=err)([NPM, *argv[1:]], cwd, env))
+    command = "npm install --registry https://user:s3cret@r.example/ x"
+    text = json.dumps(answer(agent, event(command, str(root)), where, deps=deps(run)))
+    assert "s3cret" not in text and "https://****@r.example/" in text

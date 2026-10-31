@@ -16,8 +16,9 @@ stdout and always exits 0 (diagnostics go to stderr):
   Code the same text goes in ``additionalContext``, since an ``ask`` reason
   is shown only to the user. uvx, uv tool, ``uv run --with`` and poetry
   install packages Garnet can't see, so they are can't check too;
-- npm, pnpm, yarn and ``uv pip``, which Garnet doesn't check yet: a note,
-  no decision;
+- ``npm install|ci|update``: checked like the wrapper checks them;
+- pnpm, yarn, npx, ``npm exec`` and ``uv pip``, which Garnet doesn't check
+  yet: a note, no decision;
 - ``uv run``: checked as the ``uv sync`` it starts with, and no answer when
   that would install nothing new.
 
@@ -201,7 +202,18 @@ def _one(
         answer.details.append(escape(why))
         return
     try:
-        if isinstance(item, shellwords.PipCommand):
+        if isinstance(item, shellwords.NpmCommand):
+            outcome = check.check_npm(
+                item.npm,
+                item.subcommand,
+                item.args,
+                cwd=Path(item.cwd),
+                env=item.env,
+                command=item.text,
+                deps=deps,
+                workdir=workdir,
+            )
+        elif isinstance(item, shellwords.PipCommand):
             outcome = check.check_pip(
                 item.python,
                 item.args,
@@ -240,8 +252,8 @@ def _one(
 
 
 RETRY = (
-    "Garnet Guard can check pip install and uv add, remove, lock and sync when each "
-    "runs as its own command with literal arguments."
+    "Garnet Guard can check pip install, uv add, remove, lock and sync, and npm install, "
+    "ci and update when each runs as its own command with literal arguments."
 )
 
 
@@ -271,10 +283,14 @@ def _uv_run_scope(item: shellwords.UvCommand) -> tuple[bool, str | None]:
     return False, None
 
 
-def _committed(item: shellwords.PipCommand | shellwords.UvCommand) -> str | None:
+def _committed(
+    item: shellwords.PipCommand | shellwords.UvCommand | shellwords.NpmCommand,
+) -> str | None:
     """A committed program or environment the check would start, if any:
     the package manager, and the Python it is pointed at."""
     cwd = Path(item.cwd)
+    if isinstance(item, shellwords.NpmCommand):
+        return committed_program(item.npm, item.cwd)
     if isinstance(item, shellwords.PipCommand):
         programs = [item.python]
         given = pip.plan(item.args, cwd=cwd, env=item.env).python
@@ -527,8 +543,9 @@ _NOTES = {
         "onFailure: block needs Claude Code 2.1.295 or later. With it, a hook that crashes or "
         "times out blocks the command; if garnet is uninstalled, every Bash command is blocked "
         "until this hook is removed.",
-        "The hook checks pip install, uv add, remove, lock and sync, and the sync uv run "
-        "starts with, and installs nothing. It asks you before a command it can't check.",
+        "The hook checks pip install, uv add, remove, lock and sync, the sync uv run "
+        "starts with, and npm install, ci and update, and installs nothing. It asks you "
+        "before a command it can't check.",
     ),
     "codex": (
         "Add this to ~/.codex/hooks.json, or .codex/hooks.json in a repository. Codex runs it "
@@ -536,8 +553,8 @@ _NOTES = {
         "Codex lets a command run when a hook crashes or times out, so Garnet Guard answers "
         f"within {DEADLINE_SECONDS:.0f} seconds itself. Codex has no ask decision: a command "
         "Garnet Guard can't check is denied, with the reason.",
-        "The hook checks pip install, uv add, remove, lock and sync, and the sync uv run "
-        "starts with, and installs nothing.",
+        "The hook checks pip install, uv add, remove, lock and sync, the sync uv run "
+        "starts with, and npm install, ci and update, and installs nothing.",
         "Codex runs the command with your login shell and reads all of its stdout as the "
         "answer: if your shell profile prints anything, Codex can't read the answer and lets "
         "the command run. Check with: $SHELL -lc '<command above>' < event.json "
