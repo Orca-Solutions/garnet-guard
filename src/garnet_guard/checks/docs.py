@@ -150,7 +150,8 @@ _DOCS: tuple[RuleDoc, ...] = (
         W,
         "Code that runs at import time gained calls that run processes, load code, or use the network. "
         "In test files (tests/, test_*.py, conftest.py) it reports at info, unless a non-test module "
-        "imports the file or an entry point names it.",
+        "imports the file or an entry point names it. A call after a def in the same block calls "
+        "that function, not an alias the name held before (six's exec_ in its Python 2 branch).",
         "Module top-level code runs the moment anything imports the package, including your test suite "
         "and CI. lightning 2.6.2 started a credential stealer this way, from a thread launched in "
         "lightning/__init__.py.",
