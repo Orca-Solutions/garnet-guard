@@ -59,7 +59,7 @@ known to be malicious, so each is a false alarm a reviewer has to dismiss.
 | GRN-E002 parse-failed | yes / yes | num2words 0.5.15 and 0.5.16 (a Windows DLL named `.py`, which GRN-C004 also reports) | sdists containing a link, which `safe_archive` refuses; Python 2 files | 143 / 4 | — |
 | GRN-E003 budget-exceeded | yes / yes | ensmallen 0.8.101 (`datasets/` modules over the parse limit) | 11 PyPI updates hit a limit | 11 / 0 | the 120 s wall-clock budget is not enforced in 0.1 (documented on the rule page); the size, count and ratio limits are tested on crafted archive bombs in `tests/test_safe_archive.py` |
 | GRN-E004 unpinned-requirement | yes / yes (`tests/test_lockfiles.py`, `tests/test_cli_and_report.py`) | n/a | reported on real lockfiles in the Action's tests | n/a | — |
-| GRN-E005 unsupported-source | yes / yes (`tests/test_lockfiles.py`) | n/a | n/a | n/a | — |
+| GRN-E005 unsupported-source | yes / yes (`tests/test_lockfiles.py`; `tests/test_npm_lockfiles.py` for npm: git, `file:`, private registries, tarball URLs, a registry URL for another tarball, bundled packages, invalid names) | n/a | n/a | n/a | — |
 | GRN-C005, GRN-C006 | — | — | — | — | **not built** (planned; `checks/docs.py` lists them as such) |
 
 Before this page, four built rules had no test at all: T005, T008, E003 and C002. They have

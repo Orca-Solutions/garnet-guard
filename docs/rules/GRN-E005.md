@@ -17,7 +17,9 @@ status: implemented
 ## What it checks
 
 A dependency comes from a source Garnet Guard doesn't check: a git URL, a local path, a
-direct file URL, or a registry other than PyPI and npm.
+direct file URL, or a registry other than PyPI and npm. In an npm lockfile, a package
+bundled inside another package's tarball (`inBundle`) and an entry whose name breaks
+npm's naming rules are reported the same way.
 
 ## Why it matters
 
@@ -36,13 +38,18 @@ examplelib (new) → 2.6.2: PASS
 ```
 
 The reason after "was not checked" names the source, for example `git source`,
-`direct URL or path`, `editable install` or `private index`. The JSON report also gives
-the file and line in the evidence.
+`direct URL or path`, `editable install` or `private index`. From package-lock.json and
+yarn.lock it can also be `private registry`, `file: source`, `tarball URL outside the npm
+registry`, `bundled in <package>, checked only as part of it`, `resolved URL isn't this
+package's registry tarball` or `not a valid npm package name`; an invalid name is shown as
+`(invalid name)`, and the lockfile line points at it. The JSON report also gives the file
+and line in the evidence.
 
 ## How to resolve it
 
 Nothing to do if you meant it. Review changes to that dependency by hand, as you would
-any vendored code.
+any vendored code. A bundled dependency changes only with the package that ships it, so
+review that package's update.
 
 ## Allowlisting
 
