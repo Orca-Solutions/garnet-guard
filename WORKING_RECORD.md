@@ -2,13 +2,37 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-31: 0.2.0 prepared
+
+**State.** The version is `0.2.0`, the release for launch. The changelog's Unreleased entries are now under `0.2.0 (2026-12-01)`; change the date if the tag goes out on another day. It holds everything merged through #99. Held by the maintainer and not in it: #97 (npm lockfiles) and #98 (GRN-C006). The README's install lines drop `--pre`, and its status line and badge say alpha, with the `3 - Alpha` classifier, because PyPI keeps 0.2.0's README through launch week (the plan had been to drop "pre-alpha" on Dec 8). docs/marketplace.md now says to publish to PyPI first, then the listing.
+
+**Open tasks.** Merge, tag `v0.2.0` on the merge commit, approve the PyPI deployment, publish the Marketplace listing from the release, then move the Action pins to the `v0.2.0` commit in a follow-up pull request.
+
+## 2026-10-31: Final clean-corpus numbers for 0.2.0
+
+**State.** The top-1,000 clean corpora were run again with every rule 0.2.0 ships: main at `17b8cd1` plus PR #96, which changes which wheel is read for a release with no wheel for this Python. Two passes each, with the same result:
+
+- PyPI, 9,439 updates of 975 packages: 300 flagged for a look (3.2%), in 235 packages. 304 updates carry a couldn't-check finding. `backtest/corpus-results-pypi-1000/REPORT.md`.
+- npm, 8,742 updates of 989 packages: 306 flagged for a look (3.5%), in 223 packages. 30 carry a couldn't-check finding. `backtest/corpus-results-npm-1000/REPORT.md`.
+- Together 606 of 18,181 (3.3%), up from 366: 76 PyPI and 160 npm warnings come from rules added since the first top-1,000 run, 3 from the wider sensitive call set and 1 from reading a first wheel.
+
+Every warning was checked on its own against the registry, GitHub and the release files; each finding is listed with its check in the folder's `triage.json`. The first passes found 5 false claims, fixed before these numbers: 4 GRN-C007 (PR #85) and 1 GRN-C004, pendulum 2.0.5, whose trusted release was read through a Python 2 wheel (PR #96, which also removed a second pendulum warning with the same cause). Some true warnings show a release doing what the trusted one already did, a new way: mako 1.4.1's renamed entry points, amazon-ion 0.11.3's first wheel, mpmath 0.18's Python 2 `six`, and GRN-C002 calls that replace a call (17 of 38, six read closely). The PyPI report lists them under "Accurate, but nothing new runs".
+
+The README badges, the README tables and limits, docs/rule-coverage.md, docs/expert-brief.md, docs/rules/README.md, PROJECT_BRIEF.md and ARCHITECTURE.md carry the new numbers, and the replay count is 52 everywhere (event-stream 3.3.6 joined in #68).
+
+**Open tasks.** Precision candidates for 0.3, none of which makes a claim false: GRN-C009 could compare the targets of a group whose tool loads every line across the group (mako); GRN-C002 could treat calls of the same kind, such as `subprocess.Popen` and `subprocess.run`, as one; GRN-C003 could follow `if`/`else` when it names what a module-level name holds (mpmath).
+
+**Verification.** `uv run pytest`, ruff, mypy (strict) and `lint-imports` pass. `uv run python -m backtest incidents`: 52 of 52 warn, 0 of 26 clean updates warn, as on main. Every number above was read from the runs' `summary.json` and `updates.json`.
+
+**Review dispositions.** None yet.
+
 ## 2026-10-30: GRN-C006 sdist-wheel-mismatch (#60)
 
 **State.** GRN-C006 is built for PyPI, at `warn`. `ecosystems/sdist.py` compares the wheel the content rules read with the release's own sdist (the first in sorted file-name order) from the bytes `pypi.py` already downloaded and checked against PyPI's hashes, and records the result as `ReleaseFacts.sdist_match`. It runs only when both files were read to the end. A wheel `.py` file matches when its bytes, CRLF read as LF, are anywhere in the sdist; otherwise its copy is looked for at the install path, mapped with GRN-C007's `find_prefix` and `find_renames` (`src/`, `python/`, pycryptodomex's `lib/Crypto/`). Only files that install in site-packages are compared: files under `<name>.data/scripts/`, `data/` and `headers/` and in metadata folders aren't (GRN-C010 lists new scripts and data files). Each file that differs or has no copy is parsed with `ast` and the rule fires for each §6.3 call the sdist copy doesn't make; an sdist copy that doesn't parse, or is over the parse limit, makes every call count, and the evidence says so. A `.pth` file fires when the sdist has no copy (looked for at its install path, then by name) or its copy lacks some of its `import` lines. The trusted version's own `sdist_match` excuses calls at the same path and `.pth` lines at any path (setuptools names namespace `.pth` files after the version). GRN-C006 now appears among the rules not evaluated in an sdist's or a wheel's archive errors, in a failed download, and in a wheel file's over-parse-limit GRN-E003. A wheel file that differs from its sdist copy or has none, and that parses but is too deep to walk for calls, is listed in `SdistMatch.unwalked`; GRN-E002 reports it, naming GRN-C006, unless the trusted wheel had the same bytes at that install path. `facts.inventory.exec_lines` reads a `.pth` file as Python 3.11 and 3.12 do (a line ends only at `\n`, `\r` or `\r\n`) and as 3.13 and later do (a leading BOM dropped, then `str.splitlines()`), and keeps each `import` line either reading gives; GRN-C001 and GRN-C006 share it. The cache format is 41 (40 is taken by #96).
 
 The issue's premise was wrong. Read with `safe_archive`, telnyx 4.87.1's and 4.87.2's wheels and sdists carry the payload in both files: each of the wheel's 2,491 Python files is byte for byte its sdist copy, `telnyx/_client.py` included. GRN-C006 stays quiet on both and GRN-C003 still reports them. The rule page, the CHANGELOG and docs/rule-coverage.md say so.
 
-**Open tasks.** GRN-C007's `match_artifact` (`ecosystems/source.py`) still counts a published file too deep to walk as making no call, the gap the review found here; it needs its own issue. GRN-C006 has not run on the top-1,000 corpora. If 0.2.0 is tagged before this merges, the GRN-C006 and GRN-C001 CHANGELOG entries move to the new Unreleased section.
+**Open tasks.** GRN-C007's `match_artifact` (`ecosystems/source.py`) still counts a published file too deep to walk as making no call, the gap the review found here; it needs its own issue. GRN-C006 has not run on the top-1,000 corpora. 0.2.0 was cut first, so the GRN-C006 and GRN-C001 CHANGELOG entries are under the new Unreleased section, for 0.3.
 
 **Verification.**
 - `uv run pytest`: 826 passed, 7 network tests deselected. This includes `tests/test_sdist_wheel.py` (24 tests) and 11 rows in the rule matrix (140 rows): 9 GRN-C006 rows, 5 that fire and 4 that stay quiet, and 2 GRN-E002 rows for a wheel file too deep to walk. The fixtures cover a `src/` layout, a renamed package, CRLF, an sdist copy that doesn't parse or is over the limit, `.data/purelib`, `.pth` cases (a line past a form feed and one behind a BOM among them, for GRN-C001 too), a wheel file too deep to walk, the trusted wheel's excuses, the evidence cap, and the fetcher path with a fake HTTP client (a missing sdist gives GRN-E001, a cut sdist GRN-E003, both naming GRN-C006). The 6 tests added for the review fail without the source changes.

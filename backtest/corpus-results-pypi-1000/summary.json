@@ -1,21 +1,29 @@
 {
   "updates": 9439,
   "packages": 975,
-  "updates_warned": 220,
-  "warn_rate": 0.0233,
-  "packages_with_a_warn": 172,
+  "updates_warned": 300,
+  "warn_rate": 0.0318,
+  "packages_with_a_warn": 235,
   "warns_by_rule": {
     "GRN-C003": {
       "updates": 65,
       "packages": 52
     },
     "GRN-C002": {
-      "updates": 57,
-      "packages": 51
+      "updates": 60,
+      "packages": 53
     },
     "GRN-T004": {
-      "updates": 49,
-      "packages": 39
+      "updates": 48,
+      "packages": 38
+    },
+    "GRN-T006": {
+      "updates": 34,
+      "packages": 30
+    },
+    "GRN-C008": {
+      "updates": 23,
+      "packages": 23
     },
     "GRN-T001": {
       "updates": 18,
@@ -29,16 +37,36 @@
       "updates": 14,
       "packages": 13
     },
+    "GRN-C009": {
+      "updates": 9,
+      "packages": 8
+    },
+    "GRN-C004": {
+      "updates": 6,
+      "packages": 6
+    },
+    "GRN-C007": {
+      "updates": 5,
+      "packages": 4
+    },
     "GRN-C001": {
-      "updates": 3,
+      "updates": 4,
       "packages": 3
+    },
+    "GRN-C012": {
+      "updates": 2,
+      "packages": 2
+    },
+    "GRN-C010": {
+      "updates": 1,
+      "packages": 1
     }
   },
-  "updates_with_coverage_gaps": 291,
+  "updates_with_coverage_gaps": 304,
   "coverage_gaps_by_rule": {
-    "GRN-E001": 141,
-    "GRN-E002": 143,
-    "GRN-E003": 11
+    "GRN-E001": 145,
+    "GRN-E002": 145,
+    "GRN-E003": 18
   },
   "garnet_version": "0.1.0a1",
   "ecosystem": "pypi",

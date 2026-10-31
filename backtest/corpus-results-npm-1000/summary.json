@@ -1,10 +1,14 @@
 {
   "updates": 8742,
   "packages": 989,
-  "updates_warned": 146,
-  "warn_rate": 0.0167,
-  "packages_with_a_warn": 131,
+  "updates_warned": 306,
+  "warn_rate": 0.035,
+  "packages_with_a_warn": 223,
   "warns_by_rule": {
+    "GRN-C008": {
+      "updates": 162,
+      "packages": 103
+    },
     "GRN-T004": {
       "updates": 89,
       "packages": 78
