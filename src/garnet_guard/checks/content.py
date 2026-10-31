@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import posixpath
 import re
+from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import datetime
@@ -12,6 +13,7 @@ from datetime import datetime
 from packaging.tags import Tag
 
 from ..models import (
+    ARGS_TEXT_LIMIT,
     ArtifactFacts,
     CallSite,
     Change,
@@ -210,12 +212,15 @@ def new_pth_file(
 def new_build_hook(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
-    """GRN-C002: new sensitive calls in setup.py, or a new unusual build backend.
+    """GRN-C002: new sensitive calls in setup.py, a sensitive call whose
+    arguments changed, or a new unusual build backend.
 
     Only sdists are compared: a wheel is already built. For npm the rule
     compares install-time scripts instead (``_new_install_script``). A
     trusted version that shipped no sdist had no build code at all, so
-    every build-time call in the new sdist is new.
+    every build-time call in the new sdist is new. A call to a name the
+    trusted setup.py also called is compared by its arguments
+    (``_changed_arguments``).
     """
     if base is None:
         return
@@ -229,18 +234,27 @@ def new_build_hook(
     if b is None and any(a.packagetype == "sdist" for a in base.artifacts):
         return  # the trusted sdist couldn't be read; GRN-E001 says so
     evidence: list[Evidence] = []
-    old_names = {s.name for s in b.setup_py_calls} if b is not None else set()
+    old_calls = b.setup_py_calls if b is not None else ()
+    old_names = {s.name for s in old_calls}
     old_backend = b.build_backend if b is not None else None
+    added = False
+    changed = dict(_changed_arguments(old_calls, c.setup_py_calls, base.version, cand.version))
     for s in c.setup_py_calls:
         if s.name not in old_names:
-            via = f" (in {s.via}())" if s.via else ""
+            added = True
             evidence.append(
                 Evidence(
-                    "file", f"setup.py:{s.line} calls {s.name}{via}", path="setup.py", line=s.line
+                    "file",
+                    f"setup.py:{s.line} calls {s.name}{_via(s)}",
+                    path="setup.py",
+                    line=s.line,
                 )
             )
+        elif s in changed:
+            evidence.append(Evidence("file", changed[s], path="setup.py", line=s.line))
     if c.build_backend != old_backend and c.build_backend is not None:
         if c.build_backend.startswith("in-tree:") or c.build_backend not in BACKEND_ALLOWLIST:
+            added = True
             evidence.append(
                 Evidence(
                     "file",
@@ -253,11 +267,96 @@ def new_build_hook(
             Evidence("note", f"{base.version} shipped no sdist, so it had no build-time code")
         )
     if evidence:
+        what = "adds" if added else "changes"
         yield RawFinding(
             "GRN-C002",
-            f"{cand.version} adds code that runs when the sdist is built",
+            f"{cand.version} {what} code that runs when the sdist is built",
             tuple(evidence[:MAX_EVIDENCE]),
         )
+
+
+def _via(s: CallSite) -> str:
+    return f" (in {s.via}())" if s.via else ""
+
+
+ARGS_SHOWN = 100  # characters of each argument list an evidence line shows
+
+
+def _clip_pair(old: str, new: str) -> tuple[str, str]:
+    """Two argument texts clipped so the place they differ stays in view.
+
+    A long shared beginning is cut down to its last 20 characters, after the
+    opening parenthesis, then each text is clipped to ``ARGS_SHOWN``.
+    """
+    p = len(posixpath.commonprefix([old, new]))
+    if p > 30:
+        old, new = old[0] + "…" + old[p - 20 :], new[0] + "…" + new[p - 20 :]
+    return _clip(old, ARGS_SHOWN), _clip(new, ARGS_SHOWN)
+
+
+def _changed_arguments(
+    old: tuple[CallSite, ...], new: tuple[CallSite, ...], old_version: str, new_version: str
+) -> Iterator[tuple[CallSite, str]]:
+    """Calls in the new setup.py to a name the trusted one called, with
+    arguments the trusted one didn't use, and the evidence line for each.
+
+    For each name, the trusted calls' argument keys are a multiset: each new
+    call, in line order, uses up one trusted call with the same key, and a
+    call with none left is changed, so a call that moved lines or functions
+    matches and a second copy of a trusted call doesn't. A changed call is
+    shown beside a trusted call to the same name that nothing used up, in
+    line order, when there is one. A name whose calls have no recorded
+    arguments is not compared.
+    """
+    for name in sorted({s.name for s in new} & {s.name for s in old}):
+        was = sorted((s for s in old if s.name == name), key=lambda s: s.line)
+        now = sorted((s for s in new if s.name == name), key=lambda s: s.line)
+        if any(s.args_key is None for s in (*was, *now)):
+            continue
+        left = Counter(s.args_key for s in was)
+        unmatched: list[CallSite] = []
+        for s in now:
+            if left[s.args_key] > 0:
+                left[s.args_key] -= 1
+            else:
+                unmatched.append(s)
+        gone: list[CallSite] = []
+        for s in was:
+            if left[s.args_key] > 0:
+                left[s.args_key] -= 1
+                gone.append(s)
+        trusted = Counter(s.args_key for s in was)
+        current = Counter(s.args_key for s in now)
+        for i, s in enumerate(unmatched):
+            if i < len(gone):
+                o = gone[i]
+                before, after = _clip_pair(o.args or "", s.args or "")
+                beyond = ""
+                if o.args == s.args:
+                    long = len(s.args or "") >= ARGS_TEXT_LIMIT
+                    beyond = (
+                        f" (the two differ after the first {ARGS_TEXT_LIMIT:,} characters)"
+                        if long
+                        else " (the two differ in their syntax tree, not in their text)"
+                    )
+                yield (
+                    s,
+                    f"setup.py:{s.line} calls {name}{after}{_via(s)}, changed from "
+                    f"{name}{before} at line {o.line} in {old_version}{beyond}",
+                )
+            elif trusted[s.args_key] > 0:
+                yield (
+                    s,
+                    f"setup.py:{s.line} calls {name}{_clip(s.args or '', ARGS_SHOWN)}{_via(s)} "
+                    f"once more than {old_version} did ({trusted[s.args_key]} such call(s) "
+                    f"in {old_version}, {current[s.args_key]} in {new_version})",
+                )
+            else:
+                yield (
+                    s,
+                    f"setup.py:{s.line} calls {name}{_clip(s.args or '', ARGS_SHOWN)}{_via(s)}: "
+                    f"{old_version} called {name} only with other arguments",
+                )
 
 
 def _new_install_script(base: ReleaseFacts, cand: ReleaseFacts) -> Iterator[RawFinding]:

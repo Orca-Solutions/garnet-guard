@@ -447,6 +447,31 @@ def _rows() -> list[Row]:
         _sdist("1.1", {**SRC, "setup.py": SETUP_SPAWN}),
         eco=PYPI,
     )
+    fires(
+        "GRN-C002",
+        "setup.py's trusted call now runs a different command",
+        _sdist("1.0", {**SRC, "setup.py": SETUP_PHONES_HOME}),
+        _sdist(
+            "1.1",
+            {**SRC, "setup.py": SETUP_PHONES_HOME.replace("'-s', ", "'-s', '-o', '/tmp/x', ")},
+        ),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C002",
+        "setup.py's trusted call moved, keywords reordered",
+        _sdist(
+            "1.0", {**SRC, "setup.py": SETUP_PHONES_HOME.replace("])", "], text=1, timeout=9)")}
+        ),
+        _sdist(
+            "1.1",
+            {
+                **SRC,
+                "setup.py": "\n\n" + SETUP_PHONES_HOME.replace("])", "], timeout=9, text=1)"),
+            },
+        ),
+        eco=PYPI,
+    )
     quiet("GRN-C002", "setup.py unchanged", _sdist("1.0", SRC), _sdist("1.1", SRC), eco=PYPI)
     quiet(
         "GRN-C002",
