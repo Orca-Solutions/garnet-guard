@@ -26,7 +26,9 @@ from ..models import (
     DependencyRelease,
     FactError,
     FileProvenance,
+    IndexFile,
     Limits,
+    ProjectReleases,
     ReleaseFacts,
     Requirement,
     TagInfo,
@@ -878,6 +880,40 @@ def _dependency_release(
             return replace(out, problem=errs[0].summary)
         startup += [f"{f.filename}: {e.path}" for e in listed if _startup_file(e.path)]
     return replace(out, wheels_read=tuple(f.filename for f in wheels), startup_files=tuple(startup))
+
+
+def project_releases(ctx: FetchContext, package: str) -> ProjectReleases:
+    """Every release PyPI lists for a project, with each file's type,
+    Requires-Python and yanked flag (the install wrapper's newest-release
+    check). Raises ``NetError``; a project PyPI doesn't know is
+    ``on_registry=False``.
+    """
+    name = normalize(package)
+    resp = ctx.http.get(f"https://pypi.org/pypi/{name}/json", max_bytes=PROFILE_MAX_BYTES)
+    if resp.status == 404:
+        return ProjectReleases(name, on_registry=False)
+    if resp.status != 200:
+        raise NetError(f"PyPI JSON API returned HTTP {resp.status} for {name}")
+    data = resp.json()
+    releases = data.get("releases") if isinstance(data, dict) else None
+    if not isinstance(releases, dict):
+        releases = {}
+    out: list[tuple[str, tuple[IndexFile, ...]]] = []
+    for version, files in sorted(releases.items()):
+        if not isinstance(files, list):
+            continue
+        listed = tuple(
+            IndexFile(
+                str(f.get("filename", "")),
+                str(f.get("packagetype", "")),
+                f["requires_python"] if isinstance(f.get("requires_python"), str) else None,
+                bool(f.get("yanked")),
+            )
+            for f in files
+            if isinstance(f, dict)
+        )
+        out.append((str(version), listed))
+    return ProjectReleases(name, on_registry=True, releases=tuple(out))
 
 
 def _unfetchable(name: str, version: str, why: str) -> ReleaseFacts:

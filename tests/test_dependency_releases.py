@@ -793,6 +793,86 @@ def test_pypi_index_or_other_options_pin_as_before() -> None:
     assert other_index("uv.lock", b"version = 1\n") is None
 
 
+def _package_lock(packages: dict[str, Any]) -> bytes:
+    doc = {
+        "name": "app",
+        "version": "1.0.0",
+        "lockfileVersion": 3,
+        "requires": True,
+        "packages": {"": {"name": "app", "version": "1.0.0"}, **packages},
+    }
+    return json.dumps(doc, indent=2).encode()
+
+
+def _npm_entry(pkg: str, version: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "version": version,
+        "resolved": f"https://registry.npmjs.org/{pkg}/-/{pkg}-{version}.tgz",
+        "integrity": "sha512-" + "A" * 86 + "==",
+        **extra,
+    }
+
+
+def test_npm_lockfile_versions_are_not_pins_but_outside_sources_are_flagged() -> None:
+    """npm: the range is read, never the lockfile's versions; a package the
+    lockfile installs from git, a URL, under another package's tarball or
+    bundled keeps GRN-C008 at warn."""
+    body = _package_lock(
+        {
+            "node_modules/helper": _npm_entry("helper", "1.0.2"),
+            "node_modules/h2": _npm_entry("helper", "2.0.0", name="helper"),
+            "node_modules/gitdep": {
+                "version": "1.0.0",
+                "resolved": "git+ssh://git@github.com/x/gitdep.git#abc",
+            },
+            "node_modules/parent": _npm_entry("parent", "1.0.0"),
+            "node_modules/parent/node_modules/child": {"version": "2.0.0", "inBundle": True},
+            "node_modules/ms-alias": _npm_entry("evil", "2.1.1", name="ms"),
+        }
+    )
+    assert pinned_versions("package-lock.json", body) == {
+        ("npm", "child"): (),
+        ("npm", "gitdep"): (),
+        ("npm", "ms"): (),
+    }
+
+
+def test_python_lockfile_package_from_outside_pypi_maps_to_nothing() -> None:
+    uv = b"""version = 1
+[[package]]
+name = "helper"
+version = "1.0.2"
+source = { registry = "https://private.invalid/simple" }
+
+[[package]]
+name = "other"
+version = "2.0"
+source = { registry = "https://pypi.org/simple" }
+"""
+    assert pinned_versions("uv.lock", uv) == {("pypi", "helper"): (), ("pypi", "other"): ("2.0",)}
+    # one lockfile installing it from elsewhere wins over another's pin
+    assert merge_pins([{("pypi", "helper"): ("1.0.2",)}, {("pypi", "helper"): ()}]) == {
+        ("pypi", "helper"): ()
+    }
+    assert merge_pins([{("pypi", "x"): ("1",)}, {("pypi", "helper"): ()}]) == {
+        ("pypi", "helper"): ()
+    }
+
+
+@pytest.mark.parametrize("ecosystem", ["npm", "pypi"])
+def test_engine_reads_nothing_for_a_package_installed_from_outside(ecosystem: str) -> None:
+    req = HELPER if ecosystem == "npm" else PYREQ
+    fetcher = _Fetcher(_installs(_npm_release()))
+    base, cand = _rel(ecosystem, "1.0"), _rel(ecosystem, "1.1", req)
+    got = with_dependency_profiles(cast(Any, fetcher), base, cand, {(ecosystem, "helper"): ()})
+    assert fetcher.calls == []
+    (installs,) = got.dependency_installs
+    assert installs.problem is not None and "from outside the registry" in installs.problem
+    change = NPM if ecosystem == "npm" else PYPI
+    f = _c008(change, base, got, got.dependency_installs)
+    assert f.severity == Severity.WARN and "no release Garnet can read" in f.evidence[0].summary
+
+
 def test_check_takes_pins_from_the_lockfiles_each_change_is_in(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

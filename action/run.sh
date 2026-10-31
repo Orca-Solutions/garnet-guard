@@ -166,7 +166,8 @@ else
   # The files garnet check discovers on its own.
   shopt -s nullglob
   heads=("$ws/uv.lock" "$ws/poetry.lock" "$ws/pylock.toml" "$ws"/pylock.*.toml
-         "$ws"/requirements*.txt "$ws/requirements" "$ws"/requirements/*.txt)
+         "$ws"/requirements*.txt "$ws/requirements" "$ws"/requirements/*.txt
+         "$ws/package-lock.json" "$ws/npm-shrinkwrap.json" "$ws/yarn.lock" "$ws/pnpm-lock.yaml")
   shopt -u nullglob
 fi
 

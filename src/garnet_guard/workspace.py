@@ -6,16 +6,33 @@ never runs anything from a package.
 
 from __future__ import annotations
 
+import os
 import stat
 import subprocess
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .lockfiles import LockfileError, Pin, detect, diff_pins, parse, requirements
+from .lockfiles.base import MAX_LOCKFILE_BYTES
 from .lockfiles.diff import new_unchecked
+from .lockfiles.registries import (
+    NONE,
+    NPMRC,
+    PNPM_WORKSPACE,
+    YARNRC,
+    Registries,
+    npmrc,
+    pnpm_workspace,
+    yarnrc,
+)
+from .lockfiles.yarn import is_berry_text
 from .models import Change
 
 _DIRECT = ("uv.lock", "poetry.lock", "pylock.toml")
+_NPM = ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml")
+# Registry settings files are a few KB; anything this size isn't one.
+MAX_SETTINGS_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -33,7 +50,8 @@ def _present(path: Path) -> bool:
 
 
 def discover(root: Path) -> list[Path]:
-    """Lockfiles in ``root`` (and ``requirements/``), in a stable order.
+    """Lockfiles in ``root`` (and ``requirements/``), in a stable order:
+    Python's, then npm's.
 
     Symlinked entries are returned, not followed; check them with
     :func:`plain_file` before reading.
@@ -47,6 +65,9 @@ def discover(root: Path) -> list[Path]:
     req_dir = root / "requirements"
     if req_dir.is_dir():
         found += sorted(p for p in req_dir.glob("*.txt") if _present(p))
+    for name in _NPM:
+        if _present(root / name):
+            found.append(root / name)
     return found
 
 
@@ -75,6 +96,74 @@ def plain_file(path: Path, root: Path) -> bool:
     return stat.S_ISREG(mode)
 
 
+def registry_settings(lockfile: Path, data: bytes, root: Path) -> Registries:
+    """What the repository says about registries for this lockfile: the
+    .npmrc and pnpm-workspace.yaml beside a pnpm-lock.yaml, or the
+    .yarnrc.yml beside a Yarn 2+ yarn.lock. Other formats record the
+    registry themselves.
+
+    Only the registry keys are read, and nothing from the files is shown. A
+    settings file that is a symlink is refused, as a lockfile is.
+    """
+    try:
+        fmt = detect(lockfile.name, data)
+    except LockfileError:
+        return NONE  # parse reports it
+    if fmt == "pnpm-lock.yaml":
+        files = [(NPMRC, npmrc), (PNPM_WORKSPACE, pnpm_workspace)]
+    elif fmt == "yarn.lock" and _berry(data):
+        files = [(YARNRC, yarnrc)]
+    else:
+        return NONE
+    found = []
+    for name, read in files:
+        settings = _settings_file(lockfile.parent / name, read, lockfile, root)
+        if settings is not None:
+            found.append(settings)
+    if not found:
+        return NONE
+    first, *rest = found
+    return replace(first, also=rest[0]) if rest else first
+
+
+def _berry(data: bytes) -> bool:
+    """True if ``yarn.parse`` reads ``data`` as a Yarn 2+ lockfile."""
+    try:
+        return is_berry_text(data.decode("utf-8"))
+    except UnicodeDecodeError:
+        return False  # parse reports it
+
+
+def _settings_file(
+    path: Path, read: Callable[[str], Registries], lockfile: Path, root: Path
+) -> Registries | None:
+    if not (path.exists() or path.is_symlink()):
+        return None
+    shown = os.path.relpath(path, root) if path.is_absolute() else path.as_posix()
+    if not plain_file(path, root):
+        raise LockfileError(
+            f"{shown} is not a regular file, so Garnet can't tell which registry "
+            f"{lockfile.name} installs from"
+        )
+    if path.stat().st_size > MAX_SETTINGS_BYTES:
+        raise LockfileError(f"{shown} is larger than 1 MiB, the most Garnet reads")
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as err:
+        raise LockfileError(f"{shown} is not UTF-8") from err
+    try:
+        return read(text)
+    except LockfileError as err:
+        raise LockfileError(f"{shown}: {err}") from err
+
+
+def read_lockfile(path: Path) -> bytes:
+    """A lockfile's bytes, refusing one too large to be real before reading it."""
+    if path.stat().st_size > MAX_LOCKFILE_BYTES:
+        raise LockfileError(f"{path.name} is larger than 64 MiB, the most Garnet reads")
+    return path.read_bytes()
+
+
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
     cmd = ["git", *args]
     return subprocess.run(cmd, cwd=cwd, capture_output=True, check=False)  # noqa: S603
@@ -98,16 +187,23 @@ def git_show(ref: str, path: Path, *, cwd: Path) -> bytes | None:
 
 
 def changes_for(
-    head_name: str, head: bytes, base: bytes | None
+    head_name: str, head: bytes, base: bytes | None, *, registries: Registries | None = None
 ) -> tuple[list[Change], list[Unchecked]]:
     """The changes to check in one lockfile, and the new entries Garnet can't check.
 
     ``base`` is None when the lockfile is new, so every entry is a change.
+    Each change carries its pin's ecosystem. ``registries`` (from
+    :func:`registry_settings`) applies to both versions.
     """
-    head_pins = parse(head_name, head)
-    base_pins: list[Pin] = parse(head_name, base) if base is not None else []
+    head_pins = parse(head_name, head, registries=registries)
+    base_pins: list[Pin] = []
+    if base is not None:
+        try:
+            base_pins = parse(head_name, base, registries=registries)
+        except LockfileError as err:
+            raise LockfileError(f"{err} (in the base version)") from err
     changes = [
-        Change("pypi", c.package, c.baseline, c.candidate, lockfile=head_name, line=c.line)
+        Change(c.ecosystem, c.package, c.baseline, c.candidate, lockfile=head_name, line=c.line)
         for c in diff_pins(base_pins, head_pins)
     ]
     unchecked = []
@@ -121,7 +217,7 @@ def changes_for(
             else p.detail or "unsupported source"
         )
         change = Change(
-            "pypi",
+            p.ecosystem,
             p.package,
             None,
             p.version or ("unpinned" if p.source == "unpinned" else "unchecked"),
@@ -135,25 +231,54 @@ def changes_for(
 PinTable = dict[tuple[str, str], tuple[str, ...]]
 
 
-def pinned_versions(head_name: str, head: bytes) -> PinTable:
-    """The versions a lockfile pins from PyPI, by ("pypi", normalized name).
-    GRN-C008 reads these for a young dependency instead of its whole range.
+# The lockfiles whose pins GRN-C008 reads. npm lockfiles aren't among them:
+# a package can sit in the tree several times, aliased or bundled, so a
+# young npm dependency's range is read instead.
+_PIN_FORMATS = frozenset({"requirements.txt", "uv.lock", "poetry.lock", "pylock.toml"})
 
-    A package with any entry under an environment marker, or any entry that
-    isn't a PyPI pin, is left out: on some machines something else installs,
-    so GRN-C008 reads the range instead. A requirements file that names
-    another index (``other_index``) pins nothing.
+
+def pinned_versions(
+    head_name: str, head: bytes, *, registries: Registries | None = None
+) -> PinTable:
+    """What a lockfile says about the packages GRN-C008 may read for a young
+    dependency, by (ecosystem, name).
+
+    For a Python lockfile, the versions it pins from PyPI, read instead of
+    the dependency's whole range. A package with an entry under an
+    environment marker, or that isn't pinned with ``==``, is left out, so
+    the range is read. A package the lockfile installs from somewhere else
+    (a URL, a path, git, another index, bundled in a package) maps to ``()``:
+    no release Garnet can read is what installs, so GRN-C008 keeps its
+    severity. A requirements file that names another index
+    (``other_index``) gives nothing here; the change carries that instead.
+
+    An npm lockfile's versions aren't used: only its packages from outside
+    the registry, as ``()``.
     """
+    try:
+        fmt = detect(head_name, head)
+        pins = parse(head_name, head, registries=registries)
+    except LockfileError:
+        return {}  # changes_for reports it
+    if fmt not in _PIN_FORMATS:
+        return {(p.ecosystem, p.package): () for p in pins if p.source == "unsupported"}
     if other_index(head_name, head) is not None:
-        return {}  # pip could install any of them from another index
+        return {}
     out: dict[tuple[str, str], set[str]] = {}
     unsure: set[str] = set()
-    for p in parse(head_name, head):
-        if p.source == "pypi" and p.version and not p.marker:
+    outside: set[str] = set()
+    for p in pins:
+        if p.ecosystem != "pypi":
+            continue
+        if p.source == "unsupported":
+            outside.add(p.package)
+        elif p.source == "registry" and p.version and not p.marker:
             out.setdefault(("pypi", p.package), set()).add(p.version)
         else:
             unsure.add(p.package)
-    return {k: tuple(sorted(v)) for k, v in out.items() if k[1] not in unsure}
+    table: PinTable = {k: tuple(sorted(v)) for k, v in out.items() if k[1] not in unsure | outside}
+    table.update({("pypi", name): () for name in outside})
+    return table
 
 
 def other_index(head_name: str, head: bytes) -> str | None:
@@ -161,7 +286,10 @@ def other_index(head_name: str, head: bytes) -> str | None:
     other than PyPI (``--extra-index-url``, ``--find-links``, ``--no-index``,
     or ``--index-url`` naming another index), or None. GRN-C008 can't tell
     which index serves a young dependency of a change from such a file."""
-    if detect(head_name, head) != "requirements.txt":
+    try:
+        if detect(head_name, head) != "requirements.txt":
+            return None
+    except LockfileError:
         return None
     return requirements.other_index(head.decode("utf-8", "replace"))
 
@@ -169,16 +297,20 @@ def other_index(head_name: str, head: bytes) -> str | None:
 def merge_pins(tables: list[PinTable]) -> PinTable:
     """The pins a change can rely on when it comes from several lockfiles: a
     package every one of them pins, with all their versions. A package one
-    of them doesn't pin is left out, so GRN-C008 reads its range."""
+    of them doesn't pin is left out, so GRN-C008 reads its range, unless one
+    of them installs it from outside the registry (``()``), which wins."""
     if not tables:
         return {}
-    keys = set(tables[0]).intersection(*tables[1:])
-    return {k: tuple(sorted({v for t in tables for v in t[k]})) for k in keys}
+    outside = {k for t in tables for k, v in t.items() if not v}
+    keys = set(tables[0]).intersection(*tables[1:]) - outside
+    merged: PinTable = {k: tuple(sorted({v for t in tables for v in t[k]})) for k in keys}
+    merged.update(dict.fromkeys(outside, ()))
+    return merged
 
 
 def dedupe(changes: list[Change]) -> list[Change]:
-    """One change per (package, baseline, candidate), keeping the first lockfile."""
-    seen: dict[tuple[str, str | None, str], Change] = {}
+    """One change per (ecosystem, package, baseline, candidate), keeping the first lockfile."""
+    seen: dict[tuple[str, str, str | None, str], Change] = {}
     for c in changes:
-        seen.setdefault((c.package, c.baseline, c.candidate), c)
+        seen.setdefault((c.ecosystem, c.package, c.baseline, c.candidate), c)
     return list(seen.values())

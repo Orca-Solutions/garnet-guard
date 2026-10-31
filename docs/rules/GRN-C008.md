@@ -95,7 +95,15 @@ that depends on dist-tags, deprecations, `engines`, yanks, resolution strategy (
   lockfiles of the repository aren't used. A requirements file with `--extra-index-url`,
   `--find-links` (`-f`), `--no-index` or an `--index-url` (`-i`) other than PyPI, anywhere in
   it, pins nothing, and a change from such a file keeps `warn` without a read: pip can install
-  the helper from somewhere Garnet doesn't look.
+  the helper from somewhere Garnet doesn't look. npm lockfiles (package-lock.json, yarn.lock,
+  pnpm-lock.yaml) aren't used for versions, since a package can sit in the tree several times,
+  aliased or bundled; the range is read instead.
+- When a lockfile the change comes from installs the dependency from outside the registry (git,
+  a URL, a path, another index, or bundled inside another package), nothing is read and the
+  dependency keeps `warn`: no registry release is the one that installs.
+- `garnet pip install` and `garnet uv` read the versions their resolution installs (pip's
+  report and what is installed already, or the new `uv.lock`), with the same rule for packages
+  from outside PyPI.
 - Otherwise, every version the registry lists that the requirement admits, whenever it was
   published, up to the time of the lookup. On npm the range follows node-semver's rules, with
   prereleases only when the range names one. A spec that admits any version (`*`, `x`, an

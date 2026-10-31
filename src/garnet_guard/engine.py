@@ -27,6 +27,7 @@ from .models import (
     Ignore,
     Limits,
     Policy,
+    ProjectReleases,
     RawFinding,
     ReleaseFacts,
     Requirement,
@@ -114,6 +115,10 @@ class Fetcher:
             replay=self.options.replay.get(version),
             advisories=advisories,
         )
+
+    def pypi_releases(self, package: str) -> ProjectReleases:
+        """PyPI's release list for one project. Raises ``NetError``."""
+        return pypi.project_releases(self._pypi, package)
 
     def dependency_profile(self, ecosystem: str, name: str) -> DependencyProfile:
         """What the registry says about a package, fetched once per run. Raises ``NetError``."""
@@ -204,7 +209,9 @@ def with_dependency_installs(
     """The candidate with the releases GRN-C008 reads for each young
     dependency that shares an owner with the trusted package, read after the
     profiles: the versions ``pins`` (the lockfiles this change came from)
-    gives for it, else every published version its range allows. A read
+    gives for it, else every published version its range allows. One the
+    pins map to ``()`` installs from outside the registry: nothing is read,
+    and its ``problem`` says so. A read
     that fails is a GRN-E001 naming GRN-C008, and the rule keeps its
     severity for that dependency. Releases the facts already carry are kept.
     When a lockfile the change came from lets pip use another index
@@ -224,9 +231,17 @@ def with_dependency_installs(
             )
             got.append(DependencyInstalls(r.package, r.spec, problem=why))
             continue
-        pinned = (pins or {}).get((cand.ecosystem, normalize(cand.ecosystem, r.package)), ())
+        pinned = (pins or {}).get((cand.ecosystem, normalize(cand.ecosystem, r.package)))
+        if pinned == ():
+            why = (
+                f"the lockfile installs {r.package} from outside the registry (a URL, a path, "
+                "git, another index or a bundled copy), so no release Garnet can read is the "
+                "one that installs"
+            )
+            got.append(DependencyInstalls(r.package, r.spec, problem=why))
+            continue
         try:
-            got.append(fetcher.dependency_installs(cand.ecosystem, r, pinned))
+            got.append(fetcher.dependency_installs(cand.ecosystem, r, pinned or ()))
         except (NetError, ValueError, TypeError, KeyError, AttributeError) as err:
             errors.append(install_lookup_error(err, r.package, cand.version))
     return replace(
@@ -419,6 +434,13 @@ def compare(
         cand = with_dependency_profiles(fetcher, base, facts[candidate])
     change = Change(ecosystem, name, baseline, candidate)
     return run_checks(change, base, cand, policy=policy, today=opts.today)
+
+
+def pypi_releases(package: str, options: Options | None = None) -> ProjectReleases:
+    """Every release PyPI lists for ``package``, with its files (the install
+    wrapper's newest-release check). Raises ``NetError``."""
+    with Fetcher(options or Options()) as fetcher:
+        return fetcher.pypi_releases(package)
 
 
 def evaluate(

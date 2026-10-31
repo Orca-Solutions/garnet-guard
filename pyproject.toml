@@ -26,6 +26,7 @@ dependencies = [
     "httpx>=0.28.1",
     "packaging>=26.3",
     "pypi-attestations>=0.0.30",
+    "pyyaml>=6.0.2",
     "sigstore>=4.5.1,<5",
 ]
 
@@ -41,6 +42,7 @@ dev = [
     "pytest>=9.1.1",
     "respx>=0.23.1",
     "ruff>=0.17.0",
+    "types-pyyaml>=6.0.12.20260906",
 ]
 
 [project.urls]
@@ -51,8 +53,8 @@ Issues = "https://github.com/orca-solutions/garnet-guard/issues"
 Changelog = "https://github.com/orca-solutions/garnet-guard/blob/main/CHANGELOG.md"
 
 [project.scripts]
-garnet = "garnet_guard.cli:main"
-garnet-guard = "garnet_guard.cli:main" # so `uvx garnet-guard` works (ADR-0007)
+garnet = "garnet_guard.console:main"
+garnet-guard = "garnet_guard.console:main" # so `uvx garnet-guard` works (ADR-0007)
 
 [tool.ruff]
 line-length = 100
@@ -144,6 +146,51 @@ source_modules = [
     "garnet_guard.cli",
     "garnet_guard.safe_archive",
     "garnet_guard.policy",
+    "garnet_guard.install",
+    "garnet_guard.console",
 ]
 forbidden_modules = ["httpx"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "the install wrapper and hooks fetch and read releases only through the engine"
+type = "forbidden"
+source_modules = ["garnet_guard.install"]
+forbidden_modules = [
+    "garnet_guard.net",
+    "garnet_guard.safe_archive",
+    "garnet_guard.facts",
+    "garnet_guard.ecosystems",
+    "garnet_guard.checks",
+    "httpx",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "nothing below the surfaces imports the install wrapper or hooks"
+type = "forbidden"
+source_modules = [
+    "garnet_guard.models",
+    "garnet_guard.policy",
+    "garnet_guard.checks",
+    "garnet_guard.facts",
+    "garnet_guard.ecosystems",
+    "garnet_guard.lockfiles",
+    "garnet_guard.engine",
+    "garnet_guard.report",
+    "garnet_guard.sarif",
+    "garnet_guard.markdown",
+    "garnet_guard.workspace",
+    "garnet_guard.net",
+    "garnet_guard.safe_archive",
+]
+forbidden_modules = ["garnet_guard.install", "garnet_guard.console"]
+
+[[tool.importlinter.contracts]]
+name = "only lockfiles/yamldoc.py imports PyYAML (ADR-0016)"
+type = "forbidden"
+# The whole package, so a module added later is covered too.
+source_modules = ["garnet_guard"]
+forbidden_modules = ["yaml"]
+ignore_imports = ["garnet_guard.lockfiles.yamldoc -> yaml"]
 allow_indirect_imports = true

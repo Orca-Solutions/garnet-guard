@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: orca-solutions/garnet-guard@42547f6313420768a2bf5d03e9577a68844496e9 # v0.1.0a1
+      - uses: orca-solutions/garnet-guard@e6e9f44a24bb11ca1b20d339650104a7e273efc1 # v0.2.0
         id: garnet
         with:
           comment: false

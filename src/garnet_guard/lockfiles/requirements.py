@@ -11,7 +11,7 @@ _PINNED = re.compile(rf"^({_NAME})\s*(\[[^\]]*\])?\s*===?\s*([^\s;,]+)\s*(;.*)?$
 _NAMED = re.compile(rf"^({_NAME})\s*(\[[^\]]*\])?\s*(.*)$")
 
 
-def _logical_lines(text: str) -> list[tuple[int, str]]:
+def logical_lines(text: str) -> list[tuple[int, str]]:
     """Join backslash continuations; strip comments. Returns (first line, text)."""
     out: list[tuple[int, str]] = []
     buf = ""
@@ -40,7 +40,7 @@ def other_index(text: str) -> str | None:
     """The first option, anywhere in the file, that makes pip look for
     packages somewhere other than PyPI (``--index-url`` naming another index,
     ``--extra-index-url``, ``--find-links``, ``--no-index``), or None."""
-    for _, line in _logical_lines(text):
+    for _, line in logical_lines(text):
         m = _FIND_ELSEWHERE.match(line)
         if m is not None:
             return m.group(1)
@@ -61,7 +61,7 @@ def parse(text: str) -> list[Pin]:
     """
     pins: list[Pin] = []
     private_index: str | None = None
-    for line_no, line in _logical_lines(text):
+    for line_no, line in logical_lines(text):
         # drop per-requirement options such as --hash
         line = re.sub(r"\s--hash[=\s]\S+", "", line).strip()
         if line.startswith(("-i ", "--index-url")):

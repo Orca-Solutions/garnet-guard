@@ -146,7 +146,8 @@ class Ignore:
     """One ``[[garnet.ignore]]`` entry: findings someone reviewed and accepted.
 
     It applies to ``rules`` for ``package`` (and ``versions`` of the candidate,
-    when set) through ``until``, then stops applying. ``package`` is normalized.
+    when set) through ``until``, then stops applying. ``package`` is kept as
+    written; it matches PEP 503 normalized on PyPI and exactly on npm.
     """
 
     package: str
@@ -604,3 +605,27 @@ class ReleaseFacts:
     def content(self) -> tuple[ArtifactFacts, ...]:
         """The artifacts whose contents were inspected."""
         return tuple(a for a in self.artifacts if a.inspected)
+
+
+@dataclass(frozen=True)
+class IndexFile:
+    """One file of a release as the registry lists it, for the install wrapper."""
+
+    filename: str
+    packagetype: str  # "bdist_wheel", "sdist", ...
+    requires_python: str | None = None
+    yanked: bool = False
+
+
+@dataclass(frozen=True)
+class ProjectReleases:
+    """Every release a registry lists for one project, with its files.
+
+    The install wrapper uses it to see whether resolving with builds off
+    picked a lower release than the package manager would (SPEC §10.3), and
+    to say why a requirement has no wheel it can use.
+    """
+
+    name: str
+    on_registry: bool
+    releases: tuple[tuple[str, tuple[IndexFile, ...]], ...] = ()  # (version, files)
