@@ -12,11 +12,14 @@ from .engine import Report
 from .models import Finding, Ignore, Severity
 from .policy import describe
 
-_CTRL = re.compile("[\\x00-\\x08\\x0b-\\x1f\\x7f-\\x9f\\u202a-\\u202e\\u2066-\\u2069]")
+_CTRL = re.compile("[\\x00-\\x08\\x0a-\\x1f\\x7f-\\x9f\\u202a-\\u202e\\u2066-\\u2069]")
 
 
 def escape(text: str) -> str:
-    """Neutralize control characters and bidi overrides for terminals."""
+    """Neutralize control characters and bidi overrides for terminals.
+
+    A line break is escaped too, so a field can't pass for a line of its own.
+    """
     return _CTRL.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
 
 

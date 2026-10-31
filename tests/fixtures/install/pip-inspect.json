@@ -1,0 +1,76 @@
+{
+ "environment": {
+  "python_full_version": "3.13.17",
+  "sys_platform": "linux"
+ },
+ "installed": [
+  {
+   "installer": "pip",
+   "metadata": {
+    "metadata_version": "2.5",
+    "name": "urllib3",
+    "requires_python": ">=3.10",
+    "version": "2.8.0"
+   },
+   "metadata_location": "/tmp/claude-0/-home-claude/e6324af0-2902-5ae1-ad31-b423712b859e/scratchpad/wrapper/exp/v1/lib/python3.13/site-packages/urllib3-2.8.0.dist-info",
+   "requested": false
+  },
+  {
+   "installer": "pip",
+   "metadata": {
+    "metadata_version": "2.4",
+    "name": "charset-normalizer",
+    "requires_python": ">=3.7",
+    "version": "3.5.2"
+   },
+   "metadata_location": "/tmp/claude-0/-home-claude/e6324af0-2902-5ae1-ad31-b423712b859e/scratchpad/wrapper/exp/v1/lib/python3.13/site-packages/charset_normalizer-3.5.2.dist-info",
+   "requested": false
+  },
+  {
+   "installer": "pip",
+   "metadata": {
+    "metadata_version": "2.1",
+    "name": "requests",
+    "requires_python": ">=3.8",
+    "version": "2.32.2"
+   },
+   "metadata_location": "/tmp/claude-0/-home-claude/e6324af0-2902-5ae1-ad31-b423712b859e/scratchpad/wrapper/exp/v1/lib/python3.13/site-packages/requests-2.32.2.dist-info",
+   "requested": true
+  },
+  {
+   "installer": "pip",
+   "metadata": {
+    "metadata_version": "2.4",
+    "name": "pip",
+    "requires_python": ">=3.10",
+    "version": "26.2.2"
+   },
+   "metadata_location": "/tmp/claude-0/-home-claude/e6324af0-2902-5ae1-ad31-b423712b859e/scratchpad/wrapper/exp/v1/lib/python3.13/site-packages/pip-26.2.2.dist-info",
+   "requested": true
+  },
+  {
+   "installer": "pip",
+   "metadata": {
+    "metadata_version": "2.5",
+    "name": "idna",
+    "requires_python": ">=3.9",
+    "version": "3.20"
+   },
+   "metadata_location": "/tmp/claude-0/-home-claude/e6324af0-2902-5ae1-ad31-b423712b859e/scratchpad/wrapper/exp/v1/lib/python3.13/site-packages/idna-3.20.dist-info",
+   "requested": false
+  },
+  {
+   "installer": "pip",
+   "metadata": {
+    "metadata_version": "2.4",
+    "name": "certifi",
+    "requires_python": ">=3.7",
+    "version": "2026.10.23"
+   },
+   "metadata_location": "/tmp/claude-0/-home-claude/e6324af0-2902-5ae1-ad31-b423712b859e/scratchpad/wrapper/exp/v1/lib/python3.13/site-packages/certifi-2026.10.23.dist-info",
+   "requested": false
+  }
+ ],
+ "pip_version": "26.2.2",
+ "version": "1"
+}

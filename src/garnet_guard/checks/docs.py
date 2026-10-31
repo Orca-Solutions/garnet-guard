@@ -229,7 +229,9 @@ _DOCS: tuple[RuleDoc, ...] = (
         ".egg-info folder at the wheel's root or under <name>.data/purelib/ or platlib/, line by "
         "line as importlib.metadata does; lines removed, repeated or reordered with nothing new "
         "running are not reported, and in a group whose tool loads every line (setuptools.*, "
-        "flake8, keyring and others) only a new target counts. It is a warning for a group another tool loads by itself (pytest11, "
+        "flake8, keyring and others) only a new target counts, and where the tool ignores a "
+        "line's name too (pygments.lexers, keyring and others) only a target new to the group. "
+        "It is a warning for a group another tool loads by itself (pytest11, "
         "setuptools.*, flake8, keyring and others) and for a new script in the wheel's own "
         "entry_points.txt with a common command's name (pip, git, curl and the others on the "
         "rule page) other than the project's own; any other new or changed entry point is info. "
@@ -355,10 +357,13 @@ _DOCS += (
         "unsupported-source",
         "absolute",
         Severity.INFO,
-        "A dependency comes from a source Garnet doesn't check: git, a local path, a direct URL or a private index.",
-        "Garnet compares releases published on PyPI. Code from other sources wasn't checked, and it "
-        "isn't passed either.",
-        "Review the change to that dependency by hand.",
+        "A dependency comes from a source Garnet doesn't check: git, a local path, a direct URL, a private "
+        "index or registry, or another npm package's tarball (a bundled dependency).",
+        "Garnet compares releases published on PyPI and npm. Code from other sources wasn't checked, and "
+        "it isn't passed either.",
+        "Review the change to that dependency by hand. A bundled dependency changes only with the package "
+        "that ships it, so review that package's update, or the lockfile edit itself if that package "
+        "didn't change.",
     ),
 )
 

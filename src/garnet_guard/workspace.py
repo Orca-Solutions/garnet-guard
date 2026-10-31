@@ -6,16 +6,33 @@ never runs anything from a package.
 
 from __future__ import annotations
 
+import os
 import stat
 import subprocess
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .lockfiles import LockfileError, Pin, diff_pins, parse
+from .lockfiles import LockfileError, Pin, detect, diff_pins, parse
+from .lockfiles.base import MAX_LOCKFILE_BYTES
 from .lockfiles.diff import new_unchecked
+from .lockfiles.registries import (
+    NONE,
+    NPMRC,
+    PNPM_WORKSPACE,
+    YARNRC,
+    Registries,
+    npmrc,
+    pnpm_workspace,
+    yarnrc,
+)
+from .lockfiles.yarn import is_berry_text
 from .models import Change
 
 _DIRECT = ("uv.lock", "poetry.lock", "pylock.toml")
+_NPM = ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml")
+# Registry settings files are a few KB; anything this size isn't one.
+MAX_SETTINGS_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -33,7 +50,8 @@ def _present(path: Path) -> bool:
 
 
 def discover(root: Path) -> list[Path]:
-    """Lockfiles in ``root`` (and ``requirements/``), in a stable order.
+    """Lockfiles in ``root`` (and ``requirements/``), in a stable order:
+    Python's, then npm's.
 
     Symlinked entries are returned, not followed; check them with
     :func:`plain_file` before reading.
@@ -47,6 +65,9 @@ def discover(root: Path) -> list[Path]:
     req_dir = root / "requirements"
     if req_dir.is_dir():
         found += sorted(p for p in req_dir.glob("*.txt") if _present(p))
+    for name in _NPM:
+        if _present(root / name):
+            found.append(root / name)
     return found
 
 
@@ -75,6 +96,74 @@ def plain_file(path: Path, root: Path) -> bool:
     return stat.S_ISREG(mode)
 
 
+def registry_settings(lockfile: Path, data: bytes, root: Path) -> Registries:
+    """What the repository says about registries for this lockfile: the
+    .npmrc and pnpm-workspace.yaml beside a pnpm-lock.yaml, or the
+    .yarnrc.yml beside a Yarn 2+ yarn.lock. Other formats record the
+    registry themselves.
+
+    Only the registry keys are read, and nothing from the files is shown. A
+    settings file that is a symlink is refused, as a lockfile is.
+    """
+    try:
+        fmt = detect(lockfile.name, data)
+    except LockfileError:
+        return NONE  # parse reports it
+    if fmt == "pnpm-lock.yaml":
+        files = [(NPMRC, npmrc), (PNPM_WORKSPACE, pnpm_workspace)]
+    elif fmt == "yarn.lock" and _berry(data):
+        files = [(YARNRC, yarnrc)]
+    else:
+        return NONE
+    found = []
+    for name, read in files:
+        settings = _settings_file(lockfile.parent / name, read, lockfile, root)
+        if settings is not None:
+            found.append(settings)
+    if not found:
+        return NONE
+    first, *rest = found
+    return replace(first, also=rest[0]) if rest else first
+
+
+def _berry(data: bytes) -> bool:
+    """True if ``yarn.parse`` reads ``data`` as a Yarn 2+ lockfile."""
+    try:
+        return is_berry_text(data.decode("utf-8"))
+    except UnicodeDecodeError:
+        return False  # parse reports it
+
+
+def _settings_file(
+    path: Path, read: Callable[[str], Registries], lockfile: Path, root: Path
+) -> Registries | None:
+    if not (path.exists() or path.is_symlink()):
+        return None
+    shown = os.path.relpath(path, root) if path.is_absolute() else path.as_posix()
+    if not plain_file(path, root):
+        raise LockfileError(
+            f"{shown} is not a regular file, so Garnet can't tell which registry "
+            f"{lockfile.name} installs from"
+        )
+    if path.stat().st_size > MAX_SETTINGS_BYTES:
+        raise LockfileError(f"{shown} is larger than 1 MiB, the most Garnet reads")
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as err:
+        raise LockfileError(f"{shown} is not UTF-8") from err
+    try:
+        return read(text)
+    except LockfileError as err:
+        raise LockfileError(f"{shown}: {err}") from err
+
+
+def read_lockfile(path: Path) -> bytes:
+    """A lockfile's bytes, refusing one too large to be real before reading it."""
+    if path.stat().st_size > MAX_LOCKFILE_BYTES:
+        raise LockfileError(f"{path.name} is larger than 64 MiB, the most Garnet reads")
+    return path.read_bytes()
+
+
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
     cmd = ["git", *args]
     return subprocess.run(cmd, cwd=cwd, capture_output=True, check=False)  # noqa: S603
@@ -98,16 +187,23 @@ def git_show(ref: str, path: Path, *, cwd: Path) -> bytes | None:
 
 
 def changes_for(
-    head_name: str, head: bytes, base: bytes | None
+    head_name: str, head: bytes, base: bytes | None, *, registries: Registries | None = None
 ) -> tuple[list[Change], list[Unchecked]]:
     """The changes to check in one lockfile, and the new entries Garnet can't check.
 
     ``base`` is None when the lockfile is new, so every entry is a change.
+    Each change carries its pin's ecosystem. ``registries`` (from
+    :func:`registry_settings`) applies to both versions.
     """
-    head_pins = parse(head_name, head)
-    base_pins: list[Pin] = parse(head_name, base) if base is not None else []
+    head_pins = parse(head_name, head, registries=registries)
+    base_pins: list[Pin] = []
+    if base is not None:
+        try:
+            base_pins = parse(head_name, base, registries=registries)
+        except LockfileError as err:
+            raise LockfileError(f"{err} (in the base version)") from err
     changes = [
-        Change("pypi", c.package, c.baseline, c.candidate, lockfile=head_name, line=c.line)
+        Change(c.ecosystem, c.package, c.baseline, c.candidate, lockfile=head_name, line=c.line)
         for c in diff_pins(base_pins, head_pins)
     ]
     unchecked = []
@@ -121,7 +217,7 @@ def changes_for(
             else p.detail or "unsupported source"
         )
         change = Change(
-            "pypi",
+            p.ecosystem,
             p.package,
             None,
             p.version or ("unpinned" if p.source == "unpinned" else "unchecked"),
@@ -133,8 +229,8 @@ def changes_for(
 
 
 def dedupe(changes: list[Change]) -> list[Change]:
-    """One change per (package, baseline, candidate), keeping the first lockfile."""
-    seen: dict[tuple[str, str | None, str], Change] = {}
+    """One change per (ecosystem, package, baseline, candidate), keeping the first lockfile."""
+    seen: dict[tuple[str, str, str | None, str], Change] = {}
     for c in changes:
-        seen.setdefault((c.package, c.baseline, c.candidate), c)
+        seen.setdefault((c.ecosystem, c.package, c.baseline, c.candidate), c)
     return list(seen.values())

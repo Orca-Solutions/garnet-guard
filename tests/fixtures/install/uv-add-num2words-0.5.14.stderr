@@ -1,0 +1,10 @@
+Using CPython 3.14.6
+  × No solution found when resolving dependencies:
+  ╰─▶ Because docopt==0.6.2 has no usable wheels and only docopt<=0.6.2 is
+      available, we can conclude that docopt>=0.6.2 cannot be used.
+      And because num2words>=0.5.14 depends on docopt>=0.6.2 and your project
+      depends on num2words==0.5.14, we can conclude that your project's
+      requirements are unsatisfiable.
+
+hint: Wheels are required for `docopt` because building from source is disabled for all packages (i.e., with `--no-build`)
+hint: If you want to add the package regardless of the failed resolution, provide the `--frozen` flag to skip locking and syncing

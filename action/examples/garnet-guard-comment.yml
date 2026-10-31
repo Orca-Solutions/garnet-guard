@@ -31,4 +31,4 @@ jobs:
       actions: read         # download the report artifact
       pull-requests: write  # post or update the comment
     steps:
-      - uses: orca-solutions/garnet-guard/action/comment@42547f6313420768a2bf5d03e9577a68844496e9 # v0.1.0a1
+      - uses: orca-solutions/garnet-guard/action/comment@e6e9f44a24bb11ca1b20d339650104a7e273efc1 # v0.2.0

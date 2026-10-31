@@ -1127,6 +1127,37 @@ _EVERY_LINE_GROUPS = frozenset(
     }
 )
 _EVERY_LINE_PREFIXES = ("setuptools.", "virtualenv.")
+# Of those, the groups whose tool loads every line's target whatever the
+# line's name, and never uses the name to pick a line or skip one: a target
+# any line of the group listed in the trusted version already ran, so a line
+# that only gives it a new name runs nothing new (mako 1.4.1 renamed its
+# lexers css+mako to css_mako, with the same classes). The other groups keep
+# comparing name by name, because the name decides what runs:
+# distutils.setup_keywords loads a line when a setup() call uses the keyword
+# it names, egg_info.writers passes the name as the file to write, pydantic
+# and opentelemetry_instrumentor skip the names a user turns off
+# (PYDANTIC_DISABLE_PLUGINS, OTEL_PYTHON_DISABLED_INSTRUMENTATIONS),
+# flake8 enables an off-by-default plugin and picks a formatter by name,
+# virtualenv picks a creator, seeder or discovery by name, and the other
+# setuptools.* groups aren't known to ignore it. pdm and poetry load each line
+# and call what it loads (pdm 2.29 ``Core.load_plugins``, poetry 2.2
+# ``PluginManager.load_plugins``).
+_NAME_BLIND_GROUPS = frozenset(
+    {
+        "keyring.backends",
+        "opentelemetry_post_instrument",
+        "opentelemetry_pre_instrument",
+        "pdm",
+        "poetry.application.plugin",
+        "poetry.plugin",
+        "pygments.lexers",
+        "setuptools.file_finders",
+        "setuptools.finalize_distribution_options",
+    }
+)
+# Names a tool skips in a group above, so their targets never ran: setuptools
+# drops a finalize_distribution_options hook named 2to3_doctests.
+_SKIPPED_NAMES = {"setuptools.finalize_distribution_options": frozenset({"2to3_doctests"})}
 
 
 def _auto_loaded(group: str) -> bool:
@@ -1205,6 +1236,26 @@ def _running(eps: list[EntryPoint]) -> EntryPoint | None:
     return own[-1] if own else None
 
 
+# importlib.metadata's ``EntryPoint.pattern``: a target that doesn't match it
+# fails to load, so it never ran.
+_LOADABLE = re.compile(r"[\w.]+\s*(:\s*[\w.]+\s*)?(\[.*\]\s*)?$")
+
+
+def _loaded_targets(specs: tuple[EntryPoint, ...]) -> dict[str, set[str]]:
+    """For each group in ``_NAME_BLIND_GROUPS``, every target its tool
+    loads, under any name it doesn't skip. A target that can't load isn't
+    one: ``demo.p q:L`` never ran, so ``demo.pq:L`` under another name is new."""
+    out: dict[str, set[str]] = {}
+    for e in specs:
+        if (
+            e.group in _NAME_BLIND_GROUPS
+            and e.name not in _SKIPPED_NAMES.get(e.group, ())
+            and _LOADABLE.match(e.target.strip())
+        ):
+            out.setdefault(e.group, set()).add(_spaceless(e.target))
+    return out
+
+
 def _firsts(eps: list[EntryPoint]) -> list[EntryPoint]:
     """A name's first line in each file. pluggy registers a name from the
     first line it reads and a lookup by name returns the first; which file
@@ -1239,8 +1290,10 @@ def new_entry_point(
     line pip installs (``_running``); for a group read by its first line, a
     target first in a file that was first in none (``_firsts``); for a group
     whose tool loads every line (``_loads_every_line``), never, since each
-    line already ran. Lines removed, repeated or reordered with nothing new
-    running are not.
+    line already ran. In a group whose tool also ignores the name
+    (``_NAME_BLIND_GROUPS``), a target any line of the baseline's group
+    listed is not new, so a renamed line is quiet. Lines removed, repeated
+    or reordered with nothing new running are not.
     It keeps the rule's severity for a group another tool loads without being
     asked (``AUTO_LOADED_GROUPS``) and for a script named like a common
     command other than the project's own that the candidate's own file
@@ -1257,12 +1310,15 @@ def new_entry_point(
     if b is None or c is None or not (b.entry_points_read and c.entry_points_read):
         return
     old = _by_name(b.entry_point_specs)
+    loaded = _loaded_targets(b.entry_point_specs)
     found: list[tuple[bool, Evidence]] = []
     loud: list[str] = []
     retargeted = False
     for (group, name), eps in _by_name(c.entry_point_specs).items():
         was = old.get((group, name), [])
-        before = {_spaceless(e.target) for e in was}
+        # A target the group's tool already loaded under another name is
+        # not new (``_NAME_BLIND_GROUPS``).
+        before = {_spaceless(e.target) for e in was} | loaded.get(group, set())
         added = [i for i, e in enumerate(eps) if _spaceless(e.target) not in before]
         script = group in _SCRIPT_GROUPS
         runs: EntryPoint | None = None  # for a script, the line pip installs now

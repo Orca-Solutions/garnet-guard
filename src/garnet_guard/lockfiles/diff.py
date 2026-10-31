@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from packaging.version import InvalidVersion, Version
 
 from .base import Pin
+from .npm import semver_key
 
 
 @dataclass(frozen=True)
@@ -17,50 +19,65 @@ class PinChange:
     baseline: str | None
     candidate: str
     line: int
+    ecosystem: str = "pypi"
 
 
-def _key(v: str) -> tuple[int, Version | str]:
+def _pep440_key(v: str) -> tuple[int, Any]:
     """Sort by PEP 440 version, with versions that don't parse first."""
     try:
         return (1, Version(v))
-    except InvalidVersion:
+    except (InvalidVersion, ValueError):  # ValueError: a number too long to convert
         return (0, v)
+
+
+def version_key(ecosystem: str, v: str) -> tuple[int, Any]:
+    """The ecosystem's version order: SemVer 2.0 on npm, PEP 440 on PyPI."""
+    return semver_key(v) if ecosystem == "npm" else _pep440_key(v)
 
 
 def diff_pins(base: list[Pin], head: list[Pin]) -> list[PinChange]:
     """Checkable changes: head versions not in base, each against its baseline.
 
-    A head version is compared with the highest base version below it, else
-    the highest base version. Removed packages produce nothing.
+    Packages are matched by (ecosystem, name). A head version is compared with
+    the highest base version below it, else the highest base version. Removed
+    packages produce nothing.
     """
-    base_versions: dict[str, set[str]] = {}
+    base_versions: dict[tuple[str, str], set[str]] = {}
     for p in base:
-        if p.source == "pypi" and p.version:
-            base_versions.setdefault(p.package, set()).add(p.version)
-    changes: dict[tuple[str, str], PinChange] = {}
+        if p.source == "registry" and p.version:
+            base_versions.setdefault((p.ecosystem, p.package), set()).add(p.version)
+    changes: dict[tuple[str, str, str], PinChange] = {}
     for p in head:
-        if p.source != "pypi" or not p.version:
+        if p.source != "registry" or not p.version:
             continue
-        olds = base_versions.get(p.package, set())
+        olds = base_versions.get((p.ecosystem, p.package), set())
         if p.version in olds:
             continue
         baseline = None
         if olds:
-            ordered = sorted(olds, key=_key)
-            lower = [v for v in ordered if _key(v) < _key(p.version)]
+            eco = p.ecosystem
+            # The string breaks ties between versions that sort equal, so the
+            # baseline doesn't depend on set order.
+            ordered = sorted(olds, key=lambda v: (version_key(eco, v), v))
+            cand = version_key(eco, p.version)
+            lower = [v for v in ordered if version_key(eco, v) < cand]
             baseline = lower[-1] if lower else ordered[-1]
         changes.setdefault(
-            (p.package, p.version), PinChange(p.package, baseline, p.version, p.line)
+            (p.ecosystem, p.package, p.version),
+            PinChange(p.package, baseline, p.version, p.line, p.ecosystem),
         )
-    return sorted(changes.values(), key=lambda c: (c.package, _key(c.candidate)))
+    return sorted(
+        changes.values(),
+        key=lambda c: (c.ecosystem, c.package, version_key(c.ecosystem, c.candidate), c.candidate),
+    )
 
 
 def new_unchecked(base: list[Pin], head: list[Pin]) -> list[Pin]:
     """Unpinned or unsupported head entries that are new or changed since base."""
-    seen = {(p.package, p.version, p.source, p.detail) for p in base}
-    out = [
-        p
-        for p in head
-        if p.source != "pypi" and (p.package, p.version, p.source, p.detail) not in seen
-    ]
+
+    def key(p: Pin) -> tuple[str, str, str | None, str, str | None, str | None]:
+        return (p.ecosystem, p.package, p.version, p.source, p.detail, p.origin)
+
+    seen = {key(p) for p in base}
+    out = [p for p in head if p.source != "registry" and key(p) not in seen]
     return sorted(out, key=lambda p: (p.line, p.package))
