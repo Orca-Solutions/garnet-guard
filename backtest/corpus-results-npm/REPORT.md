@@ -1,7 +1,7 @@
 # npm clean-corpus backtest, 2026-10-29
 
 > **Superseded and corrected (2026-10-30).** The [top-1,000 run](../corpus-results-npm-1000/REPORT.md)
-> replaces this one: 146 of 8,742 updates flagged for a look (1.7%). Two triage readings
+> replaces this one: 306 of 8,742 updates flagged for a look (3.5%) on the final run for 0.2.0. Two triage readings
 > below were wrong. @jridgewell/trace-mapping is tagged by folder (`trace-mapping/0.3.26`),
 > so its GRN-T004 warning was a false claim, now fixed. whatwg-url 17.1.1 wasn't a manual
 > publish: its version document lists an attestation the registry doesn't serve (HTTP 404),

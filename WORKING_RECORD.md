@@ -2,6 +2,24 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-31: Final clean-corpus numbers for 0.2.0
+
+**State.** The top-1,000 clean corpora were run again with every rule 0.2.0 ships: main at `17b8cd1` plus PR #96, which changes which wheel is read for a release with no wheel for this Python. Two passes each, with the same result:
+
+- PyPI, 9,439 updates of 975 packages: 300 flagged for a look (3.2%), in 235 packages. 304 updates carry a couldn't-check finding. `backtest/corpus-results-pypi-1000/REPORT.md`.
+- npm, 8,742 updates of 989 packages: 306 flagged for a look (3.5%), in 223 packages. 30 carry a couldn't-check finding. `backtest/corpus-results-npm-1000/REPORT.md`.
+- Together 606 of 18,181 (3.3%), up from 366: 76 PyPI and 160 npm warnings come from rules added since the first top-1,000 run, 3 from the wider sensitive call set and 1 from reading a first wheel.
+
+Every warning was checked on its own against the registry, GitHub and the release files; each finding is listed with its check in the folder's `triage.json`. The first passes found 5 false claims, fixed before these numbers: 4 GRN-C007 (PR #85) and 1 GRN-C004, pendulum 2.0.5, whose trusted release was read through a Python 2 wheel (PR #96, which also removed a second pendulum warning with the same cause). Some true warnings show a release doing what the trusted one already did, a new way: mako 1.4.1's renamed entry points, amazon-ion 0.11.3's first wheel, mpmath 0.18's Python 2 `six`, and GRN-C002 calls that replace a call (17 of 38, six read closely). The PyPI report lists them under "Accurate, but nothing new runs".
+
+The README badges, the README tables and limits, docs/rule-coverage.md, docs/expert-brief.md, docs/rules/README.md, PROJECT_BRIEF.md and ARCHITECTURE.md carry the new numbers, and the replay count is 52 everywhere (event-stream 3.3.6 joined in #68).
+
+**Open tasks.** Precision candidates for 0.3, none of which makes a claim false: GRN-C009 could compare the targets of a group whose tool loads every line across the group (mako); GRN-C002 could treat calls of the same kind, such as `subprocess.Popen` and `subprocess.run`, as one; GRN-C003 could follow `if`/`else` when it names what a module-level name holds (mpmath).
+
+**Verification.** `uv run pytest`, ruff, mypy (strict) and `lint-imports` pass. `uv run python -m backtest incidents`: 52 of 52 warn, 0 of 26 clean updates warn, as on main. Every number above was read from the runs' `summary.json` and `updates.json`.
+
+**Review dispositions.** None yet.
+
 ## 2026-10-30: A Dependabot-opened pull request checked; "checked by" badge on
 
 **State.** Every pending uv update was inside Dependabot's 7-day cooldown, so a run would have opened nothing. #86 exempted ruff from the cooldown for one run; merging it started a Dependabot run, which opened #87 (ruff 0.17.2 → 0.17.3 in the dev group, `uv.lock`) at 20:54 UTC. The dogfood workflow, `.github/workflows/garnet-guard.yml` with the Action pinned at `69c8e01`, ran on it under Dependabot's token with the job's `permissions` block: github-actions[bot] posted "1 update, nothing worth a look" (`ruff` 0.17.2 → 0.17.3, no findings), the SARIF upload reached code scanning, and the job passed in about 20 seconds. The merge also started the github-actions update job, which opened #88 (the actions group); it doesn't touch `uv.lock`, so the workflow didn't run on it.

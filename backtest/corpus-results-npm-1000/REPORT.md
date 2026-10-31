@@ -1,4 +1,4 @@
-# npm clean-corpus backtest, top 1,000 packages, 2026-10-30
+# npm clean-corpus backtest, top 1,000 packages, 2026-10-31
 
 The last 11 final, non-deprecated releases of the 1,000 most downloaded npm packages
 ([top-npm-1000.json](../top-npm-1000.json), from wooorm/npm-high-impact 1.13.0; its first
@@ -11,39 +11,56 @@ uv run python -m backtest select npm 1000   # writes corpus-npm-1000.json
 uv run python -m backtest corpus npm 1000   # writes this folder's summary.json and updates.json
 ```
 
-The run used main (`255946a`) with the rule-testing branches stacked on it, up to
-`claude/project-thread-sm89m3-claims` at `935d188` (PRs #32, #33, #34 and #36 plus that
-branch, now PR #38), and this PR's commits. Those branches change only Python checks, and
-PR #38's later commits only GRN-C003, so for npm the result is the same on this PR alone
-and on the rules as they are about to ship.
+The run used the rules as they ship in 0.2.0: main at `17b8cd1` for the first pass, and
+`9314359` (PR #96, which changes only how PyPI wheels are picked) for the published one. The
+two give the same 8,742 results, finding for finding. Both passes of each run agree: the
+second retries anything the first couldn't fetch, and nothing changed.
 
 ## Result
 
-**146 of 8,742 updates were flagged for a look (1.7%), in 131 packages. Each of the 146
+**306 of 8,742 updates were flagged for a look (3.5%), in 223 packages. Each of the 306
 was checked on its own against the registry and GitHub, and none made a false claim.**
 
 | Rule | Updates | Packages |
 |---|---|---|
+| GRN-C008 new-dependency | 162 | 103 |
 | GRN-T004 no-matching-tag | 89 | 78 |
 | GRN-T001 lost-provenance | 48 | 47 |
-| GRN-T002 publisher-changed | 3 | 3 |
 | GRN-C002 new-build-hook | 3 | 2 |
+| GRN-T002 publisher-changed | 3 | 3 |
 | GRN-T003 workflow-changed | 2 | 2 |
 | GRN-T005 outside-trusted-publishing | 1 | 1 |
 
-30 updates (0.3%) carry a couldn't-check finding and no warning: 26 GRN-E001, where
+Two updates carry two rules, so the rows add up to 308. 278 more GRN-C008 findings and 24
+GRN-C011 findings are at `info`: an established new dependency, and a newly used Node API
+such as `child_process` or `fetch`.
+
+The 160 warnings beyond the [first top-1,000 run](https://github.com/orca-solutions/garnet-guard/pull/39)
+(146) are all GRN-C008, which is new since that run: a dependency first released less than
+90 days before the update. In 152 of the 162, an account that owns the package being
+updated owns every young dependency too, and the evidence says so; a young dependency warns
+even then, because a stolen account can publish both.
+
+30 updates (0.3%) carry a couldn't-check finding: 26 GRN-E001, where
 github.com answers HTTP 401 for the git refs of a repository under a deleted or renamed
 account (`substack/*`, `humanwhocodes/retrier` and five others), and 4 GRN-E002, where a
 tarball lists `package/dist/index.js` twice (agent-base 7.0.0, data-uri-to-buffer 5.0.0)
-and `safe_archive.py` refuses it.
+and `safe_archive.py` refuses it. One of the 30, agent-base 7.0.0, also warns (GRN-T004).
 
 "None made a false claim" means every finding states something true about the release.
 It does not mean no warning was a false alarm: none of these 8,742 updates is known to be
-malicious, so from a user's point of view every one of the 146 is a false alarm, a true
+malicious, so from a user's point of view every one of the 306 is a false alarm, a true
 observation about a legitimate release that a reviewer has to look at and dismiss.
 
-**The first pass found 8 false claims, now fixed.** The same corpus first ran on main plus
-the rule-testing branches: 153 updates warned, and 8 of the claims were wrong.
+## Earlier passes
+
+**This run found no false claim.** Its first pass, on `17b8cd1`, and the published run
+agree finding for finding. GRN-C008's wording for a name that was unpublished and created
+again ("earliest version still published", with the removed versions named) dates from PR
+#77, before this run.
+
+**The first top-1,000 pass found 8 false claims, fixed before PR #39.** That pass ran on
+main plus the rule-testing branches: 153 updates warned, and 8 of the claims were wrong.
 
 - GRN-T004 said 7 releases had no git tag, but their monorepos tag by folder:
   `api/v1.4.1` (@opentelemetry/api 1.4.1), `resolvers/node/v0.3.3`
@@ -56,22 +73,24 @@ the rule-testing branches: 153 updates warned, and 8 of the claims were wrong.
   it still warns, but the finding now says "no attestation served" and gives the 404
   ([GRN-T001](../../docs/rules/GRN-T001.md)).
 
-Re-run with both fixes: exactly those 7 GRN-T004 warnings went away, whatwg-url's text
-changed, and nothing else moved.
-
-**A re-run also caught a mistake in a later fix.** The PyPI corpus needed more tag forms
-(`release-v1.0.0`, `prebuilt==1.0.11`), and for a while a shorter name matched after any
-separator. On npm that took a sibling package's tag: socks-proxy-agent 8.0.0 matched
-`proxy-agent@8.0.0` in TooTallNate/proxy-agents, which has no tag for socks-proxy-agent
-8.0.0, so a true warning went quiet. Now a `-`, `_` or `@` prefix must be the full name,
-and a shorter folder name counts only in a repository that never tags the package by its
-full name. The final run is identical, update for update, to the checked run above, and
-the only tags matched by a shorter name are eslint-plugin-import's `resolvers/node/vX` and
-`utils/vX`.
+A later re-run caught a mistake in a tag fix for PyPI: for a while a shorter name matched
+after any separator, and socks-proxy-agent 8.0.0 matched its sibling's `proxy-agent@8.0.0`.
+Now a `-`, `_` or `@` prefix must be the full name, and a shorter folder name counts only
+in a repository that never tags the package by its full name.
 
 ## Triage
 
 Every warning is listed with its check in [triage.json](triage.json).
+
+**GRN-C008 (162).** Each dependency line was checked against the registry's record of the
+dependency: 194 lines, 161 "first released" and 33 "earliest version still published", and
+the trusted version's `package.json` doesn't list the dependency. The date, the day count
+and the release count match on every line. Seven "first released" lines (gopd 1.0.0 in five
+updates, side-channel 1.0.0, path-dirname 1.0.0) have an unpublished version from the same
+day, minutes before the first live one; the date and the day count are the same either way.
+Most are one maintainer splitting helpers out of larger packages: `call-bound` (32 lines),
+`es-errors` (18), `call-bind` (15), `es-object-atoms` (11) and their siblings, each added by
+the packages its owner also publishes.
 
 **GRN-T004 (89).** Each was checked with `git ls-remote --tags` against every repository
 the finding names: no tag names the candidate version, in any form. 35 are releases from
@@ -124,8 +143,9 @@ published later, with provenance. That report now carries a correction.
 ## Limits
 
 - Tags are checked as they exist today, not as they stood on the release day.
-- The content check for npm reads `package.json` install scripts only; there is no
-  JavaScript equivalent of GRN-C003 yet.
+- The content checks for npm read `package.json` (install scripts, dependencies) and, for
+  GRN-C011 at `info`, the JavaScript a package loads; there is no JavaScript rule at `warn`
+  yet.
 - The list is ordered by downloads, which over-represents small, old utility packages
   with few releases.
 - Run in the cloud container: registry.npmjs.org and github.com git refs are reachable,
