@@ -82,7 +82,7 @@ jobs:
 
 The example pins the commit tagged `v0.2.0`, the release on PyPI. Inputs, permissions and the fork-safe two-workflow pattern are in [docs/action.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/action.md). The Action is a preview.
 
-**Locally.** `garnet check` compares two lockfiles, for example your branch against `main`, and checks every package that changed. Once you've reviewed a finding, an ignore in `garnet.toml` silences it until a date you choose ([docs/policy.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/policy.md)).
+**Locally.** `garnet check` compares two lockfiles, for example your branch against `main`, and checks every package that changed. Once you've reviewed a finding, an ignore in `garnet.toml` silences it until a date you choose ([docs/policy.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/policy.md)). In VS Code, the same findings show on the lockfile lines through the SARIF Viewer extension ([docs/vscode.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/vscode.md)).
 
 **In agent hooks (planned).** A pre-install hook stops Claude Code or Codex from quietly adding a risky dependency.
 
