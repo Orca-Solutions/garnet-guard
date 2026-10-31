@@ -81,6 +81,9 @@ Smaller notes that help a reviewer without a new rule are done ([#50](https://gi
 | The Action repo is tampered with | Users pin by commit SHA in docs. Branch protection and signed commits on main. Release tags are immutable. |
 | AI agents introduce a subtle weakness | Agents never merge. Changes to `safe_archive.py`, the Action, release workflows and policy defaults require a careful human review (see [AGENTS.md](AGENTS.md)). |
 | An upstream outage silently weakens results | "Couldn't check" is reported as an error finding, never as pass. |
+| The install wrapper runs a package's build code while checking (pip prepares sdist metadata during `--dry-run`; uv builds sdists with dynamic metadata) | The resolve step turns builds off: pip gets `--only-binary :all:` after every user argument, after Garnet has read every requirements file and refused `--no-binary`, editable, path, URL and VCS lines; uv gets `--no-build` and `UV_NO_BUILD=1`, and its `--build`, editable and local sources are refused. pip runs as `<python> -I -m pip`, so a `pip/` folder in the working directory isn't imported. Two tests run real pip and uv offline against sdists whose build backend doesn't exist. |
+| The wrapper writes over a project file someone changed during the check | uv's checked `pyproject.toml` and `uv.lock` are written back only if every copied file still has the hash it had when copied; otherwise nothing is written or installed (exit 3). |
+| Index credentials leak into output | Values from pip's configuration are never printed. The credentials in a URL (`https://user:token@host`) are shown as `****` in everything Garnet prints or writes, the command line and pip's and uv's error output included; the package manager still gets the URL as written. The temporary copy (mode 0700) is deleted after the run. |
 
 ### Privacy
 

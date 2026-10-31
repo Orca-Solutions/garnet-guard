@@ -57,7 +57,10 @@ Removed packages produce no findings. Added packages (no base version) get only 
 
 ### 3.3 Invocation without two lockfiles
 
-`garnet diff <package> <old> <new>` compares two releases directly. The install wrapper and hooks compute the head lockfile by resolving without installing (§10).
+`garnet diff <package> <old> <new>` compares two releases directly. The install wrapper (§10.3) compares a base with a head it computes by resolving with builds off, without installing:
+
+- **pip:** the base is the target environment, read with `pip inspect` (distributions installed from an index, as `name==version`; ones installed from a URL, a path or in editable mode are left out). The head is the base with the dry run's `install` entries applied; each must be a wheel, and one from an index other than PyPI is GRN-E005.
+- **uv:** the base is `uv.lock` as committed at git `HEAD`, or the working-tree copy taken before the run when it isn't tracked, so a sync also checks uncommitted lockfile edits. The head is the `uv.lock` the resolve step wrote in its private copy, or the working-tree lockfile when `uv lock --check` says it is current.
 
 ## 4. Fetching and facts
 
@@ -264,7 +267,8 @@ garnet diff   <ecosystem>:<package> <old> <new> [same output flags]
 garnet explain <RULE-ID>
 garnet policy check [PATH]
 garnet cache  info|clear
-garnet pip install …   |  garnet uv add|sync|lock …   |  garnet npm install …
+garnet pip install …   [--garnet-force]
+garnet uv     add|remove|lock|sync …   [--garnet-force]
 garnet hook   claude-code|codex
 garnet version
 ```
@@ -292,7 +296,19 @@ The Action MUST run on `pull_request`, MUST NOT check out or execute PR code und
 
 ### 10.3 Install wrapper
 
-`garnet pip install …`, `garnet uv add|sync|lock …` and `garnet npm install …` MUST resolve the change without installing (`pip install --dry-run --report`, `uv lock` into a temp copy, `npm install --package-lock-only` in a temp copy), run `check` on the result, then, if the verdict is below `fail_on`, run the real command with the same arguments. On block it exits 2 and doesn't install. `--garnet-force` skips the block after printing the findings.
+`garnet pip install …` and `garnet uv add|remove|lock|sync …` MUST check the change before anything is installed, and MUST install only what was checked. They MUST NOT run build code of any package while checking: pip and uv both run a package's build backend to resolve a source distribution (pip during `--dry-run`, uv when an sdist's metadata is dynamic).
+
+1. **Read the command.** Every requirements and constraints file it names is read, recursively, before anything runs. These are refused as can't-check: `--no-binary` (on the command line, in a file, or `--only-binary` other than `:all:` in a file), editable installs, local paths and archives, URLs and VCS requirements, pip's `--target`, `--prefix`, `--root`, `--user`, `--platform`, `--python-version`, `--implementation`, `--abi`, `--group` and `--requirements-from-script`, pip settings from the environment or configuration that add requirement files or move the install (`PIP_REQUIREMENT`, `PIP_CONSTRAINT`, `requirement` in `pip.conf`, …), and uv's `--build`, `--no-binary`, `--no-binary-package`, `--editable`, git options, `--script`, `--package`, `--all-packages`, `--workspace`, `--no-project`, `--isolated` and `--frozen` on add or remove, unknown options, workspaces, and path, git, URL, editable or workspace sources. Values from pip's configuration MUST NOT be printed.
+2. **Resolve with builds off,** as argument lists, never through a shell:
+   - pip: `<python> -I -m pip install --dry-run --quiet --report <tmp> <args> --only-binary :all:`, with `--only-binary :all:` after every user argument;
+   - uv: in a private temp folder (mode 0700) holding copies of `pyproject.toml`, `uv.lock`, `uv.toml` and `.python-version` (never `.venv`): `uv add|remove --no-sync --no-build <args>` or `uv lock --no-build <args>`, with `UV_NO_BUILD=1`; for `uv sync`, `uv lock --check --no-build` first and `uv lock --no-build` only if the lockfile is out of date.
+3. **Check** the change between base and head (§3.3) with the policy `check` would read (§7.1).
+4. **Newest release.** For each requested package, the resolved version is compared with the newest PyPI release that matches its specifier, Requires-Python (the environment's Python for pip, the project's lowest supported Python for uv) and the pre-release setting. If it is lower, Garnet resolves that release on its own, builds still off; if that fails for want of a wheel, the command is can't-check (below). The comparison is skipped when the command limits releases by date or type.
+5. **Verdict and hand-off.** At or above `fail_on` (the policy's, else `block`), print the findings, install nothing and exit 1 (warn) or 2 (block) as §8. Below it, install exactly the resolution that was checked: pip runs the user's arguments with `--only-binary :all: -c <pins>`, where the pins file holds every checked version with its wheel's sha256 and every other installed version; uv writes the checked `pyproject.toml` and `uv.lock` back only if neither original changed since the copy (else exit 3 and say which changed), then runs `uv sync --frozen` (`--inexact` after add) with `--no-build-package` for each changed package and the user's install options, unless the command was lock-only (`uv lock`, `--no-sync`). The wrapper's exit code is then the package manager's. `uv lock --check`, `--check-exists` and `--dry-run` run in the copy, write nothing and return uv's exit code.
+6. **Can't check.** When the command can't be checked (step 1, a failed no-build resolve, or step 4), print the findings for what could be checked, then for each package what needs a build and why (published only as source, or no wheel for this platform or Python), and what resolved without building, and the options: pin the version that resolves without building, run the package manager directly (unchecked, and it may run build code), or `--garnet-force`. Install nothing and exit 3. This MUST NOT be folded into a GRN-E00x finding: at the default `fail_on = block` a warning would let the install, and the build, run.
+7. **`--garnet-force`** installs after block findings (what was checked), and for can't-check runs the original command unchanged after printing a "not checked" line per package.
+
+npm, pnpm, yarn, poetry, `uv pip`, `uv tool` and `uvx` aren't wrapped yet; the npm wrappers wait on the npm lockfile parsers (§3.1).
 
 ### 10.4 Agent hooks
 

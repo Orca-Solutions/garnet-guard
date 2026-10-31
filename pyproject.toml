@@ -144,6 +144,41 @@ source_modules = [
     "garnet_guard.cli",
     "garnet_guard.safe_archive",
     "garnet_guard.policy",
+    "garnet_guard.install",
 ]
 forbidden_modules = ["httpx"]
 allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "the install wrapper fetches and reads releases only through the engine"
+type = "forbidden"
+source_modules = ["garnet_guard.install"]
+forbidden_modules = [
+    "garnet_guard.net",
+    "garnet_guard.safe_archive",
+    "garnet_guard.facts",
+    "garnet_guard.ecosystems",
+    "garnet_guard.checks",
+    "httpx",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "nothing below the surfaces imports the install wrapper"
+type = "forbidden"
+source_modules = [
+    "garnet_guard.models",
+    "garnet_guard.policy",
+    "garnet_guard.checks",
+    "garnet_guard.facts",
+    "garnet_guard.ecosystems",
+    "garnet_guard.lockfiles",
+    "garnet_guard.engine",
+    "garnet_guard.report",
+    "garnet_guard.sarif",
+    "garnet_guard.markdown",
+    "garnet_guard.workspace",
+    "garnet_guard.net",
+    "garnet_guard.safe_archive",
+]
+forbidden_modules = ["garnet_guard.install"]

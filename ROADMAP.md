@@ -102,7 +102,8 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 
 ## Month 3 → 0.3: second beat (January 2027)
 
-- [ ] Install wrapper: `garnet pip install …`, `garnet uv add|sync|lock`, `garnet npm install …`
+- [x] Install wrapper: `garnet pip install …`, `garnet uv add|remove|lock|sync` (preview; [docs/install-wrapper.md](docs/install-wrapper.md))
+- [ ] Install wrapper for npm, pnpm and yarn: waits on the npm lockfile parsers (package-lock, pnpm-lock, yarn.lock)
 - [ ] Pre-install hooks for Claude Code and Codex (SPEC §10.4), announced as the second beat
 - [ ] Rules GRN-C005 and C006 ([#54](https://github.com/orca-solutions/garnet-guard/issues/54), [#60](https://github.com/orca-solutions/garnet-guard/issues/60)); GRN-T006 and C004 moved to the launch list in [Closing the evasion gaps](#closing-the-evasion-gaps)
 - [ ] npm adapter, if it didn't make the launch

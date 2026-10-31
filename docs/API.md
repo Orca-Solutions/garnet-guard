@@ -16,9 +16,9 @@
 ## 2. Layers and import rules
 
 ```text
- surfaces     cli.py   action/   wrapper.py   hooks/
-                 │        │          │           │
-                 └────────┴────┬─────┴───────────┘
+ surfaces     cli.py   action/   install/ (wrapper)   hooks/
+                 │        │          │                 │
+                 └────────┴────┬─────┴─────────────────┘
  orchestration           engine.py  (evaluate, compare)
                      ┌────────┼──────────┬──────────────┐
  judgment        checks/   policy.py   report/        baseline.py
@@ -37,6 +37,7 @@ Import rules, enforced by an `import-linter` contract in CI:
 - `facts` may use `safe_archive` but not `net`.
 - Only `net.py` imports the HTTP client. Only `safe_archive.py` imports `zipfile` and `tarfile`.
 - Surfaces import only `garnet_guard` public names and `engine`.
+- `install/` (the install wrapper, SPEC §10.3) reaches the network and release data only through `engine` (`evaluate`, `pypi_releases`): it doesn't import `net`, `safe_archive`, `facts`, `ecosystems`, `checks` or `httpx` directly. It also reads lockfiles (`lockfiles`, `workspace`), the policy and the text report. Nothing below the surfaces imports `install/`.
 
 ## 3. Public Python API
 
@@ -327,7 +328,8 @@ src/garnet_guard/
   checks/      trust.py wheel_tags.py content.py known_bad.py errors.py __init__.py
   report/      text.py json.py sarif.py markdown.py schema/report-v1.json
   rules/       *.md               # explain text, one file per rule
-  cli.py  wrapper.py
+  cli.py
+  install/     shellwords.py pip.py uv.py check.py wrapper.py runner.py
   hooks/       claude_code.py codex.py
 action/          action.yml  examples/
 backtest/        incidents/  corpus.py  __main__.py
