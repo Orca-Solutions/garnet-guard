@@ -4,7 +4,7 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 
 ## Unreleased
 
-## 0.2.0 (2026-12-01)
+## 0.2.0 (2026-10-31)
 
 The first full release, for launch. It adds seven content and trust rules to the ones in 0.1.0a1, widens the sensitive call set, and reads the wheel pip would install. With every rule it ships, the backtest warns on all 52 replayed malicious releases (47 PyPI, 5 npm), and flags 606 of 18,181 everyday updates of the top 1,000 PyPI and npm packages for a look (3.3%), none a false claim. An ignore now expires within 12 months, so a policy with a longer `until` has to shorten it (Changed, below).
 
