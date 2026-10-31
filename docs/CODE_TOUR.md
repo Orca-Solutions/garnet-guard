@@ -56,7 +56,9 @@ Every run goes through the same five stages, whichever command started it.
    `ecosystems/npm_provenance.py` for npm provenance). When a PyPI release has a matching tag,
    `ecosystems/gittree.py` reads the repository's file list at that commit over the same git
    endpoint as the tag lookup, and `ecosystems/source.py` compares the wheel's Python files
-   with it, reading back and indexing only the few files that aren't in the tree. When the
+   with it, reading back and indexing only the few files that aren't in the tree.
+   `ecosystems/sdist.py` compares the same wheel with the release's own sdist for GRN-C006,
+   from the two files already downloaded. When the
    new version declares a dependency the trusted one didn't, `engine.py` asks the registry
    about that package (`package_profile()` in each ecosystem module) and attaches the answer
    to the facts for GRN-C008, so the check itself stays free of I/O. A failure in any step is

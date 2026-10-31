@@ -7,7 +7,8 @@ import tarfile
 import zipfile
 from dataclasses import replace
 
-from garnet_guard.facts.inventory import inspect_artifact
+from garnet_guard.ecosystems.sdist import match_sdist
+from garnet_guard.facts.inventory import file_reader, inspect_artifact
 from garnet_guard.models import (
     ArtifactFacts,
     FactError,
@@ -78,11 +79,13 @@ def artifact(
     package: str = "demo",
     provenance: FileProvenance | None | str = "ok",
     limits: Limits | None = None,
-) -> tuple[ArtifactFacts, tuple[FactError, ...]]:
+) -> tuple[ArtifactFacts, tuple[FactError, ...], bytes | None]:
     """One wheel or sdist of ``package``, inspected when ``files`` is given.
 
     Returns the facts and the errors the inspection raised (GRN-E003 when a
-    limit was hit), the same two things the fetcher gets back.
+    limit was hit), the same two things the fetcher gets back, and the
+    archive's bytes when every file in it was read (GRN-C006 compares only
+    those).
     """
     if kind == "wheel":
         filename, packagetype = f"{package}-{version}-py3-none-any.whl", "bdist_wheel"
@@ -96,7 +99,7 @@ def artifact(
         provenance=_provenance(filename, provenance),
     )
     if files is None:
-        return art, ()
+        return art, (), None
     data = wheel(files) if kind == "wheel" else sdist(f"{package}-{version}", files)
     ins = inspect_artifact(filename, data, limits or Limits(), sdist=kind == "sdist")
     art = replace(
@@ -115,7 +118,7 @@ def artifact(
         entry_points_read=ins.entry_points_read,
         wheel_tag="py3-none-any" if kind == "wheel" else None,
     )
-    return art, tuple(ins.errors)
+    return art, tuple(ins.errors), data if ins.complete else None
 
 
 def release(
@@ -128,22 +131,40 @@ def release(
     sdist_files: dict[str, str | bytes] | None = None,
     sdist_only: bool = False,
     limits: Limits | None = None,
+    compare_sdist: bool = True,
 ) -> ReleaseFacts:
     """A release with a wheel (``files``), and an sdist when ``sdist_files`` is given.
 
     ``sdist_only`` drops the wheel. ``provenance`` applies to every artifact.
+    A release with both is compared wheel against sdist, as the fetcher does
+    when it has read both to the end (GRN-C006 facts), unless ``compare_sdist``
+    is False.
     """
     artifacts: list[ArtifactFacts] = []
     errors: list[FactError] = []
+    payloads: list[bytes | None] = []
     kinds = [("wheel", files)] if not sdist_only else []
     if sdist_files is not None:
         kinds.append(("sdist", sdist_files))
     for kind, content in kinds:
-        art, errs = artifact(
+        art, errs, data = artifact(
             version, content, kind=kind, package=package, provenance=provenance, limits=limits
         )
         artifacts.append(art)
         errors.extend(errs)
+        payloads.append(data)
+    matched = None
+    if compare_sdist and len(artifacts) == 2 and None not in payloads:
+        (w, s), (wd, sd) = artifacts, payloads
+        assert wd is not None and sd is not None
+        lim = limits or Limits()
+        matched = match_sdist(
+            w,
+            file_reader(w.filename, wd, lim, sdist=False),
+            s,
+            file_reader(s.filename, sd, lim, sdist=True),
+            lim,
+        )
     return ReleaseFacts(
         ecosystem="pypi",
         package=package,
@@ -154,4 +175,5 @@ def release(
         tag=TagInfo(version, "abc") if tag else None,
         tag_checked=tag is not None,
         errors=tuple(errors),
+        sdist_match=matched,
     )

@@ -53,8 +53,9 @@ _MACHO_MAGIC = (
     b"\xca\xfe\xba\xbf",
 )
 # The rules that read the files of an archive Garnet couldn't read to the end.
-# GRN-C009 reads a wheel's entry points, and GRN-C012 every Python file of a wheel.
-_ARCHIVE_RULES = ("GRN-C001", "GRN-C003", "GRN-C004")
+# GRN-C006 compares the wheel with the sdist, so it needs both. GRN-C009 reads
+# a wheel's entry points, and GRN-C012 every Python file of a wheel.
+_ARCHIVE_RULES = ("GRN-C001", "GRN-C003", "GRN-C004", "GRN-C006")
 _WHEEL_RULES = (*_ARCHIVE_RULES, "GRN-C009", "GRN-C012")
 # Names GRN-C012 never counts as the release's own: the standard library's
 # modules, the builtins, and the first name of each entry of the §6.3 list
@@ -274,7 +275,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                         FactError(
                             "GRN-E003",
                             f"{filename}: {rel} is larger than the parse limit",
-                            ("GRN-C003",) if sdist else ("GRN-C003", "GRN-C012"),
+                            ("GRN-C003",) if sdist else ("GRN-C003", "GRN-C006", "GRN-C012"),
                             rel,
                         )
                     )

@@ -26,6 +26,7 @@ from ..models import (
     Requirement,
     Severity,
     UnparsedWheelFile,
+    WheelOnlyCode,
 )
 from . import wheel_tags
 
@@ -695,6 +696,107 @@ def _compared_unparsed(base: ReleaseFacts | None, cand: ReleaseFacts) -> Iterato
             f"{len(files)} Python file(s) in {wheel} couldn't be parsed to compare with {against}",
             tuple(evidence),
         )
+
+
+def _no_trusted_pair(base: ReleaseFacts) -> str:
+    """Why the trusted version gives GRN-C006 nothing to compare with."""
+    v = base.version
+    if not base.artifacts:
+        return (
+            f"Garnet couldn't read {v}'s files, so it can't tell whether {v}'s wheel had this code"
+        )
+    if not any(a.packagetype == "sdist" for a in base.artifacts):
+        return f"{v} had no sdist, so nothing shows whether its wheel had this code"
+    if not any(a.filename.endswith(".whl") for a in base.artifacts):
+        return f"{v} had no wheel, so this code is new to the wheel"
+    return (
+        f"Garnet couldn't compare {v}'s wheel with its sdist, so it can't tell whether "
+        f"{v} had this code"
+    )
+
+
+def _wheel_only_line(w: WheelOnlyCode, sdist: str, c: CallSite) -> Evidence:
+    via = f" (in {c.via}())" if c.via else ""
+    if w.at is None:
+        where = f"{sdist} has no such file"
+    elif not w.sdist_parsed:
+        where = f"{w.at} in {sdist} couldn't be parsed to compare"
+    else:
+        where = f"{w.at} in {sdist} doesn't"
+    return Evidence(
+        "file", f"{w.path}:{c.line} calls {c.name}{via}; {where}", path=w.path, line=c.line
+    )
+
+
+def _wheel_only_pth(w: WheelOnlyCode, sdist: str, lines: list[str]) -> Evidence:
+    if w.at is not None:
+        text = f"{w.path} has {len(lines)} executable line(s) that {w.at} in {sdist} doesn't"
+    elif lines:
+        text = f"{w.path} ({len(lines)} executable line(s)) has no copy in {sdist}"
+    else:
+        text = f"{w.path} (no executable lines) has no copy in {sdist}"
+    if lines:
+        text += f": {_clip(lines[0])}"
+    return Evidence("file", text, path=w.path, line=1)
+
+
+def sdist_wheel_mismatch(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-C006: the wheel the content rules read has code its own sdist
+    doesn't. A Python file that isn't byte for byte in the sdist makes a
+    sensitive call the sdist's copy doesn't make (any call, when there is no
+    copy), or a ``.pth`` file has no sdist copy or executable lines its copy
+    lacks.
+
+    A reviewer who reads the sdist, or the repository it was made from, never
+    sees such code. Files a build writes (a ``_version.py``) differ too, and
+    have no such calls, so they stay quiet. A call or line the trusted
+    version's wheel already carried outside its sdist, at the same install
+    path, isn't new; for a ``.pth`` file a line counts as carried at any path,
+    as GRN-C001 lets a ``.pth`` be renamed.
+    """
+    if base is None or cand.sdist_match is None:
+        return
+    sm = cand.sdist_match
+    calls_before: dict[str, set[str]] = {}
+    lines_before: set[str] = set()
+    bare_before: set[str] = set()  # .pth paths the trusted sdist had no copy of
+    if base.sdist_match is not None:
+        for w in base.sdist_match.code:
+            calls_before.setdefault(w.path, set()).update(c.name for c in w.calls)
+            lines_before.update(w.lines)
+            if w.at is None and w.path.endswith(".pth"):
+                bare_before.add(w.path)
+    evidence: list[Evidence] = []
+    files = 0
+    for w in sm.code:
+        if w.path.endswith(".pth"):
+            lines = [x for x in w.lines if x not in lines_before]
+            if not lines and (w.lines or w.at is not None or w.path in bare_before):
+                continue
+            files += 1
+            evidence.append(_wheel_only_pth(w, sm.sdist, lines))
+            continue
+        new = [c for c in w.calls if c.name not in calls_before.get(w.path, set())]
+        if new:
+            files += 1
+            evidence.extend(_wheel_only_line(w, sm.sdist, c) for c in new)
+    if not evidence:
+        return
+    head = Evidence(
+        "note",
+        f"compared {sm.wheel} with {sm.sdist}: {sm.matched} Python file(s) match the sdist, "
+        f"{sm.differ} differ from their copy there, {sm.absent} have none",
+    )
+    more = len(evidence) - MAX_EVIDENCE
+    tail = (Evidence("note", f"and {more} more"),) if more > 0 else ()
+    note = (Evidence("note", _no_trusted_pair(base)),) if base.sdist_match is None else ()
+    yield RawFinding(
+        "GRN-C006",
+        f"{cand.version}'s wheel has code that is not in its sdist ({files} file(s))",
+        (head, *evidence[:MAX_EVIDENCE], *tail, *note),
+    )
 
 
 def _source_matched(rel: ReleaseFacts) -> ArtifactFacts | None:

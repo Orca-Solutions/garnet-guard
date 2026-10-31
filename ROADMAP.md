@@ -86,7 +86,7 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 - [ ] Release workflow changed between the two attested commits (`info`) [#57](https://github.com/orca-solutions/garnet-guard/issues/57)
 - [ ] First look for newly added packages (`info`) [#58](https://github.com/orca-solutions/garnet-guard/issues/58)
 - [ ] Model loaders fed a bundled file, changed serialized files [#59](https://github.com/orca-solutions/garnet-guard/issues/59)
-- [ ] GRN-C006 sdist-wheel-mismatch [#60](https://github.com/orca-solutions/garnet-guard/issues/60)
+- [x] GRN-C006 sdist-wheel-mismatch: a Python file in the wheel with a sensitive call its own sdist's copy lacks, or a `.pth` file the sdist doesn't have [#60](https://github.com/orca-solutions/garnet-guard/issues/60)
 - [ ] Tag sanity: tagged commit on the default branch, tag older than the upload [#61](https://github.com/orca-solutions/garnet-guard/issues/61)
 - [ ] Trust rules on skipped intermediate releases, as SPEC §5.2 requires for 1.0 [#62](https://github.com/orca-solutions/garnet-guard/issues/62)
 - [ ] A scheduled check of a deployed environment, for updates that never reach a lockfile [#63](https://github.com/orca-solutions/garnet-guard/issues/63)
@@ -104,7 +104,8 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 
 - [ ] Install wrapper: `garnet pip install …`, `garnet uv add|sync|lock`, `garnet npm install …`
 - [ ] Pre-install hooks for Claude Code and Codex (SPEC §10.4), announced as the second beat
-- [ ] Rules GRN-C005 and C006 ([#54](https://github.com/orca-solutions/garnet-guard/issues/54), [#60](https://github.com/orca-solutions/garnet-guard/issues/60)); GRN-T006 and C004 moved to the launch list in [Closing the evasion gaps](#closing-the-evasion-gaps)
+- [ ] Rule GRN-C005 ([#54](https://github.com/orca-solutions/garnet-guard/issues/54)); GRN-T006 and C004 moved to the launch list in [Closing the evasion gaps](#closing-the-evasion-gaps)
+- [x] Rule GRN-C006 ([#60](https://github.com/orca-solutions/garnet-guard/issues/60))
 - [ ] npm adapter, if it didn't make the launch
 - [ ] Full backtest on the 1.0 clean corpus (SPEC §13.2: the last 11 releases of the top 1,000 PyPI and top 1,000 npm packages) with the 0.3 rules (January–February); publish warn rate per rule and set the 1.0 target. These numbers feed the PyCon talk.
 

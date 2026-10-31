@@ -41,10 +41,10 @@ Malware feeds caught these only after the fact. Cooldowns only buy time. pip and
 | Signal | Example |
 |---|---|
 | **Trust downgrade** | The new release has no provenance attestation when the old one did, was built by a different repo or workflow, has no matching git tag, or gained a file days after release that pip would install in place of a reviewed one. |
-| **Risky content change** | A new `.pth` or `sitecustomize.py` file, new build hooks, a new pytest or setuptools plugin entry point, new import-time `exec`/`subprocess`/network code, code that isn't at the release's git tag, a new native binary or one named like a `.py` file, code in another platform's wheel that the checked wheel lacks, a new dependency that is new to the registry. |
+| **Risky content change** | A new `.pth` or `sitecustomize.py` file, new build hooks, a new pytest or setuptools plugin entry point, new import-time `exec`/`subprocess`/network code, code that isn't at the release's git tag, a new native binary or one named like a `.py` file, code in the wheel that its own sdist lacks, code in another platform's wheel that the checked wheel lacks, a new dependency that is new to the registry. |
 | **Known bad** | The release matches an OSV / OpenSSF malicious-package advisory. |
 
-Garnet never runs the code it inspects. It downloads both releases and reads them statically: the sdist and the wheel pip would install, plus one wheel for each other platform and up to 30 wheels uploaded late, to compare with it.
+Garnet never runs the code it inspects. It downloads both releases and reads them statically: the sdist and the wheel pip would install, compared with each other, plus one wheel for each other platform and up to 30 wheels uploaded late, to compare with that wheel.
 
 ## How you'll use it
 
@@ -136,7 +136,7 @@ Limits, stated plainly:
 - ensmallen's `datasets/` modules are larger than Garnet's parse limit in both releases. It reported that as GRN-E003 and still found the `.pth`.
 - In telnyx 4.87.1 a typo stopped the payload from running. GRN-C003 reads code; it reports what the module calls at import, not whether the call would succeed.
 - The content rules recognize a sensitive call by the name it is called under. A listed function handed to another call that runs it later (`Thread(target=os.system)`), or given a harmless-looking name first (`json.dumps = subprocess.Popen`), isn't reported yet; [#91](https://github.com/orca-solutions/garnet-guard/issues/91) tracks the check.
-- The litellm 1.82.7 sdist isn't replayed, because no public source gives its URL. Its wheel is, and content rules compare wheels.
+- The litellm 1.82.7 sdist isn't replayed, because no public source gives its URL. Its wheel is, and content rules compare wheels; GRN-C006, which compares a release's wheel with its own sdist, has nothing to compare it with. GRN-C006 reports a Python file in the wheel with a sensitive call the sdist's copy lacks, and a `.pth` file the sdist doesn't have. It is quiet on telnyx 4.87.1 and 4.87.2: each sdist carries the same `_client.py`, payload included, byte for byte (all 2,491 Python files match), and GRN-C003 reports them. Code that is in both files, scripts and data files the wheel installs outside site-packages, and files other than `.py` and `.pth` aren't compared; a release with no sdist has nothing to compare.
 - chalk and debug are reported by the missing tag alone: they never used provenance, and the one changed file, `index.js`, is gone from the registry. GRN-C011 now reads the JavaScript an npm package loads and lists, at `info`, a new process, network or eval use or obfuscated names; it can't run on these two replays, because there is no file to read.
 - The 20 clean updates in `clean.toml` are a smoke test. The clean-corpus backtests cover 18,181 updates, the last 11 releases of the top 1,000 PyPI packages (9,439) and of the top 1,000 npm packages (8,742): 366 are flagged for a look (2.0%), every warning states something true, but none of those updates is malicious, so each is a false alarm a reviewer has to dismiss.
 

@@ -568,6 +568,78 @@ def _rows() -> list[Row]:
         ),
     )
 
+    # GRN-C006 sdist-wheel-mismatch: the wheel has code its own sdist doesn't.
+    # The shape issue #60 expected of telnyx 4.87.1: a call appended to the
+    # wheel's copy of a file the sdist also carries, clean there.
+    client = "def connect():\n    return 1\n"
+    appended = (
+        client + "\nimport subprocess\n\ndef setup():\n    subprocess.run(['sh', '-c', 'x'])\n"
+    )
+    paired = {"demo/__init__.py": INIT, "demo/_client.py": client}
+    src_layout = {f"src/{p}": body for p, body in paired.items()}
+    fetch = "import urllib.request\n\ndef get(url):\n    return urllib.request.urlopen(url)\n"
+    fires(
+        "GRN-C006",
+        "a call appended to the wheel's copy of a file the sdist has clean",
+        release("1.0", paired, sdist_files=paired),
+        release("1.1", {**paired, "demo/_client.py": appended}, sdist_files=paired),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C006",
+        "a module only the wheel has, which opens a URL",
+        release("1.0", PKG, sdist_files=PKG),
+        release("1.1", {**PKG, "demo/_fetch.py": fetch}, sdist_files=PKG),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C006",
+        "a src/ layout sdist whose copy lacks the wheel's call",
+        release("1.0", paired, sdist_files=src_layout),
+        release("1.1", {**paired, "demo/_client.py": appended}, sdist_files=src_layout),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C006",
+        "a .pth with an import line that only the wheel has",
+        release("1.0", PKG, sdist_files=PKG),
+        release("1.1", {**PKG, "demo_boot.pth": "import demo._boot\n"}, sdist_files=PKG),
+        eco=PYPI,
+    )
+    # The telnyx 4.87.1 and 4.87.2 shape as published: both files carry the
+    # payload byte for byte, so it is GRN-C003's to report.
+    both = {**paired, "demo/_client.py": client + THREAD_PAYLOAD}
+    quiet(
+        "GRN-C006",
+        "the wheel and the sdist carry the same payload",
+        release("1.0", paired, sdist_files=paired),
+        release("1.1", both, sdist_files=both),
+        instead="GRN-C003",
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C006",
+        "a _version.py the build wrote into the wheel",
+        release("1.0", PKG, sdist_files=PKG),
+        release("1.1", {**PKG, "demo/_version.py": "__version__ = '1.1'\n"}, sdist_files=PKG),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C006",
+        "the trusted wheel already made the call its sdist lacks",
+        release("1.0", {**paired, "demo/_client.py": appended}, sdist_files=paired),
+        release("1.1", {**paired, "demo/_client.py": appended}, sdist_files=paired),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C006",
+        "no sdist to compare the wheel with",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "demo/_fetch.py": fetch}),
+        eco=PYPI,
+    )
+
     # GRN-C007 code-not-in-source
     # The ultralytics 8.3.42 shape: the build wrote a file the tag doesn't have.
     dl_payload = "import subprocess\n\ndef run(cmd):\n    return subprocess.Popen(cmd)\n"

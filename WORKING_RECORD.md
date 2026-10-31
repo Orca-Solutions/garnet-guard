@@ -2,6 +2,27 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-30: GRN-C006 sdist-wheel-mismatch (#60)
+
+**State.** GRN-C006 is built for PyPI, at `warn`. `ecosystems/sdist.py` compares the wheel the content rules read with the release's own sdist (the first in sorted file-name order) from the bytes `pypi.py` already downloaded and checked against PyPI's hashes, and records the result as `ReleaseFacts.sdist_match`. It runs only when both files were read to the end. A wheel `.py` file matches when its bytes, CRLF read as LF, are anywhere in the sdist; otherwise its copy is looked for at the install path, mapped with GRN-C007's `find_prefix` and `find_renames` (`src/`, `python/`, pycryptodomex's `lib/Crypto/`). Only files that install in site-packages are compared: files under `<name>.data/scripts/`, `data/` and `headers/` and in metadata folders aren't (GRN-C010 lists new scripts and data files). Each file that differs or has no copy is parsed with `ast` and the rule fires for each §6.3 call the sdist copy doesn't make; an sdist copy that doesn't parse, or is over the parse limit, makes every call count, and the evidence says so. A `.pth` file fires when the sdist has no copy (looked for at its install path, then by name) or its copy lacks some of its `import` lines. The trusted version's own `sdist_match` excuses calls at the same path and `.pth` lines at any path (setuptools names namespace `.pth` files after the version). GRN-C006 now appears among the rules not evaluated in an sdist's or a wheel's archive errors, in a failed download, and in a wheel file's over-parse-limit GRN-E003. The cache format is 40.
+
+The issue's premise was wrong. Read with `safe_archive`, telnyx 4.87.1's and 4.87.2's wheels and sdists carry the payload in both files: each of the wheel's 2,491 Python files is byte for byte its sdist copy, `telnyx/_client.py` included. GRN-C006 stays quiet on both and GRN-C003 still reports them. The rule page, the CHANGELOG and docs/rule-coverage.md say so.
+
+**Open tasks.** Run the clean corpus and the other 45 PyPI replays with GRN-C006 and fill the `TODO(measure)` placeholders in the CHANGELOG and docs/rule-coverage.md before merging. The rule page's status says 0.2, while ROADMAP.md lists #60 under 0.3.
+
+**Verification.**
+- `uv run pytest`: 817 passed, 7 network tests deselected. This includes `tests/test_sdist_wheel.py` (19 tests) and 8 new GRN-C006 rows in the rule matrix (137 rows), 4 that fire and 4 that stay quiet. The fixtures cover a `src/` layout, a renamed package, CRLF, an sdist copy that doesn't parse or is over the limit, `.data/purelib`, `.pth` cases, the trusted wheel's excuses, the evidence cap, and the fetcher path with a fake HTTP client (a missing sdist gives GRN-E001, a cut sdist GRN-E003, both naming GRN-C006).
+- ruff, ruff format, mypy (strict, 37 files) and `lint-imports` (5 contracts) pass.
+- The two telnyx incidents were replayed on `2213bff` and on this change with the same findings: 4.87.1 gets GRN-C003 and GRN-T004 with the tags of the day, and GRN-C003 and GRN-C007 with today's tags; 4.87.2 gets GRN-C003 and GRN-T004. GRN-C006 ran on all three releases (4.87.0, 4.87.1, 4.87.2) with 2,491 files matched, 0 differ, 0 absent, and fired on none.
+
+**Decisions to confirm.**
+- The SPEC §6.2 row for GRN-C006 is rewritten to the built behaviour, with the old wording kept in a note.
+- A wheel file counts as matched when its bytes are anywhere in the sdist, not only at the mapped path.
+- A wheel file over the parse limit names GRN-C006 in its GRN-E003 whether or not the sdist has a copy, as it names GRN-C012.
+- A `.pth` file with no sdist copy and no `import` lines is reported, unless the trusted wheel had one at the same path.
+
+**Review dispositions.** None yet.
+
 ## 2026-10-30: A Dependabot-opened pull request checked; "checked by" badge on
 
 **State.** Every pending uv update was inside Dependabot's 7-day cooldown, so a run would have opened nothing. #86 exempted ruff from the cooldown for one run; merging it started a Dependabot run, which opened #87 (ruff 0.17.2 → 0.17.3 in the dev group, `uv.lock`) at 20:54 UTC. The dogfood workflow, `.github/workflows/garnet-guard.yml` with the Action pinned at `69c8e01`, ran on it under Dependabot's token with the job's `permissions` block: github-actions[bot] posted "1 update, nothing worth a look" (`ruff` 0.17.2 → 0.17.3, no findings), the SARIF upload reached code scanning, and the job passed in about 20 seconds. The merge also started the github-actions update job, which opened #88 (the actions group); it doesn't touch `uv.lock`, so the workflow didn't run on it.
