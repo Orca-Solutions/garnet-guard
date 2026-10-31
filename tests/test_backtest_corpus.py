@@ -128,3 +128,14 @@ def test_cache_round_trips_source_match(tmp_path: Path) -> None:
     cache.put(rel)
     assert cache.get("pypi", "demo", "1.0") == rel
     assert rel.artifacts[0].modules[0].blob_sha1  # recorded at inspection, survives the cache
+
+
+def test_cache_round_trips_grn_c005_sites(tmp_path: Path) -> None:
+    """GRN-C005's sites ride on CallSite.obscured; the cache keeps them."""
+    src = "import os\ndef f(n):\n    getattr(os, n)\nf(KEY)\n"
+    rel = release("1.0", {"demo/__init__.py": src})
+    (site,) = [c for c in rel.artifacts[0].modules[0].top_level_calls if c.obscured]
+    assert site.obscured == "lookup:osgetattrn" and site.via == "f"
+    cache = corpus.FactCache(tmp_path)
+    cache.put(rel)
+    assert cache.get("pypi", "demo", "1.0") == rel

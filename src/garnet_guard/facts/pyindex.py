@@ -26,6 +26,11 @@ A ``base64.*decode`` whose result reaches a sensitive call is reported with
 that call, so ``exec(base64.b64decode(...))`` is new even where ``exec`` was
 already used.
 
+Encoded literals, values built from literals that reach ``exec`` or a name
+lookup, and lookups on ``os``, ``sys``, ``builtins``, ``ctypes`` and
+``importlib`` by a name the source doesn't hold are indexed as call sites
+marked ``obscured``, for GRN-C005 (see ``obfuscation.py``).
+
 Reads of credentials and CI settings in the same code are indexed too, as
 call sites marked ``read``: an environment variable such as ``GITHUB_TOKEN``
 or ``CI`` (``os.environ[...]``, ``os.getenv``, ``"CI" in os.environ``), the
@@ -43,6 +48,7 @@ from collections.abc import Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 
 from ..models import CallSite
+from .obfuscation import Tracker
 
 SENSITIVE_SET_VERSION = "2026-10-c"
 
@@ -185,6 +191,13 @@ def sensitive_set() -> tuple[str, ...]:
             for twin, targets in sorted(_SAME_AS.items())
         ),
     )
+
+
+# The modules a name in the set starts with, and the modules that hold the
+# same objects: an import of one, by a name built from pieces, is GRN-C005's.
+SENSITIVE_HEADS = frozenset(
+    n.split(".")[0] for n in (*_EXACT, *_PREFIXES, *_SAME_AS, "importlib.import_module")
+) - {"exec", "eval", "compile", "__import__", ""}
 
 
 def _prefix_line(prefix: str) -> str:
@@ -663,6 +676,7 @@ def scan_module(
             resolver.defined.add(stmt.target.id)
 
     reachable = _reachable(tree)
+    tracker = Tracker(resolver.resolve, is_sensitive, tree, SENSITIVE_HEADS)  # GRN-C005
     calls: list[CallSite] = []
     calls_out: set[str] = set()
     handed_out: set[tuple[str, str]] = set()
@@ -689,6 +703,12 @@ def scan_module(
                 calls.append(
                     CallSite(read, getattr(node, "lineno", 0), via, handed_to=handed, read=True)
                 )
+            for what, line, key in tracker.sites(node):
+                calls.append(CallSite(what, line, via, handed_to=handed, obscured=key))
+            if isinstance(node, (ast.For, ast.AsyncFor, ast.AugAssign)):
+                tracker.forget(node.target)
+            elif isinstance(node, ast.AnnAssign):
+                tracker.note_assign(node)
             if isinstance(node, ast.Call):
                 args = [*node.args, *(k.value for k in node.keywords)]
                 name = resolver.resolve(node.func)
@@ -733,6 +753,7 @@ def scan_module(
                     local[node.name] = list(node.body)
             elif isinstance(node, ast.Assign):
                 resolver.note_assignment(node)
+                tracker.note_assign(node)
                 for decode in _decoded_inputs([node.value], resolver, decoded):
                     decoded.update((t.id, decode) for t in node.targets if isinstance(t, ast.Name))
                 if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -782,9 +803,10 @@ def index_module(
     project: str | None = None,
     module: str | None = None,
 ) -> tuple[tuple[CallSite, ...], tuple[str, ...]]:
-    """Return (import-time call sites, imports). Raises SyntaxError/ValueError."""
+    """Return (import-time call sites, imports), without GRN-C005's sites.
+    Raises SyntaxError/ValueError."""
     scan = scan_module(source, path=path, own=own, project=project, module=module)
-    return scan.calls, scan.imports
+    return tuple(c for c in scan.calls if c.obscured is None), scan.imports
 
 
 def module_name(path: str) -> str:
