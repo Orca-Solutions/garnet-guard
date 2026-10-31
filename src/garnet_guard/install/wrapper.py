@@ -113,15 +113,16 @@ def _check(
             workdir=workdir,
         )
     if tool == "npm":
-        sub, at = shellwords.subcommand(args, npm.VALUE_OPTIONS)
-        if sub not in npm.SUBCOMMANDS:
+        sub, at, unknown = shellwords.npm_subcommand(args)
+        checked = npm.checked_subcommand(sub) if sub else None
+        if unknown or checked is None:
             raise WrapperUsage(
                 "garnet npm checks npm install, ci and update: garnet npm install <args>. "
-                "pnpm and yarn aren't checked yet."
+                "Put npm options after the subcommand. pnpm and yarn aren't checked yet."
             )
         return check.check_npm(
             shutil.which("npm", path=env.get("PATH", "")),
-            npm.SUBCOMMANDS[sub],
+            checked,
             args[:at] + args[at + 1 :],
             cwd=cwd,
             env=env,

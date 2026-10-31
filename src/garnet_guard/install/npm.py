@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,18 +40,153 @@ LOCKFILES = ("npm-shrinkwrap.json", "package-lock.json")  # npm prefers the firs
 COPIED = ("package.json", *LOCKFILES, ".npmrc")
 MAX_FILE_BYTES = 64 * 1024 * 1024  # the most the lockfile parsers read
 
-# npm 10 and 11 subcommand aliases (lib/utils/cmd-list.js), by what Garnet runs.
-SUBCOMMANDS = {
-    **dict.fromkeys(
-        (
-            "install", "i", "in", "ins", "inst", "insta", "instal", "isnt", "isnta", "isntal",
-            "isntall", "add",
-        ),
-        "install",
-    ),
-    **dict.fromkeys(("ci", "clean-install", "ic", "install-clean", "isntall-clean"), "ci"),
-    **dict.fromkeys(("update", "up", "upgrade", "udpate"), "update"),
+# npm's commands and aliases (lib/utils/cmd-list.js), npm 10.9.4 and 11.21.1.
+# npm reads its subcommand with ``deref``: camelCase to kebab-case, then the
+# exact command, an alias, or a unique abbreviation of any command or alias
+# (``npm upd`` is update, ``npm install-cl`` is install-clean, which is ci).
+_COMMON_COMMANDS = (
+    "access", "adduser", "audit", "bugs", "cache", "ci", "completion", "config", "dedupe",
+    "deprecate", "diff", "dist-tag", "docs", "doctor", "edit", "exec", "explain", "explore",
+    "find-dupes", "fund", "get", "help", "help-search", "init", "install", "install-ci-test",
+    "install-test", "link", "ll", "login", "logout", "ls", "org", "outdated", "owner", "pack",
+    "ping", "pkg", "prefix", "profile", "prune", "publish", "query", "rebuild", "repo",
+    "restart", "root", "sbom", "search", "set", "shrinkwrap", "star", "stars", "start", "stop",
+    "team", "test", "token", "uninstall", "unpublish", "unstar", "update", "version", "view",
+    "whoami",
+)  # fmt: skip
+_COMMON_ALIASES = {
+    "author": "owner", "home": "docs", "issues": "bugs", "info": "view", "show": "view",
+    "find": "search", "add": "install", "unlink": "uninstall", "remove": "uninstall",
+    "rm": "uninstall", "r": "uninstall", "un": "uninstall", "rb": "rebuild", "list": "ls",
+    "ln": "link", "create": "init", "i": "install", "it": "install-test",
+    "cit": "install-ci-test", "up": "update", "c": "config", "s": "search", "se": "search",
+    "tst": "test", "t": "test", "ddp": "dedupe", "v": "view", "clean-install": "ci",
+    "clean-install-test": "install-ci-test", "x": "exec", "why": "explain", "la": "ll",
+    "verison": "version", "ic": "ci", "innit": "init", "in": "install", "ins": "install",
+    "inst": "install", "insta": "install", "instal": "install", "isnt": "install",
+    "isnta": "install", "isntal": "install", "isntall": "install", "install-clean": "ci",
+    "isntall-clean": "ci", "hlep": "help", "dist-tags": "dist-tag", "upgrade": "update",
+    "udpate": "update", "sit": "install-ci-test", "ogr": "org", "add-user": "adduser",
 }  # fmt: skip
+NPM_TABLES: tuple[tuple[tuple[str, ...], dict[str, str]], ...] = (
+    (  # npm 10
+        (*_COMMON_COMMANDS, "hook", "run-script"),
+        {**_COMMON_ALIASES, "run": "run-script", "rum": "run-script", "urn": "run-script"},
+    ),
+    (  # npm 11
+        (
+            *_COMMON_COMMANDS, "approve-scripts", "deny-scripts", "install-scripts", "run",
+            "stage", "trust", "undeprecate",
+        ),
+        {**_COMMON_ALIASES, "u": "update", "run-script": "run", "rum": "run", "urn": "run"},
+    ),
+)  # fmt: skip
+CHECKED = ("install", "ci", "update")
+
+
+def _abbrev(words: Sequence[str]) -> dict[str, str]:
+    """npm's ``abbrev`` package: every unique prefix of each word, and each word."""
+    ordered = sorted(set(words))
+    out: dict[str, str] = {}
+    prev = ""
+    for n, current in enumerate(ordered):
+        nxt = ordered[n + 1] if n + 1 < len(ordered) else ""
+        next_matches = prev_matches = True
+        j = 0
+        while j < len(current):
+            ch = current[j]
+            next_matches = next_matches and nxt[j : j + 1] == ch
+            prev_matches = prev_matches and prev[j : j + 1] == ch
+            if not next_matches and not prev_matches:
+                j += 1
+                break
+            j += 1
+        prev = current
+        if j == len(current) and (next_matches or prev_matches):
+            out[current] = current
+            continue
+        for k in range(j, len(current) + 1):
+            out[current[:k]] = current
+    return out
+
+
+_ABBREVS = tuple(_abbrev([*cmds, *aliases]) for cmds, aliases in NPM_TABLES)
+
+
+def deref(word: str) -> set[str]:
+    """The commands npm 10 and npm 11 run for ``word``; empty if neither knows it."""
+    if re.search("[A-Z]", word):
+        word = re.sub("[A-Z]", lambda m: "-" + m[0].lower(), word)
+    out = set()
+    for (commands, aliases), abbrevs in zip(NPM_TABLES, _ABBREVS, strict=True):
+        if word in commands:
+            out.add(word)
+        elif word in aliases:
+            out.add(aliases[word])
+        elif word in abbrevs:
+            found = abbrevs[word]
+            while found in aliases:
+                found = aliases[found]
+            out.add(found)
+    return out
+
+
+def checked_subcommand(word: str) -> str | None:
+    """install, ci or update when both npm 10 and 11 read ``word`` as that one."""
+    found = deref(word)
+    return next(iter(found)) if len(found) == 1 and found <= set(CHECKED) else None
+
+
+# Commands that install nothing and fetch no package Garnet hasn't seen,
+# whatever their arguments; the project's own scripts (run, test) included.
+QUIET_COMMANDS = frozenset(
+    {
+        "access", "adduser", "bugs", "completion", "config", "deprecate", "undeprecate",
+        "dist-tag", "docs", "doctor", "explain", "fund", "get", "help", "help-search", "hook",
+        "ll", "login", "logout", "ls", "org", "owner", "ping", "pkg", "prefix", "profile",
+        "publish", "query", "repo", "restart", "root", "run", "run-script", "sbom", "search",
+        "set", "star", "stars", "start", "stop", "team", "test", "token", "unpublish",
+        "unstar", "version", "whoami",
+    }
+)  # fmt: skip
+# Quiet unless given a word that makes them fetch or install: ``npm init
+# <initializer>`` runs npm exec, ``audit fix`` installs, ``cache add`` and
+# ``pack <spec>`` fetch (which packs a git dependency), ``view`` of a spec
+# that isn't a registry one fetches it.
+_QUIET_UNLESS = {
+    "init": lambda words: not words,
+    "audit": lambda words: "fix" not in words,
+    "cache": lambda words: "add" not in words,
+    "pack": lambda words: not words,
+    "view": lambda words: all(registry_spec(w) for w in words),
+}
+EXEC_COMMANDS = frozenset({"exec"})
+# Package managers, which npx or npm exec can start (``npx npm i x``).
+PACKAGE_MANAGERS = frozenset({"npm", "npx", "pnpm", "pnpx", "yarn", "yarnpkg", "corepack"})
+
+
+def quiet_command(commands: set[str], words: Sequence[str]) -> bool:
+    """True when every command in ``commands`` installs nothing with these
+    arguments (``words``: the ones after the subcommand that aren't options)."""
+    if not commands:
+        return False
+    for command in commands:
+        test = _QUIET_UNLESS.get(command)
+        if not (command in QUIET_COMMANDS or (test is not None and test(list(words)))):
+            return False
+    return True
+
+
+def runs_package_manager(args: Sequence[str]) -> bool:
+    """True when npx or npm exec with ``args`` may start a package manager:
+    any word, or ``--package`` value, naming one (``npm@10``, ``./bin/npm``)."""
+    for a in args:
+        word = a.split("=", 1)[1] if a.startswith("--package=") else a
+        name = split_spec(word)[0] if not word.startswith("@") else word
+        if name.rsplit("/", 1)[-1].split(".")[0].lower() in PACKAGE_MANAGERS:
+            return True
+    return False
+
 
 # Options Garnet passes on, by where. npm's parser (nopt) takes
 # ``--name value`` and ``--name=value`` for options with a value.
@@ -203,6 +339,12 @@ def plan(subcommand: str, args: Sequence[str]) -> Plan:
         if eq:
             out.refusals.append(Refusal(name, _REFUSED.get(name, "Garnet Guard doesn't know it")))
             continue
+        if j < len(args) and args[j] in ("true", "false"):
+            # npm's parser takes a bare true or false after a flag as its value
+            # (--ignore-scripts false turns scripts on).
+            out.refusals.append(Refusal(f"{a} {args[j]}", "npm reads the word as the flag's value"))
+            j += 1
+            continue
         if a == "--ignore-scripts":
             out.ignore_scripts = True
         elif a == "--package-lock-only":
@@ -343,6 +485,82 @@ def config_refusals(text: str) -> tuple[list[Refusal], bool]:
     return out, values.get("ignore-scripts") == "true"
 
 
+# Environment variables that make node load code before npm runs: a
+# --require or --import in NODE_OPTIONS, a fallback module folder, the REPL's
+# module. They are taken out of every npm run during the check.
+NODE_PRELOAD = frozenset({"NODE_OPTIONS", "NODE_PATH", "NODE_REPL_EXTERNAL_MODULE"})
+TESTED_MAJORS = (10, 11)
+
+
+def check_env(env: Mapping[str, str]) -> dict[str, str]:
+    """The user's environment for npm during the check, without node preloads."""
+    out = {k: v for k, v in env.items() if k.upper() not in NODE_PRELOAD}
+    out["npm_config_update_notifier"] = "false"
+    return out
+
+
+def npm_major(text: str) -> int | None:
+    """The major version in ``npm --version``'s output."""
+    m = re.fullmatch(r"\s*(\d+)\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]*)?\s*", text)
+    return int(m[1]) if m else None
+
+
+def _repo_root(project: Path) -> Path | None:
+    for folder in (project, *project.parents):
+        if (folder / ".git").exists():
+            return folder
+    return None
+
+
+def _interpreter(program: Path, path: str) -> Path | None:
+    """The program a script's ``#!`` line starts (``env node`` from PATH). Read, never run."""
+    try:
+        with open(program, "rb") as fh:
+            first = fh.readline(512)
+    except OSError:
+        return None
+    if not first.startswith(b"#!"):
+        return None
+    parts = first[2:].decode("utf-8", "replace").split()
+    if not parts:
+        return None
+    if Path(parts[0]).name == "env":
+        names = [p for p in parts[1:] if not p.startswith("-")]
+        found = shutil.which(names[0], path=path) if names else None
+        return Path(found) if found else None
+    return Path(parts[0])
+
+
+def program_refusal(npm_exe: str, project: Path, cwd: Path, path: str) -> str | None:
+    """Why Garnet won't start this npm (or the node its ``#!`` line names), if so.
+
+    The hook runs before the user approves the command, so it doesn't start
+    an npm or node from the project, from its repository, or from any
+    node_modules folder (``node_modules/.bin/npm``), committed or not, nor
+    corepack's npm shim, which runs the npm version ``packageManager`` names.
+    """
+    places = [p.resolve() for p in (project, cwd)]
+    repo = _repo_root(project)
+    if repo is not None:
+        places.append(repo.resolve())
+    exe = Path(npm_exe)
+    for program, what in ((exe, "npm"), (_interpreter(exe, path), "the node npm starts with")):
+        if program is None:
+            continue
+        real = program.resolve()
+        if "node_modules" in program.parts:
+            return f"{what} on PATH is {program}, in a node_modules folder"
+        if "corepack" in real.parts:
+            return (
+                f"{what} on PATH is corepack's shim, which runs the npm version the project's "
+                "packageManager names; Garnet Guard runs npm itself"
+            )
+        for place in places:
+            if real == place or place in real.parents:
+                return f"{what} on PATH is {program}, inside the project or its repository"
+    return None
+
+
 def resolve_env(env: Mapping[str, str], workdir: Path) -> dict[str, str]:
     """The environment for npm in the copy: no scripts, no git, no audit.
 
@@ -360,7 +578,7 @@ def resolve_env(env: Mapping[str, str], workdir: Path) -> dict[str, str]:
         "npm_config_update_notifier": "false",
         "npm_config_yes": "false",
     }
-    out = {k: v for k, v in env.items() if k.lower().replace("-", "_") not in ours}
+    out = {k: v for k, v in check_env(env).items() if k.lower().replace("-", "_") not in ours}
     out.update(ours)
     return out
 
@@ -414,32 +632,69 @@ def lock_refusals(lockfile: str, data: bytes) -> list[str]:
 class Scripted:
     """An installed package with install scripts (``hasInstallScript``)."""
 
-    folder: str  # the name npm rebuild matches: the folder under node_modules
-    package: str  # the package it is (differs for an npm: alias)
+    path: str  # its lockfile key, the folder npm rebuild is given: node_modules/a
+    package: str  # the package it is (differs from the folder for an npm: alias)
     version: str
+    resolved: str
+    integrity: str
+
+    @property
+    def rebuild_spec(self) -> str:
+        """What npm rebuild matches by exact path (npm 10 and 11): ./node_modules/a."""
+        return f"./{self.path}"
+
+
+_INSTALL_PATH = re.compile(
+    r"node_modules/(?:@[^/]+/)?[^/@][^/]*(?:/node_modules/(?:@[^/]+/)?[^/@][^/]*)*"
+)
+
+
+def entries(data: bytes | None) -> dict[str, Scripted]:
+    """Every registry-style entry in a lockfile's ``packages``, by path, with
+    the fields that make two installs the same (name, version, resolved,
+    integrity). Only entries with an integrity count."""
+    if data is None:
+        return {}
+    try:
+        doc = _load(data, "lockfile")
+    except NpmError:
+        return {}
+    packages = doc.get("packages")
+    if not isinstance(packages, dict):
+        return {}
+    out = {}
+    for key, entry in packages.items():
+        if not isinstance(key, str) or not _INSTALL_PATH.fullmatch(key):
+            continue
+        if not isinstance(entry, dict) or entry.get("link") is True:
+            continue
+        folders = key.split("node_modules/")[1:]
+        if not all(valid_name(f.rstrip("/")) for f in folders):
+            continue
+        folder = folders[-1]
+        fields = (entry.get("name", folder), entry.get("version"), entry.get("resolved", ""))
+        integrity = entry.get("integrity")
+        if all(isinstance(f, str) for f in fields) and isinstance(integrity, str) and integrity:
+            name, version, resolved = fields
+            out[key] = Scripted(key, name, version, resolved, integrity)  # type: ignore[arg-type]
+    return out
 
 
 def scripted(data: bytes) -> list[Scripted]:
-    """Every registry package in a lockfile that has install scripts."""
+    """Every package in a lockfile that has install scripts, by path."""
     try:
         doc = _load(data, "lockfile")
     except NpmError:
         return []
     packages = doc.get("packages")
+    found = entries(data)
     if not isinstance(packages, dict):
         return []
-    out = set()
-    for key, entry in packages.items():
-        if not isinstance(entry, dict) or entry.get("hasInstallScript") is not True:
-            continue
-        if "node_modules/" not in f"{key}" or entry.get("link") is True:
-            continue
-        folder = key.rpartition("node_modules/")[2]
-        version = entry.get("version")
-        name = entry.get("name", folder)
-        if isinstance(version, str) and isinstance(name, str) and valid_name(folder):
-            out.add(Scripted(folder, name, version))
-    return sorted(out, key=lambda s: (s.folder, s.version))
+    return [
+        found[key]
+        for key in sorted(found)
+        if isinstance(packages.get(key), dict) and packages[key].get("hasInstallScript") is True
+    ]
 
 
 def root_scripts(manifest: bytes | None) -> list[str]:

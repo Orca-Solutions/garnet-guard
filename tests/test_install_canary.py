@@ -261,10 +261,15 @@ def test_uv_resolve_step_never_downloads_a_python(tmp_path: Path) -> None:
 NPM = shutil.which("npm")
 
 
-def _marker_package(folder: Path, name: str, markers: Path, **extra: object) -> None:
+def _marker_package(
+    folder: Path,
+    name: str,
+    markers: Path,
+    events: tuple[str, ...] = ("preinstall", "install", "postinstall", "prepare", "prepack"),
+    **extra: object,
+) -> None:
     """A package.json whose every lifecycle script writes a marker file."""
     folder.mkdir(parents=True, exist_ok=True)
-    events = ("preinstall", "install", "postinstall", "prepare", "prepack")
     scripts = {
         e: f"node -e \"require('fs').writeFileSync('{markers / f'{name}-{e}'}', '')\""
         for e in events
@@ -395,3 +400,66 @@ def test_npm_hosted_git_dependency_prepare_is_stopped(tmp_path: Path) -> None:
             assert not ran
         for path in ran:
             path.unlink()
+
+
+@pytest.mark.skipif(NPM is None, reason="npm isn't installed")
+def test_npm_rebuild_by_path_runs_only_that_folder(tmp_path: Path) -> None:
+    """npm rebuild foo@1.0.0 also runs an alias installed as foo deeper in the
+    tree (here bar's foo, which is the package evil); npm rebuild
+    ./node_modules/foo, what the hand-off passes, runs only that folder.
+    Offline: the packages are local tarballs."""
+    assert NPM is not None
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    env = _npm_env(tmp_path)
+    src = tmp_path / "src"
+    for name in ("foo", "evil"):
+        # Install scripts only: npm 10 runs prepare while packing, --ignore-scripts or not.
+        _marker_package(src / name, name, markers, ("preinstall", "install", "postinstall"))
+        subprocess.run(
+            [NPM, "pack", "--silent", "--ignore-scripts"],
+            cwd=src / name,
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+    bar = src / "bar"
+    bar.mkdir()
+    evil = f"file:{src / 'evil' / 'evil-1.0.0.tgz'}"
+    (bar / "package.json").write_text(
+        json.dumps({"name": "bar", "version": "1.0.0", "dependencies": {"foo": evil}})
+    )
+    subprocess.run(
+        [NPM, "pack", "--silent", "--ignore-scripts"],
+        cwd=bar,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    project = tmp_path / "demo"
+    project.mkdir()
+    deps_ = {"foo": f"file:{src / 'foo' / 'foo-1.0.0.tgz'}", "bar": f"file:{bar / 'bar-1.0.0.tgz'}"}
+    (project / "package.json").write_text(
+        json.dumps({"name": "demo", "version": "1.0.0", "dependencies": deps_})
+    )
+    subprocess.run(
+        [NPM, "install", "--ignore-scripts", "--no-audit", "--no-fund"],
+        cwd=project,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    assert (project / "node_modules" / "bar" / "node_modules" / "foo").is_dir()
+    assert not list(markers.iterdir())
+
+    def rebuild(spec: str) -> set[str]:
+        subprocess.run(
+            [NPM, "rebuild", spec], cwd=project, env=env, check=True, capture_output=True
+        )
+        ran = {p.name.split("-")[0] for p in markers.iterdir()}
+        for p in markers.iterdir():
+            p.unlink()
+        return ran
+
+    assert rebuild("foo@1.0.0") == {"foo", "evil"}  # the canary: a name matches both
+    assert rebuild("./node_modules/foo") == {"foo"}

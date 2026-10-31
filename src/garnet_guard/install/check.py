@@ -34,7 +34,6 @@ from packaging.version import InvalidVersion, Version
 from .. import engine
 from ..engine import Options, Report, report, unchecked_result
 from ..lockfiles import LockfileError
-from ..lockfiles import parse as parse_lock
 from ..models import (
     Change,
     ChangeResult,
@@ -652,7 +651,7 @@ def check_npm(
 ) -> Outcome:
     """Check ``npm install|ci|update …`` in a private copy of the project.
 
-    ``subcommand`` is canonical (``npm.SUBCOMMANDS``). install and update
+    ``subcommand`` is canonical (``npm.CHECKED``). install and update
     resolve with ``--package-lock-only`` and scripts and git off; ci checks
     the lockfile on disk. The base is the lockfile at git HEAD, else the
     one on disk before the command.
@@ -676,12 +675,32 @@ def check_npm(
         return _refused("npm", command, refusals, original)
     if copy.originals.get("package.json") is None and subcommand != "install":
         return _cant("npm", command, f"there's no package.json in {project}.", original=original)
+    why = npm.program_refusal(npm_exe, project, cwd, env.get("PATH", ""))
+    if why:
+        return _cant(
+            "npm",
+            command,
+            f"Garnet Guard doesn't start this npm before you approve the command: {why}.",
+            original=original,
+        )
+    cenv = npm.check_env(env)  # no NODE_OPTIONS preloads in any npm the check runs
+    version = deps.run([npm_exe, "--version"], cwd=copy.root, env=cenv, timeout=deps.timeout())
+    major = npm.npm_major(version.stdout.decode("utf-8", "replace"))
+    if version.returncode != 0 or major not in npm.TESTED_MAJORS:
+        shown = escape(version.stdout.decode("utf-8", "replace").strip()[:40]) or "unknown"
+        return _cant(
+            "npm",
+            command,
+            f"npm here is version {shown}; Garnet Guard checks with npm 10 and 11, the versions "
+            "its resolve step was tested with.",
+            original=original,
+        )
     # The user's settings, as npm in the project reads them (the copy holds
     # its .npmrc). npm config get runs no package code.
     config = deps.run(
         [npm_exe, "config", "get", *npm.CONFIG_KEYS],
         cwd=copy.root,
-        env={**env, "npm_config_update_notifier": "false"},
+        env=cenv,
         timeout=deps.timeout(),
     )
     if config.returncode != 0:
@@ -757,26 +776,20 @@ def _npm_scripts(
 
     npm ci runs with --ignore-scripts, so no package that changed runs code
     as it installs, as uv's --no-build-package does for a changed package.
-    Unchanged packages had their scripts run before, so npm rebuild runs
-    them again, unless the user turned scripts off.
+    A package is unchanged when the base lockfile has the same entry at the
+    same path: name, version, resolved URL and integrity. npm rebuild is given
+    that path (``./node_modules/a``), which npm 10 and 11 match exactly; a
+    name and version would also match another package installed under that
+    folder name deeper in the tree, or an alias of another package.
     """
-    trusted: set[tuple[str, str]] = set()
-    if base is not None:
-        try:
-            trusted = {
-                (p.package, p.version or "")
-                for p in parse_lock("package-lock.json", base)
-                if p.source == "registry"
-            }
-        except LockfileError:
-            trusted = set()
+    trusted = npm.entries(base)
     found = npm.scripted(head)
-    unchanged = [s for s in found if (s.package, s.version) in trusted]
-    changed = [s for s in found if (s.package, s.version) not in trusted]
+    unchanged = [s for s in found if trusted.get(s.path) == s]
+    changed = [s for s in found if trusted.get(s.path) != s]
     notes = []
     if changed:
         listed = ", ".join(f"{s.package} {s.version}" for s in changed)
-        specs = " ".join(f"{s.folder}@{s.version}" for s in changed)
+        specs = " ".join(s.rebuild_spec for s in changed)
         notes.append(
             escape(
                 f"Install scripts that didn't run, because the package is new or changed: "
@@ -795,8 +808,7 @@ def _npm_scripts(
         )
     then = None
     if unchanged and not (plan.ignore_scripts or config_ignores):
-        specs_t = tuple(f"{s.folder}@{s.version}" for s in unchanged)
-        argv = (npm_exe, "rebuild", *specs_t)
+        argv = (npm_exe, "rebuild", *(s.rebuild_spec for s in unchanged))
         then = Handoff(argv, project, env, shlex.join(("npm", *argv[1:])))
     return then, tuple(notes)
 

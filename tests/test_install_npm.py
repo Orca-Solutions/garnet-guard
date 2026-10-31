@@ -64,9 +64,14 @@ def npm_answers(  # type: ignore[no-untyped-def]
     config: str = CONFIG,
     fail: str | None = None,
     seen: list[Any] | None = None,
+    version: str = "10.9.4",
 ):
     def answer(argv: list[str], cwd: Path, env: dict[str, str]) -> Ran:
         assert argv[0] == NPM
+        if argv[1] not in ("ci", "rebuild"):  # every npm the check runs: no node preloads
+            assert not {k for k in env if k.upper() in npm.NODE_PRELOAD}
+        if argv[1:] == ["--version"]:
+            return Ran(0, f"{version}\n".encode())
         if argv[1:3] == ["config", "get"]:
             assert argv[3:] == list(npm.CONFIG_KEYS)
             return Ran(0, config.encode())
@@ -211,16 +216,16 @@ def test_install_checks_in_a_copy_then_writes_back_and_runs_npm_ci(tmp_path: Pat
     assert handoff.then is not None and list(handoff.then.argv) == [
         NPM,
         "rebuild",
-        "esbuild@0.25.0",
+        "./node_modules/esbuild",
     ]
     stdout = io.StringIO()
     assert wrapper.act(out, force=False, deps=deps(run), stdout=stdout) == 0
     text = stdout.getvalue()
     assert "Wrote the checked package.json and package-lock.json." in text
     assert "Running: npm ci --ignore-scripts --no-audit\n" in text
-    assert "Running: npm rebuild esbuild@0.25.0\n" in text
+    assert "Running: npm rebuild ./node_modules/esbuild\n" in text
     assert "because the package is new or changed: left-pad 1.3.0" in text
-    assert "npm rebuild left-pad@1.3.0" in text
+    assert "npm rebuild ./node_modules/left-pad" in text
     assert (root / "package-lock.json").read_text() == HEAD
     assert [c[0][1] for c in run.calls[-2:]] == ["ci", "rebuild"]
     assert all(c[1] == root for c in run.calls[-2:])
@@ -397,7 +402,7 @@ def test_npm_settings_that_hide_what_is_installed(key: str, value: str, tmp_path
     run = FakeRunner(npm_answers(config=config))
     out = run_npm(root, "install", [], run)
     assert out.status == "cant_check"
-    assert [c[0][1] for c in run.calls] == ["config"]  # nothing resolved
+    assert [c[0][1] for c in run.calls] == ["--version", "config"]  # nothing resolved
     assert any(f"npm setting {key}" in r for r in out.reasons)
 
 
@@ -418,7 +423,7 @@ def test_ci_checks_the_lockfile_on_disk_against_head(tmp_path: Path) -> None:
     root = project(tmp_path / "demo", lockfile=HEAD)
     run = FakeRunner(npm_answers())
     out = run_npm(root, "ci", [], run, committed_lock=lambda path: BASE.encode())
-    assert [c[0][1] for c in run.calls] == ["config"]  # no resolve
+    assert [c[0][1] for c in run.calls] == ["--version", "config"]  # no resolve
     assert out.report is not None and len(out.report.results) == 1
     assert out.handoff is not None and out.handoff.write_back == ()
     assert list(out.handoff.argv) == [NPM, "ci", "--ignore-scripts"]
@@ -471,7 +476,7 @@ def test_wrapper_main_routes_npm_aliases(tmp_path: Path) -> None:
         env={"PATH": str(tmp_path / "bin")},
         stdout=io.StringIO(),
     )
-    assert code == 3 and seen == [["config", "get"]]
+    assert code == 3 and seen == [["--version"]]
     assert wrapper.main("npm", ["run", "build"], deps=deps(run), cwd=root, env={}) == 3
 
 
@@ -563,3 +568,244 @@ def test_hook_npm_registry_credentials_never_shown(
     command = "npm install --registry https://user:s3cret@r.example/ x"
     text = json.dumps(answer(agent, event(command, str(root)), where, deps=deps(run)))
     assert "s3cret" not in text and "https://****@r.example/" in text
+
+
+# --- review findings (2026-10-31) -------------------------------------------
+
+
+def test_rebuild_needs_the_same_entry_at_the_same_path(tmp_path: Path) -> None:
+    # Same name and version, but another tarball: it changed, so it isn't rebuilt.
+    other = entry("esbuild", "0.25.0", hasInstallScript=True)
+    other["resolved"] = "https://npm.example/esbuild/-/esbuild-0.25.0.tgz"
+    other["integrity"] = "sha512-BBBB"
+    head = lock(**{"left-pad": entry("left-pad", "1.2.0"), "esbuild": other})
+    root = project(tmp_path / "demo")
+    out = run_npm(root, "install", [], FakeRunner(npm_answers(head)))
+    assert out.handoff is not None and out.handoff.then is None
+    assert any("esbuild 0.25.0" in n and "./node_modules/esbuild" in n for n in out.handoff.notes)
+
+
+def test_rebuild_never_names_a_package_npm_could_match_elsewhere(tmp_path: Path) -> None:
+    # node_modules/bar/node_modules/esbuild is another package (an alias of
+    # evil) at the trusted name and version. npm rebuild esbuild@0.25.0 would
+    # run it; the rebuild is given the trusted entry's exact path instead.
+    nested = {**entry("evil", "0.25.0", hasInstallScript=True), "name": "evil"}
+    head = json.loads(HEAD)
+    head["packages"]["node_modules/bar"] = entry("bar", "1.0.0")
+    head["packages"]["node_modules/bar/node_modules/esbuild"] = nested
+    root = project(tmp_path / "demo")
+    out = run_npm(root, "install", [], FakeRunner(npm_answers(json.dumps(head))))
+    assert out.handoff is not None and out.handoff.then is not None
+    assert list(out.handoff.then.argv)[1:] == ["rebuild", "./node_modules/esbuild"]
+    assert not any("@" in a for a in out.handoff.then.argv[2:])
+    note = " ".join(out.handoff.notes)
+    assert "evil 0.25.0" in note and "./node_modules/bar/node_modules/esbuild" in note
+
+
+def test_entries_key_on_path_name_version_resolved_and_integrity() -> None:
+    found = npm.entries(BASE.encode())
+    assert found["node_modules/esbuild"] == npm.Scripted(
+        "node_modules/esbuild",
+        "esbuild",
+        "0.25.0",
+        "https://registry.npmjs.org/esbuild/-/esbuild-0.25.0.tgz",
+        "sha512-AAAA",
+    )
+    no_integrity = lock(
+        x={"version": "1.0.0", "resolved": "https://registry.npmjs.org/x/-/x-1.0.0.tgz"}
+    )
+    assert npm.entries(no_integrity.encode()) == {}
+
+
+# npm's own deref (lib/utils/cmd-list.js) gave these for npm 10.9.4 and
+# 11.21.1; the port matched it on all 458 prefixes of every command and alias.
+@pytest.mark.parametrize(
+    ("word", "commands"),
+    [
+        ("upd", {"update"}),
+        ("ud", {"update"}),
+        ("upgr", {"update"}),
+        ("u", {"update"}),  # npm 11 only; npm 10 says "Unknown command"
+        ("install-cl", {"ci"}),
+        ("installClean", {"ci"}),
+        ("cleanInstall", {"ci"}),
+        ("isntall-c", {"ci"}),
+        ("insta", {"install"}),
+        ("run", {"run", "run-script"}),
+        ("x", {"exec"}),
+        ("cit", {"install-ci-test"}),
+        ("I", set()),
+        ("ru", set()),
+    ],
+)
+def test_deref_reads_subcommands_as_npm_does(word: str, commands: set[str]) -> None:
+    assert npm.deref(word) == commands
+
+
+@pytest.mark.parametrize(
+    ("command", "shape"),
+    [
+        ("npm upd left-pad", ["npm update left-pad"]),
+        ("npm upgr", ["npm update"]),
+        ("npm install-cl", ["npm ci"]),
+        ("npm installClean", ["npm ci"]),
+        ("npm cleanInstall", ["npm ci"]),
+        ("npm isntall-c", ["npm ci"]),
+        ("npm -- install left-pad", ["npm install -- left-pad"]),
+        ("npm --no-audit false install x", ["unclear"]),
+        ("npm uninstall x", ["unsupported npm uninstall"]),  # may install: asks
+        ("npm dedupe", ["unsupported npm dedupe"]),
+        ("npm rb", ["unsupported npm rb"]),
+        ("npm I x", ["unsupported npm I"]),  # unknown to npm: asks rather than guess
+        ("npm init -y", []),
+        ("npm init vite", ["unsupported npm init"]),
+        ("npm audit", []),
+        ("npm audit fix", ["unsupported npm audit"]),
+        ("npm view left-pad versions", []),
+        ("npm view github:o/r", ["unsupported npm view"]),
+        ("npm run build", []),
+        ("npm t", []),
+        ("npx npm i x", ["unsupported npx"]),
+        ("npx -y npm@10 i x", ["unsupported npx"]),
+        ("npx --package=pnpm pnpm add x", ["unsupported npx"]),
+        ("npm exec -- npm i x", ["unsupported npm exec"]),
+        ("npm x npm i", ["unsupported npm x"]),
+        ("node /usr/lib/node_modules/npm/bin/npm-cli.js i x", ["unclear"]),
+        ("corepack npm i x", ["unclear"]),
+    ],
+)
+def test_npm_spellings_are_checked_or_asked(command: str, shape: list[str], tmp_path: Path) -> None:
+    assert _shape(command, str(tmp_path)) == shape
+
+
+@pytest.mark.parametrize(
+    ("command", "ask"),
+    [
+        ("npm uninstall x", True),
+        ("npx npm i x", True),
+        ("npm exec -- npm i x", True),
+        ("npx -y npm@8 i x", True),
+        ("npx prettier --check .", False),
+        ("npm exec tsc", False),
+    ],
+)
+def test_ask_or_note(command: str, ask: bool, tmp_path: Path) -> None:
+    found = shellwords.find_commands(command, cwd=str(tmp_path), env={"PATH": "/nonexistent"})
+    assert len(found) == 1 and isinstance(found[0], shellwords.Unsupported)
+    assert found[0].ask is ask
+
+
+def test_wrapper_reads_npm_spellings(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    seen: list[str] = []
+    real = check.check_npm
+
+    def spy(npm_exe: str | None, subcommand: str, args: Any, **kw: Any) -> Outcome:
+        seen.append(subcommand)
+        return real(npm_exe, subcommand, args, **kw)
+
+    for words in (["upd"], ["installClean"], ["--", "install", "x"]):
+        check.check_npm = spy  # type: ignore[assignment]
+        try:
+            wrapper.main("npm", words, deps=deps(FakeRunner(npm_answers())), cwd=root, env={})
+        finally:
+            check.check_npm = real  # type: ignore[assignment]
+    assert seen == ["update", "ci", "install"]
+    assert (
+        wrapper.main(
+            "npm", ["uninstall", "x"], deps=deps(FakeRunner(npm_answers())), cwd=root, env={}
+        )
+        == 3
+    )
+
+
+@pytest.mark.parametrize(
+    "args", [["x", "--ignore-scripts", "false"], ["-D", "true", "x"], ["--save", "false"]]
+)
+def test_a_bare_true_or_false_after_a_flag_is_refused(args: list[str]) -> None:
+    plan = npm.plan("install", args)
+    assert plan.refusals and "flag's value" in plan.refusals[0].why
+
+
+def test_node_preloads_never_reach_the_check(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    run = FakeRunner(npm_answers())  # asserts no NODE_OPTIONS on every check run
+    env = {"PATH": "/bin", "NODE_OPTIONS": "--require=./x.js", "node_path": "/x"}
+    out = run_npm(root, "install", ["left-pad@1.3.0"], run, env=env)
+    assert out.status == "pass"
+    assert [c[0][1] for c in run.calls] == ["--version", "config", "install"]
+    assert npm.check_env(env) == {"PATH": "/bin", "npm_config_update_notifier": "false"}
+
+
+def _program(path: Path, first_line: str = "#!/bin/sh\n") -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(first_line)
+    path.chmod(0o755)
+    return str(path)
+
+
+@pytest.mark.parametrize(
+    "where_",
+    [
+        "demo/bin/npm",
+        "demo/node_modules/.bin/npm",
+        "elsewhere/node_modules/.bin/npm",
+        "repo/tools/npm",
+    ],
+)
+def test_an_npm_from_the_project_or_node_modules_is_never_started(
+    where_: str, tmp_path: Path
+) -> None:
+    (tmp_path / "repo" / ".git").mkdir(parents=True)
+    root = project(tmp_path / ("repo/demo" if where_.startswith("repo") else "demo"))
+    exe = _program(tmp_path / where_)
+    run = FakeRunner(npm_answers())
+    work = tmp_path / "work"
+    work.mkdir()
+    out = check.check_npm(
+        exe, "install", [], cwd=root, env={"PATH": str(Path(exe).parent)}, command="npm install",
+        deps=deps(run), workdir=work,
+    )  # fmt: skip
+    assert out.status == "cant_check" and not run.calls
+    assert any("doesn't start this npm" in r for r in out.reasons)
+
+
+def test_the_node_npm_starts_with_is_checked_too(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    node = _program(tmp_path / "demo" / "node_modules" / ".bin" / "node")
+    exe = _program(tmp_path / "bin" / "npm", "#!/usr/bin/env node\n")
+    run = FakeRunner(npm_answers())
+    work = tmp_path / "work"
+    work.mkdir()
+    path = f"{Path(node).parent}:{Path(exe).parent}"
+    out = check.check_npm(
+        exe, "install", [], cwd=root, env={"PATH": path}, command="npm install",
+        deps=deps(run), workdir=work,
+    )  # fmt: skip
+    assert out.status == "cant_check" and not run.calls
+    assert any("the node npm starts with" in r for r in out.reasons)
+
+
+def test_corepacks_shim_is_never_started(tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    shim = _program(tmp_path / "lib" / "corepack" / "dist" / "npm.js")
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "npm").symlink_to(shim)
+    run = FakeRunner(npm_answers())
+    work = tmp_path / "work"
+    work.mkdir()
+    out = check.check_npm(
+        str(tmp_path / "bin" / "npm"), "install", [], cwd=root, env={"PATH": str(tmp_path / "bin")},
+        command="npm install", deps=deps(run), workdir=work,
+    )  # fmt: skip
+    assert out.status == "cant_check" and not run.calls
+    assert any("corepack" in r for r in out.reasons)
+
+
+@pytest.mark.parametrize("version", ["8.19.4", "9.9.4", "12.0.0", "garbage"])
+def test_untested_npm_versions_are_cant_check(version: str, tmp_path: Path) -> None:
+    root = project(tmp_path / "demo")
+    run = FakeRunner(npm_answers(version=version))
+    out = run_npm(root, "install", [], run)
+    assert out.status == "cant_check" and [c[0][1] for c in run.calls] == ["--version"]
+    assert any("checks with npm 10 and 11" in r for r in out.reasons)
