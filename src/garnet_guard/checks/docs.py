@@ -204,9 +204,10 @@ _DOCS: tuple[RuleDoc, ...] = (
         W,
         "The new version depends on a package the trusted version didn't, or a dependency it "
         "had now installs from somewhere else. It is a warning when the registry has no such "
-        "package, when it installs from git, a URL or a path, or when its first release came "
-        "less than 90 days before this one (or after it), whoever owns it. An established "
-        "dependency is info.",
+        "package, when it installs from git, a URL or a path, when its name is declared again "
+        "(npm's optionalDependencies, a second Requires-Dist line) to install another package or "
+        "source, which Garnet doesn't look up, or when its first release came less than 90 days "
+        "before this one (or after it), whoever owns it. An established dependency is info.",
         "A dependency installs with the package, and a new one gets no comparison of its own: "
         "Garnet has no trusted version of it to diff against. Adding a package the attacker "
         "controls is a quiet way to carry a payload into a trusted one. event-stream 3.3.6 "
@@ -227,7 +228,9 @@ _DOCS: tuple[RuleDoc, ...] = (
         ".egg-info folder at the wheel's root or under <name>.data/purelib/ or platlib/, line by "
         "line as importlib.metadata does; lines removed, repeated or reordered with nothing new "
         "running are not reported, and in a group whose tool loads every line (setuptools.*, "
-        "flake8, keyring and others) only a new target counts. It is a warning for a group another tool loads by itself (pytest11, "
+        "flake8, keyring and others) only a new target counts, and where the tool ignores a "
+        "line's name too (pygments.lexers, keyring and others) only a target new to the group. "
+        "It is a warning for a group another tool loads by itself (pytest11, "
         "setuptools.*, flake8, keyring and others) and for a new script in the wheel's own "
         "entry_points.txt with a common command's name (pip, git, curl and the others on the "
         "rule page) other than the project's own; any other new or changed entry point is info. "
@@ -353,10 +356,13 @@ _DOCS += (
         "unsupported-source",
         "absolute",
         Severity.INFO,
-        "A dependency comes from a source Garnet doesn't check: git, a local path, a direct URL or a private index.",
-        "Garnet compares releases published on PyPI. Code from other sources wasn't checked, and it "
-        "isn't passed either.",
-        "Review the change to that dependency by hand.",
+        "A dependency comes from a source Garnet doesn't check: git, a local path, a direct URL, a private "
+        "index or registry, or another npm package's tarball (a bundled dependency).",
+        "Garnet compares releases published on PyPI and npm. Code from other sources wasn't checked, and "
+        "it isn't passed either.",
+        "Review the change to that dependency by hand. A bundled dependency changes only with the package "
+        "that ships it, so review that package's update, or the lockfile edit itself if that package "
+        "didn't change.",
     ),
 )
 

@@ -432,3 +432,100 @@ def test_unpublished_history_is_said_and_still_warns() -> None:
         "npm also lists 1.0.0 from 2026-02-23, since unpublished; 1 release(s); "
         "no repository link"
     )
+
+
+# A name declared a second time to install something else. Only the first
+# declaration is compared and looked up; npm lets optionalDependencies
+# override dependencies, so the second can be what installs.
+
+
+def _from_package_json(version: str, doc: dict[str, Any]) -> ReleaseFacts:
+    return _npm_rel(version, *declared_dependencies(json.dumps(doc).encode()))
+
+
+def test_second_declarations_are_kept_on_the_first() -> None:
+    doc = {
+        "dependencies": {"h2": "npm:established@^1", "a": "^1", "b": "^1"},
+        "optionalDependencies": {"h2": "npm:young@^1", "a": "^2", "b": "github:x/b"},
+    }
+    (h2, a, b) = declared_dependencies(json.dumps(doc).encode())
+    assert (h2.package, h2.also, h2.also_installs) == (
+        "established",
+        ("h2@npm:young@^1 (optional)",),
+        ("young",),
+    )
+    # another range of the same package installs nothing else
+    assert (a.also, a.also_installs) == ((), ())
+    assert b.also_installs == ("github:x/b",)
+    reqs = declared_requirements(
+        _meta(
+            'Requires-Dist: helper>=1; sys_platform != "linux"',
+            'Requires-Dist: helper @ https://x.invalid/helper.whl ; sys_platform == "linux"',
+            'Requires-Dist: helper>=2; python_version < "3.12"',
+        )
+    )
+    assert reqs is not None
+    (helper,) = reqs
+    assert helper.spec == 'helper>=1; sys_platform != "linux"'
+    assert helper.also_installs == ("https://x.invalid/helper.whl",)
+
+
+def test_new_dependency_declared_again_to_install_a_young_package_warns() -> None:
+    doc = {
+        "dependencies": {"h2": "npm:established@^1"},
+        "optionalDependencies": {"h2": "npm:young@^1"},
+    }
+    base = _npm_rel("1.0")
+    cand = replace(
+        _from_package_json("1.1", doc), dependencies=(_profile("established", 3000, 80),)
+    )
+    # only the first declaration is looked up
+    assert new_requirement_names(base, cand) == ("established",)
+    f = _c008(base, cand)
+    assert f.severity == Severity.WARN
+    assert "h2 is declared again to install young" in f.title
+    assert f.evidence[0].summary == (
+        "h2@npm:established@^1: also declared as h2@npm:young@^1 (optional), which installs "
+        "young; Garnet didn't look that up"
+    )
+
+
+def test_kept_dependency_declared_again_to_install_a_source_warns() -> None:
+    for second in ("github:someone/h2", "https://x.invalid/h2.tgz", "file:../h2", "../h2"):
+        base = _from_package_json("1.0", {"dependencies": {"h2": "^1"}})
+        doc = {"dependencies": {"h2": "^1"}, "optionalDependencies": {"h2": second}}
+        cand = _from_package_json("1.1", doc)
+        assert new_requirement_names(base, cand) == ()
+        f = _c008(base, cand)
+        assert f is not None and f.severity == Severity.WARN, second
+        assert f"h2 is declared again to install {second}" in f.title
+        assert "Garnet didn't look that up" in f.evidence[0].summary
+        assert len(f.evidence) == 1  # the first declaration didn't change
+
+
+def test_second_declaration_of_the_same_package_or_one_already_trusted_is_quiet() -> None:
+    same = {"dependencies": {"a": "^1"}, "optionalDependencies": {"a": "^2"}}
+    assert _c008(_npm_rel("1.0", Requirement("a", "a@^1")), _from_package_json("1.1", same)) is None
+    # a new dependency declared twice for one package stays at info when established
+    cand = replace(_from_package_json("1.1", same), dependencies=(_profile("a", 3000, 50),))
+    f = _c008(_npm_rel("1.0"), cand)
+    assert f.severity == Severity.INFO and "declared again" not in f.title
+    # the trusted version already declared the same second target
+    twice = {
+        "dependencies": {"h2": "npm:established@^1"},
+        "optionalDependencies": {"h2": "npm:young@^1"},
+    }
+    assert _c008(_from_package_json("1.0", twice), _from_package_json("1.1", twice)) is None
+
+
+def test_pypi_second_requires_dist_line_with_a_url_warns() -> None:
+    base = _depends("1.0", "helper>=1")
+    cand = _depends(
+        "1.1",
+        'helper>=1; sys_platform != "linux"',
+        'helper @ https://x.invalid/helper.whl ; sys_platform == "linux"',
+    )
+    result = run_checks(CHANGE, base, cand)
+    (f,) = [f for f in result.findings if f.rule_id == "GRN-C008"]
+    assert f.severity == Severity.WARN
+    assert "helper is declared again to install https://x.invalid/helper.whl" in f.title

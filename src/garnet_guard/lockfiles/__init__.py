@@ -1,7 +1,7 @@
 """Lockfile parsers and change computation (SPEC §3).
 
-Parsers read lockfiles as data (``tomllib`` and line parsing). They never
-resolve, install or run anything.
+Parsers read lockfiles as data (``tomllib``, ``json``, PyYAML's parser and
+line parsing). They never resolve, install or run anything.
 """
 
 from __future__ import annotations

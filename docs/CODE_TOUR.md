@@ -41,9 +41,10 @@ Every run goes through the same five stages, whichever command started it.
 
 1. **Find what changed.** `garnet check` reads the trusted lockfile and the updated one
    (`workspace.py` finds them, `lockfiles/` parses them) and lists every package whose
-   version changed. Each one becomes a `Change`: package, baseline version, candidate
-   version, and the lockfile line. Entries Garnet can't check (not pinned to one version,
-   or installed from git, a path or a private index) become GRN-E004 or GRN-E005 findings
+   version changed. Each one becomes a `Change`: ecosystem, package, baseline version,
+   candidate version, and the lockfile line. Entries Garnet can't check (not pinned to one
+   version, installed from git, a path or a private index or registry, or bundled inside
+   another npm package) become GRN-E004 or GRN-E005 findings
    here, so they show up in the report instead of disappearing. `garnet diff` skips this
    stage: you name the package and both versions yourself.
 2. **Gather the facts.** `engine.py` asks `ecosystems/pypi.py` or `ecosystems/npm.py` for a
@@ -87,7 +88,7 @@ results describe what users will see.
 |---|---|
 | [`cli.py`](../src/garnet_guard/cli.py) | The `garnet` command: parses arguments, runs the engine, prints the report, returns the exit code. |
 | [`workspace.py`](../src/garnet_guard/workspace.py) | Finds lockfiles, reads the base version from git, refuses symlinked lockfiles, and turns lockfile differences into `Change` records. |
-| [`lockfiles/`](../src/garnet_guard/lockfiles/) | One parser per lockfile format (`uv.lock`, `poetry.lock`, `pylock.toml`, `requirements*.txt`) and the code that compares two lists of pins. |
+| [`lockfiles/`](../src/garnet_guard/lockfiles/) | One parser per lockfile format (`uv.lock`, `poetry.lock`, `pylock.toml` and `requirements*.txt` for PyPI; `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml` and `yarn.lock` from Yarn 1 and Yarn 2+ for npm) and the code that compares two lists of pins, each in its ecosystem's version order. `yamldoc.py` is the strict YAML reader the pnpm and Yarn 2+ parsers share, and `registries.py` reads the registry keys of the .npmrc, pnpm-workspace.yaml and .yarnrc.yml beside those lockfiles. |
 | [`engine.py`](../src/garnet_guard/engine.py) | Runs the stages in order: fetch facts in parallel, run every check, turn errors into findings, sort, decide the verdict. |
 | [`ecosystems/`](../src/garnet_guard/ecosystems/) | Everything fetched about a release: PyPI and npm registry metadata and files, attestations, git tags, the repository's files at the tag (read from a git packfile, no `git` needed), OSV advisories. |
 | [`net.py`](../src/garnet_guard/net.py) | The only code that uses the network. HTTPS only, a short list of allowed hosts, size caps, timeouts and retries. |
@@ -99,6 +100,8 @@ results describe what users will see.
 | [`report.py`](../src/garnet_guard/report.py) | Text and JSON output. Escapes package-supplied text before it reaches a terminal. |
 | [`markdown.py`](../src/garnet_guard/markdown.py) | The pull request comment. Treats the whole report as untrusted and escapes every string so a package can't add links, mentions or HTML. |
 | [`sarif.py`](../src/garnet_guard/sarif.py) | The SARIF report for GitHub code scanning, rendered from the JSON report the same way. Rule metadata comes from Garnet's own rule docs, never from the report. |
+| [`install/`](../src/garnet_guard/install/) | `garnet pip install`, `garnet uv add|remove|lock|sync` and the agent hooks ([install-wrapper.md](install-wrapper.md)). `pip.py` and `uv.py` read a command and the files it names and refuse what would build; `check.py` resolves with builds off, compares with what's installed or committed and calls the engine; `wrapper.py` installs exactly what was checked; `shellwords.py` reads an agent's shell command with `shlex` without running it; `gate.py` and `hooks.py` answer the hook; `runner.py` starts the user's pip, uv or git from an argument list. |
+| [`console.py`](../src/garnet_guard/console.py) | The entry point of `garnet` and `garnet-guard`. `garnet hook <agent> run` goes to `install/gate.py`, which imports only the standard library; everything else goes to `cli.py`. |
 
 Outside `src/`:
 
@@ -118,12 +121,13 @@ the contracts in [`pyproject.toml`](../pyproject.toml) and CI fails if one break
 - `checks/` can't import the network code, the fetchers or the archive reader.
 - `facts/` can't import the network code.
 - Only `net.py` imports the HTTP library.
+- `install/` reaches the network and release data only through `engine.py`, and nothing below the surfaces imports it.
 
 The project's hard rules (in [AGENTS.md](../AGENTS.md)) map onto the code like this:
 
 | Hard rule | Where it's kept |
 |---|---|
-| Never run package code | `facts/pyindex.py` parses with `ast`. The only `subprocess` call in `src/` is `workspace.py` running `git show` on your own repository. |
+| Never run package code | `facts/pyindex.py` parses with `ast`. `subprocess` runs only `git` on your own repository (`workspace.py`, and `install/hooks.py` to see whether a package manager is committed) and your own pip or uv from `install/runner.py`, with builds turned off for the resolve step. |
 | All archive access through `safe_archive.py` | `zipfile` and `tarfile` are imported only there. |
 | Checks are pure | Enforced by `lint-imports`, above. |
 | "Couldn't check" is never "pass" | Fetch and parse failures become GRN-E001 to GRN-E003 findings; unreadable lockfiles and internal errors exit with code 3. |
