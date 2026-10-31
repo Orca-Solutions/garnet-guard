@@ -31,6 +31,7 @@ from packaging.version import InvalidVersion, Version
 from ..lockfiles.base import normalize
 from . import pip
 from .pip import Refusal, spec_refusal
+from .runner import loader_env
 
 COPIED = ("pyproject.toml", "uv.lock", "uv.toml", ".python-version")
 MAX_PROJECT_FILE_BYTES = 16 * 1024 * 1024
@@ -396,9 +397,10 @@ def interpreters(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> list
 
 
 def resolve_env(env: Mapping[str, str]) -> dict[str, str]:
-    """The environment for the resolve step: builds off, and the user's folder
-    settings dropped (the plan carries them as flags)."""
-    out = {k: v for k, v in env.items() if k not in _ENV_DROPPED}
+    """The environment for the resolve step: builds off, the user's folder
+    settings dropped (the plan carries them as flags), and no loader preload
+    from the command (runner.loader_env)."""
+    out = {k: v for k, v in loader_env(env).items() if k not in _ENV_DROPPED}
     out["UV_NO_BUILD"] = "1"
     out.pop("UV_NO_BUILD_ISOLATION", None)
     # A project's [tool.uv] can name where Python downloads come from
