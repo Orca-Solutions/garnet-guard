@@ -345,10 +345,10 @@ def test_fail_on_never_still_shows_the_findings(
 
 @pytest.mark.parametrize("agent", AGENTS)
 def test_unsupported_tools_get_a_note_and_no_decision(agent: str, where: dict[str, str]) -> None:
-    out = answer(agent, event("npm install left-pad", where["cwd"]), where)
+    out = answer(agent, event("pnpm add left-pad", where["cwd"]), where)
     inner = spec(out)
     assert "permissionDecision" not in inner
-    assert "npm install left-pad: not checked" in inner["additionalContext"]
+    assert "pnpm add left-pad: not checked" in inner["additionalContext"]
     assert out is not None and out["systemMessage"].startswith(
         "Garnet Guard didn't check this install."
     )
@@ -356,7 +356,7 @@ def test_unsupported_tools_get_a_note_and_no_decision(agent: str, where: dict[st
 
 @pytest.mark.parametrize("agent", AGENTS)
 def test_block_wins_over_everything_else(agent: str, where: dict[str, str]) -> None:
-    command = "npm i x; pip install requests==2.32.3; pip install $(y)"
+    command = "pnpm add x; pip install requests==2.32.3; pip install $(y)"
     out = answer(
         agent,
         event(command, where["cwd"]),
@@ -560,7 +560,7 @@ def test_answers_never_repeat_url_credentials(
     for command in (
         f"pip install --index-url {index} requests==2.32.3",
         f"pip install --index-url {index} -e .",  # refused: can't check
-        f"npm install --registry {index} left-pad",  # not checked yet
+        f"pnpm add --registry {index} left-pad",  # not checked yet
     ):
         payload = event(command, where["cwd"], scratchpad_dir=str(tmp_path))
         out = answer(agent, payload, where, evaluate=warn)
