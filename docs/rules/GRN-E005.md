@@ -37,10 +37,13 @@ them, beside the file that names them, for the working tree and for the base (at
 include tree to every pin in it: an index set in `base.txt` applies to the
 `requirements-dev.txt` that brings it in, and one set in `requirements-dev.txt` applies to
 the pins of `base.txt`. It follows them only inside the directory it checks, never through a
-symlink, and at most 10 deep. An include it can't follow (a URL, a path outside that
+symlink, and at most 10 deep, reading each file once and at most 100 includes and 64 MiB
+per tree. An include it can't follow (a URL, a path with a `..` part or outside that
 directory, a missing file, a symlink, an environment variable, files that include each
-other, more than 10 deep) leaves the pins of the file that names it, and of the files read
-with it, unchecked.
+other, more than 10 deep, a tree past those caps) leaves the pins of the file that names it,
+and of the files read with it, unchecked. Lines are joined and comments stripped as pip 24.0
+does it: a line ending in `\` runs on into the next with nothing between, so `--\` followed
+by `index-url …` is `--index-url …`.
 
 ## Why it matters
 
@@ -96,6 +99,20 @@ in policy:
 Suppressed findings still appear in JSON and SARIF output, marked with the ignore that
 matched. How to write one is in [the policy guide](../policy.md); the format is in
 [SPEC §7](../SPEC-v1.md#7-policy).
+
+## What it doesn't check
+
+- **pip's settings outside the file.** `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`,
+  `PIP_FIND_LINKS`, `PIP_NO_INDEX` and the same keys in `pip.conf` change where pip installs
+  from for every file, and `garnet check` doesn't see them. `garnet pip install` doesn't read
+  them either, but it checks what pip's own resolution says it will install, so a package
+  from another index is reported there.
+- **Several files on one command line.** `pip install -r a.txt -r b.txt` reads both files
+  with one index setting, so an index set in `b.txt` applies to `a.txt`'s pins too. Garnet
+  knows only the includes each file names, not how files are put together on a command line.
+- **Environment variables.** pip expands `${VAR}` in a requirements file, so a line such as
+  `${PIP_ARGS}` can turn into an index option. Garnet reads the line as written; an include
+  path with `${` in it isn't followed.
 
 ## See also
 

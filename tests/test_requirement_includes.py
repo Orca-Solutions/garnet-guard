@@ -16,7 +16,9 @@ from garnet_guard.cli import main
 from garnet_guard.lockfiles import parse
 from garnet_guard.lockfiles.requirements import Included
 from garnet_guard.workspace import (
+    MAX_INCLUDE_BYTES,
     MAX_INCLUDE_DEPTH,
+    MAX_INCLUDES,
     changes_for,
     disk_reader,
     git_reader,
@@ -81,7 +83,7 @@ def test_an_including_files_index_applies_to_the_included_file(tmp_path: Path) -
             "requirements-dev.txt": b"--extra-index-url https://nexus.example/simple\n"
             b"-r requirements/base.txt\npytest==8.3\n",
             "requirements/base.txt": b"requests==2.32.5\n",
-            "requirements/other.txt": b"-r ../requirements-dev.txt\nidna==3.7\n",
+            "requirements-other.txt": b"-r requirements-dev.txt\nidna==3.7\n",
         },
     )
     assert _pins(tmp_path, files, "requirements/base.txt") == [
@@ -92,7 +94,7 @@ def test_an_including_files_index_applies_to_the_included_file(tmp_path: Path) -
             "this file",
         )
     ]
-    assert _pins(tmp_path, files, "requirements/other.txt") == [
+    assert _pins(tmp_path, files, "requirements-other.txt") == [
         (
             "idna",
             "unsupported",
@@ -111,9 +113,10 @@ def test_an_including_files_index_applies_to_the_included_file(tmp_path: Path) -
     ("include", "why"),
     [
         ("-r missing.txt", "it doesn't exist"),
-        ("-r ../outside.txt", "it is outside the directory Garnet checks"),
+        ("-r ../outside.txt", "its path has a .. part"),
         ("-r /etc/passwd", "it is outside the directory Garnet checks"),
-        ("-r sub/../../outside.txt", "it is outside the directory Garnet checks"),
+        ("-r sub/../../outside.txt", "its path has a .. part"),
+        ("-r sub/../real.txt", "its path has a .. part"),
         ("-r https://user:tok@example.com/r.txt", "it is a URL"),
         ("-r file:///srv/r.txt", "it is a URL"),
         ("-r ${REQS}/base.txt", "it uses an environment variable"),
@@ -246,3 +249,86 @@ def test_check_follows_includes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     out = capsys.readouterr().out
     assert "GRN-E005" in out and "s3cret" not in out
     assert "set with --index-url in base.txt, which this file brings in" in out
+
+
+# Review probes, checked against pip 24.0's parser.
+
+
+def test_probe_c1_continuation_joins_into_an_index_option() -> None:
+    # pip joins "--\" and the next line with nothing between: --index-url.
+    text = b"requests==2.31.0\n--\\\nindex-url https://user:pw@evil.example/simple\n"
+    (pin,) = parse("requirements.txt", text)
+    assert (pin.source, pin.detail) == (
+        "unsupported",
+        "private index, set with --index-url in this file",
+    )
+
+
+def test_probe_c5_backslashes_come_off_both_ends_of_a_continued_line() -> None:
+    text = b"requests==2.31.0\n\\--index-url https://evil.example/simple\\\n\n"
+    (pin,) = parse("requirements.txt", text)
+    assert pin.detail == "private index, set with --index-url in this file"
+
+
+def test_probe_c2_dotdot_through_a_symlinked_folder_is_not_followed(tmp_path: Path) -> None:
+    # link/../x.txt is real/x.txt for the filesystem (link -> real/deep), but
+    # x.txt once the path is folded; Garnet follows neither.
+    (tmp_path / "real" / "deep").mkdir(parents=True)
+    (tmp_path / "link").symlink_to("real/deep")
+    files = _write(
+        tmp_path,
+        {
+            "requirements.txt": b"requests==2.31.0\n-r link/../x.txt\n",
+            "real/x.txt": b"--index-url https://evil.example/simple\n",
+            "x.txt": b"# benign\n",
+        },
+    )
+    files = {"requirements.txt": files["requirements.txt"]}
+    assert _pins(tmp_path, files, "requirements.txt") == [
+        (
+            "requests",
+            "unsupported",
+            "-r in this file brings in a file Garnet can't follow (its path has a .. part), "
+            "which can set another index",
+        )
+    ]
+
+
+def test_a_relative_root_reads_includes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write(tmp_path, {"repo/cons.txt": b"-f https://evil.example/links\n"})
+    monkeypatch.chdir(tmp_path)
+    files = {"requirements.txt": b"requests==2.31.0\n-c cons.txt\n"}
+    got = requirement_includes(files, disk_reader(Path("repo")))["requirements.txt"]
+    assert got.why == (
+        "--find-links in cons.txt, which this file brings in, so pip can install it from elsewhere"
+    )
+
+
+def test_include_fan_out_is_read_once_per_path_and_capped(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def read(rel: str) -> bytes | None:
+        calls.append(rel)
+        return {"ok.txt": b"x==1\n"}.get(rel)
+
+    # the same missing and present files named many times are asked for once
+    many = b"".join(b"-r missing.txt\n-r ok.txt\n" for _ in range(40)) + b"flask==3.0\n"
+    got = requirement_includes({"requirements.txt": many}, read)["requirements.txt"]
+    assert sorted(calls) == ["missing.txt", "ok.txt"]
+    assert got.why is not None and "it doesn't exist" in got.why
+    # more than MAX_INCLUDES distinct includes stop the walk and leave pins unchecked
+    wide = b"".join(f"-r f{i}.txt\n".encode() for i in range(MAX_INCLUDES + 1))
+    calls.clear()
+    files = {"requirements.txt": wide + b"flask==3.0\n"}
+    got = requirement_includes(files, lambda rel: b"x==1\n")["requirements.txt"]
+    assert got.why == (
+        f"-r in this file brings in a file Garnet can't follow (the files include more than "
+        f"{MAX_INCLUDES}), which can set another index"
+    )
+    # so do more than MAX_INCLUDE_BYTES read across the tree
+    big = b"#" * (MAX_INCLUDE_BYTES // 2 + 1)
+    files = {"requirements.txt": b"-r a.txt\n-r b.txt\nflask==3.0\n"}
+    got = requirement_includes(files, lambda rel: big)["requirements.txt"]
+    assert got.why is not None and "larger than 64 MiB" in got.why
+    (pin,) = parse("requirements.txt", files["requirements.txt"], included=got)
+    assert pin.source == "unsupported"

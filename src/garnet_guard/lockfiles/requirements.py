@@ -13,24 +13,40 @@ _PINNED = re.compile(rf"^({_NAME})\s*(\[[^\]]*\])?\s*===?\s*([^\s;,]+)\s*(;.*)?$
 _NAMED = re.compile(rf"^({_NAME})\s*(\[[^\]]*\])?\s*(.*)$")
 
 
+# pip's comment pattern (req_file.COMMENT_RE).
+_COMMENT = re.compile(r"(^|\s+)#.*$")
+
+
 def logical_lines(text: str) -> list[tuple[int, str]]:
-    """Join backslash continuations; strip comments. Returns (first line, text)."""
+    """The lines pip reads, as ``req_file.preprocess`` in pip 24.0 makes them:
+    ``join_lines``, then ``ignore_comments``. A raw line ending in ``\\``
+    that isn't a comment line is joined to the next with nothing between,
+    after ``strip("\\")`` takes backslashes off both of its ends; comments
+    are stripped after joining. Returns (first line, text)."""
+    joined: list[tuple[int, str]] = []
+    primary = 0
+    pending: list[str] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        if not line.endswith("\\") or _COMMENT.match(line):
+            if _COMMENT.match(line):
+                line = " " + line  # so the comment is matched later
+            if pending:
+                pending.append(line)
+                joined.append((primary, "".join(pending)))
+                pending = []
+            else:
+                joined.append((number, line))
+        else:
+            if not pending:
+                primary = number
+            pending.append(line.strip("\\"))
+    if pending:
+        joined.append((primary, "".join(pending)))
     out: list[tuple[int, str]] = []
-    buf = ""
-    start = 0
-    for i, raw in enumerate(text.splitlines(), start=1):
-        if not buf:
-            start = i
-        line = re.sub(r"(^|\s)#.*$", "", raw)
-        if line.rstrip().endswith("\\"):
-            buf += line.rstrip()[:-1] + " "
-            continue
-        buf += line
-        if buf.strip():
-            out.append((start, buf.strip()))
-        buf = ""
-    if buf.strip():
-        out.append((start, buf.strip()))
+    for number, line in joined:
+        line = _COMMENT.sub("", line).strip()
+        if line:
+            out.append((number, line))
     return out
 
 
@@ -74,10 +90,28 @@ _PYPI = {s.rstrip("/") + "/" for s in PYPI_INDEXES}
 
 
 class _UnreadableOption(Exception):
-    """pip would refuse the option; ``name`` is as written, without its value."""
+    """pip would refuse the option. ``name`` is safe to show: see ``_shown``."""
 
     def __init__(self, name: str) -> None:
-        self.name = name[:40]
+        self.name = _shown(name)
+
+
+_OPTION_NAME = re.compile(r"-{1,2}[A-Za-z-]*")
+
+
+def _shown(name: str) -> str:
+    """An option name as the report may show it: only the leading run of
+    dashes and letters, never what follows, and when that run starts with a
+    known option (``--extra-index-urlhttps``, a value glued on), only the
+    option. A value can hold credentials."""
+    if not name.startswith("-"):
+        return name  # Garnet's own words ("an option line")
+    m = _OPTION_NAME.match(name)
+    run = m.group(0) if m else "-"
+    for known in sorted(_FILE_OPTIONS, key=len, reverse=True):
+        if run.startswith(known) and run != known:
+            return known + "…"
+    return run[:24] + ("…" if len(run) > 24 or len(run) < len(name) else "")
 
 
 def _long(name: str) -> str | None:

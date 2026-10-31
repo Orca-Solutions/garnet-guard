@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from garnet_guard.lockfiles import LockfileError, Pin, detect, diff_pins, parse
+from garnet_guard.lockfiles.requirements import logical_lines
 from garnet_guard.workspace import changes_for, discover, git_show, plain_file
 
 UV = b"""version = 1
@@ -193,6 +194,39 @@ def test_requirements_index_options_apply_to_the_whole_file(line: str, detail: s
     ]
     # The value can hold credentials: it's never in what a report shows.
     assert all("s3cret" not in (p.detail or "") and "secret" not in (p.detail or "") for p in pins)
+
+
+@pytest.mark.parametrize(
+    ("line", "shown"),
+    [
+        ("--extra-index-urlhttps://bob:s3cret@evil.example/simple", "--extra-index-url…"),
+        ("--index-urlbobs3cret@evil.example", "--index-url…"),
+        ("--weirdbobsecret:hunter2@evil", "--weirdbobsecret…"),
+        ("--abcdefghijklmnopqrstuvwxyzsecret", "--abcdefghijklmnopqrstuv…"),
+        ("-/user:s3cret@evil", "-…"),
+    ],
+)
+def test_requirements_unreadable_option_never_shows_its_value(line: str, shown: str) -> None:
+    (pin,) = parse("requirements.txt", f"x==1\n{line}\n".encode())
+    assert pin.detail == f"an option Garnet can't read ({shown}), so the index is unknown"
+    assert "s3cret" not in pin.detail and "hunter2" not in pin.detail
+
+
+@pytest.mark.parametrize(
+    ("text", "lines"),
+    [
+        # pip 24.0's join_lines and ignore_comments
+        (b"a==1 \\\n  --hash=sha256:x\n", [(1, "a==1   --hash=sha256:x")]),
+        (b"--\\\nindex-url u\n", [(1, "--index-url u")]),
+        (b"\\--index-url u\\\n\n", [(1, "--index-url u")]),
+        (b"# note \\\na==1\n", [(2, "a==1")]),  # a comment line doesn't continue
+        (b"a==1 # note \\\nb==2\n", [(1, "a==1")]),  # the comment eats the join
+        (b"a==1 \\ \nb==2\n", [(1, "a==1 \\"), (2, "b==2")]),  # space after \\
+        (b"a==1#x\n", [(1, "a==1#x")]),  # no space before #: not a comment
+    ],
+)
+def test_logical_lines_match_pip(text: bytes, lines: list[tuple[int, str]]) -> None:
+    assert logical_lines(text.decode()) == lines
 
 
 def test_requirements_index_option_on_a_requirement_line_counts() -> None:

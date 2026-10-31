@@ -195,6 +195,8 @@ def git_show(ref: str, path: Path, *, cwd: Path) -> bytes | None:
 # its index options to every requirement it reads. Garnet follows them as far
 # as this, inside the directory it checks, and never through a symlink.
 MAX_INCLUDE_DEPTH = 10
+MAX_INCLUDES = 100  # include lines in one tree
+MAX_INCLUDE_BYTES = MAX_LOCKFILE_BYTES  # read across one tree
 _URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
@@ -209,6 +211,7 @@ IncludeReader = Callable[[str], bytes | None]
 def disk_reader(root: Path) -> IncludeReader:
     """Read includes from the working tree, refusing symlinks as
     :func:`plain_file` does."""
+    root = root.absolute()
 
     def read(rel: str) -> bytes | None:
         path = root / rel
@@ -255,15 +258,21 @@ def git_reader(ref: str, root: Path) -> IncludeReader:
 
 def _resolve(including: str, value: str) -> tuple[str | None, str | None]:
     """(root-relative path, None) for an include, as pip resolves it beside
-    the file that names it, or (None, why Garnet doesn't follow it)."""
+    the file that names it, or (None, why Garnet doesn't follow it).
+
+    A ``..`` part is never followed: ``link/../x.txt`` through a symlinked
+    folder names a file outside it, and folding the path first would hide
+    that from the symlink check."""
     if "${" in value:
         return None, "it uses an environment variable"
     if _URL.match(value):
         return None, "it is a URL"
     if not value or posixpath.isabs(value):
         return None, "it is outside the directory Garnet checks"
+    if ".." in value.split("/"):
+        return None, "its path has a .. part"
     joined = posixpath.normpath(posixpath.join(posixpath.dirname(including), value))
-    if joined == ".." or joined.startswith("../"):
+    if ".." in joined.split("/"):
         return None, "it is outside the directory Garnet checks"
     return joined, None
 
@@ -275,16 +284,46 @@ class _Found:
     value: str | None  # the option's value (never shown), or why it wasn't followed
 
 
-def _tree(top: str, data: bytes, read: IncludeReader) -> tuple[list[_Found], set[str]]:
+class _TooBig(Exception):
+    """The include tree is past ``MAX_INCLUDES`` or ``MAX_INCLUDE_BYTES``."""
+
+
+def _memo(read: IncludeReader) -> Callable[[str], tuple[bytes | None, str | None]]:
+    """``read`` asked once per path: (bytes, None), (None, None) when the
+    file doesn't exist, or (None, why it was refused)."""
+    seen: dict[str, tuple[bytes | None, str | None]] = {}
+
+    def get(rel: str) -> tuple[bytes | None, str | None]:
+        if rel not in seen:
+            try:
+                seen[rel] = (read(rel), None)
+            except IncludeRefused as err:
+                seen[rel] = (None, str(err))
+        return seen[rel]
+
+    return get
+
+
+def _tree(
+    top: str, data: bytes, get: Callable[[str], tuple[bytes | None, str | None]]
+) -> tuple[list[_Found], set[str]]:
     """Everything in ``top``'s include tree that can move pins off PyPI, in
-    the order pip reads it, and the files in the tree."""
+    the order pip reads it, and the files in the tree. Past
+    ``MAX_INCLUDES`` include lines or ``MAX_INCLUDE_BYTES`` read, the walk
+    stops, and that is a reason too."""
     found: list[_Found] = []
     members = {top}
+    count = size = 0
 
     def visit(rel: str, text: str, stack: tuple[str, ...]) -> None:
+        nonlocal count, size
         opts = file_options(text)
         found.extend(_Found(rel, o, v) for o, v in opts.moves)
         for short, value in opts.includes:
+            count += 1
+            if count > MAX_INCLUDES:
+                found.append(_Found(rel, short, f"the files include more than {MAX_INCLUDES}"))
+                raise _TooBig
             target, problem = _resolve(rel, value)
             body: bytes | None = None
             if target is not None and target in stack:
@@ -294,16 +333,16 @@ def _tree(top: str, data: bytes, read: IncludeReader) -> tuple[list[_Found], set
             elif target is not None and target in members:
                 continue  # read already through another include
             elif target is not None:
-                try:
-                    body = read(target)
-                except IncludeRefused as err:
-                    problem = str(err)
-                else:
-                    if body is None:
-                        problem = "it doesn't exist"
+                body, problem = get(target)
+                if body is None and problem is None:
+                    problem = "it doesn't exist"
             if target is None or body is None:
                 found.append(_Found(rel, short, problem))
                 continue
+            size += len(body)
+            if size > MAX_INCLUDE_BYTES:
+                found.append(_Found(rel, short, "the files it brings in are larger than 64 MiB"))
+                raise _TooBig
             try:
                 inner = body.decode("utf-8")
             except UnicodeDecodeError:
@@ -312,7 +351,10 @@ def _tree(top: str, data: bytes, read: IncludeReader) -> tuple[list[_Found], set
             members.add(target)
             visit(target, inner, (*stack, target))
 
-    visit(top, data.decode("utf-8", "replace"), (top,))
+    try:
+        visit(top, data.decode("utf-8", "replace"), (top,))
+    except _TooBig:
+        pass
     return found, members
 
 
@@ -332,8 +374,9 @@ def requirement_includes(files: Mapping[str, bytes], read: IncludeReader) -> dic
     its index: its own -r and -c files, followed through ``read``, and every
     other file in ``files`` whose include tree holds it, since pip applies a
     tree's index options to all of it. An include that can't be followed (a
-    URL, outside the root, missing, a symlink, a cycle, more than
-    ``MAX_INCLUDE_DEPTH`` deep) is a reason too.
+    URL, a ``..`` part, outside the root, missing, a symlink, a cycle, more
+    than ``MAX_INCLUDE_DEPTH`` deep, a tree past ``MAX_INCLUDES`` or
+    ``MAX_INCLUDE_BYTES``) is a reason too. Each path is read once.
     """
     reqs = {}
     for rel, data in files.items():
@@ -342,7 +385,8 @@ def requirement_includes(files: Mapping[str, bytes], read: IncludeReader) -> dic
                 reqs[posixpath.normpath(rel)] = data
         except LockfileError:
             continue
-    trees = {rel: _tree(rel, data, read) for rel, data in sorted(reqs.items())}
+    get = _memo(read)
+    trees = {rel: _tree(rel, data, get) for rel, data in sorted(reqs.items())}
     out: dict[str, Included] = {}
     for me in sorted(reqs):
         tops = [me] + [t for t in sorted(reqs) if t != me and me in trees[t][1]]
