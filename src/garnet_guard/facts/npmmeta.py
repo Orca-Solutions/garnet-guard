@@ -82,7 +82,8 @@ def _dependency(name: str, rng: str, label: str) -> Requirement:
 
 
 def declared_dependencies(package_json: bytes) -> tuple[Requirement, ...]:
-    """The packages a package.json makes npm install, one per name.
+    """The packages a package.json makes npm install, one per name, with any
+    other declaration of the name in ``also`` and ``also_installs``.
 
     ``peerDependencies`` count because npm 7 and later install them; a peer
     marked optional in ``peerDependenciesMeta`` doesn't.
@@ -99,21 +100,21 @@ def declared_dependencies(package_json: bytes) -> tuple[Requirement, ...]:
         if isinstance(meta, dict)
         else set()
     )
-    out: list[Requirement] = []
-    seen: set[str] = set()
+    by_name: dict[str, list[Requirement]] = {}
     for table, label in _DEPENDENCY_TABLES:
         deps = doc.get(table)
         if not isinstance(deps, dict):
             continue
         for name, spec in deps.items():
-            if not isinstance(name, str) or name in seen:
+            if not isinstance(name, str):
                 continue
             if table == "peerDependencies" and name in optional_peers:
                 continue
-            seen.add(name)
             rng = spec if isinstance(spec, str) else json.dumps(spec, sort_keys=True)
-            out.append(_dependency(name, rng.strip(), label))
-    return tuple(out)
+            by_name.setdefault(name, []).append(_dependency(name, rng.strip(), label))
+    # The first declaration of a name is the one compared; the others (npm
+    # lets optionalDependencies override dependencies) are kept on it.
+    return tuple(first.with_others(rest) for first, *rest in by_name.values())
 
 
 def inspect_tarball(filename: str, data: bytes, limits: Limits) -> NpmInspection:
