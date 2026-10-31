@@ -1,4 +1,4 @@
-"""The two things the wrapper reaches outside for, behind small
+"""The two things the wrapper and hooks reach outside for, behind small
 interfaces so tests can replay recorded outputs: starting the user's package
 manager, and reading PyPI's release lists.
 

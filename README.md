@@ -93,7 +93,7 @@ garnet uv add httpx
 
 It resolves with builds turned off, so no package's build code runs during the check. Findings at or above `fail_on` stop the install (exit 2 for block). A command it can't resolve without building, such as a release that needs a source-only dependency, is reported as not checked, with what you can do, and nothing is installed (exit 3). Details and limits: [docs/install-wrapper.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md).
 
-**In agent hooks (planned).** A pre-install hook stops Claude Code or Codex from quietly adding a risky dependency.
+**In agent hooks (preview).** `garnet hook claude-code` and `garnet hook codex` print a PreToolUse hook configuration. Before the agent runs a pip or uv install, the hook checks it the same way and answers: findings as context, a deny at or above `fail_on`, and an ask (Claude Code) or a deny (Codex) when it can't check the command. The hook never installs. npm, pnpm, yarn and poetry aren't checked yet; the hook says so instead of staying silent. The configurations for both agents: [docs/install-wrapper.md#agent-hooks](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md#agent-hooks).
 
 ## Replays of real malicious releases
 

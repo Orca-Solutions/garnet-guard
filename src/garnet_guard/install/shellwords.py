@@ -27,13 +27,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-# A package-manager word where a shell would read a program name: at the
-# start, after an operator, a quote, a slash (a path) or "=".
-PM_WORD = re.compile(
-    r"(?:^|[\s;&|()`'\"/=<>{}])"
-    r"(?:pip(?:3(?:\.\d+)?)?|uvx?|poetry|npm|npx|pnpm|yarn)(?:\.exe)?"
-    r"(?=$|[\s;&|()`'\"<>{}])"
-)
+from .gate import PM_WORD
 
 # What the pre-scan writes in place of characters the shell would expand,
 # so a word that held one is still known after shlex has removed the quotes.

@@ -51,8 +51,8 @@ Issues = "https://github.com/orca-solutions/garnet-guard/issues"
 Changelog = "https://github.com/orca-solutions/garnet-guard/blob/main/CHANGELOG.md"
 
 [project.scripts]
-garnet = "garnet_guard.cli:main"
-garnet-guard = "garnet_guard.cli:main" # so `uvx garnet-guard` works (ADR-0007)
+garnet = "garnet_guard.console:main"
+garnet-guard = "garnet_guard.console:main" # so `uvx garnet-guard` works (ADR-0007)
 
 [tool.ruff]
 line-length = 100
@@ -145,12 +145,13 @@ source_modules = [
     "garnet_guard.safe_archive",
     "garnet_guard.policy",
     "garnet_guard.install",
+    "garnet_guard.console",
 ]
 forbidden_modules = ["httpx"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
-name = "the install wrapper fetches and reads releases only through the engine"
+name = "the install wrapper and hooks fetch and read releases only through the engine"
 type = "forbidden"
 source_modules = ["garnet_guard.install"]
 forbidden_modules = [
@@ -164,7 +165,7 @@ forbidden_modules = [
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
-name = "nothing below the surfaces imports the install wrapper"
+name = "nothing below the surfaces imports the install wrapper or hooks"
 type = "forbidden"
 source_modules = [
     "garnet_guard.models",
@@ -181,4 +182,4 @@ source_modules = [
     "garnet_guard.net",
     "garnet_guard.safe_archive",
 ]
-forbidden_modules = ["garnet_guard.install"]
+forbidden_modules = ["garnet_guard.install", "garnet_guard.console"]

@@ -57,7 +57,7 @@ Removed packages produce no findings. Added packages (no base version) get only 
 
 ### 3.3 Invocation without two lockfiles
 
-`garnet diff <package> <old> <new>` compares two releases directly. The install wrapper (§10.3) compares a base with a head it computes by resolving with builds off, without installing:
+`garnet diff <package> <old> <new>` compares two releases directly. The install wrapper and hooks (§10.3, §10.4) compare a base with a head they compute by resolving with builds off, without installing:
 
 - **pip:** the base is the target environment, read with `pip inspect` (distributions installed from an index, as `name==version`; ones installed from a URL, a path or in editable mode are left out). The head is the base with the dry run's `install` entries applied; each must be a wheel, and one from an index other than PyPI is GRN-E005.
 - **uv:** the base is `uv.lock` as committed at git `HEAD`, or the working-tree copy taken before the run when it isn't tracked, so a sync also checks uncommitted lockfile edits. The head is the `uv.lock` the resolve step wrote in its private copy, or the working-tree lockfile when `uv lock --check` says it is current.
@@ -269,7 +269,7 @@ garnet policy check [PATH]
 garnet cache  info|clear
 garnet pip install …   [--garnet-force]
 garnet uv     add|remove|lock|sync …   [--garnet-force]
-garnet hook   claude-code|codex
+garnet hook   claude-code|codex  [run]
 garnet version
 ```
 
@@ -312,7 +312,24 @@ npm, pnpm, yarn, poetry, `uv pip`, `uv tool` and `uvx` aren't wrapped yet; the n
 
 ### 10.4 Agent hooks
 
-`garnet hook claude-code` prints a Claude Code hook configuration that runs a `PreToolUse` hook on shell commands. The hook detects package-adding commands (`pip install`, `uv add`, `uv pip install`, `poetry add`, `npm install <pkg>`, `pnpm add`, `yarn add`), runs the wrapper's resolve-and-check step, and denies the tool call with the findings as the reason when the verdict is `block`. For `warn` it allows the call and returns the findings as context. `garnet hook codex` does the same with whatever hook or command-approval mechanism Codex offers at 1.0. *Confirm both mechanisms against current Claude Code and Codex docs when building.*
+`garnet hook claude-code` and `garnet hook codex` print a hook configuration (JSON on stdout, notes on stderr) that runs `garnet hook <agent> run` as a `PreToolUse` hook on shell commands, using the absolute path of the running `garnet`:
+
+- Claude Code: matcher `Bash|PowerShell`, exec form (`command` plus `args`), `timeout: 300`, and `onFailure: "block"` (Claude Code 2.1.295 or later), so a crash or timeout blocks the call. Without it, a failed or timed-out PreToolUse hook doesn't block.
+- Codex: `hooks.json`, matcher `^Bash$`, `command` with the path quoted for the shell Codex runs it with (`$SHELL -lc`), `timeout: 300`. Codex runs a non-managed hook only after the user trusts it, and lets the call through when a hook crashes, times out or prints invalid output.
+
+`garnet hook <agent> run` reads one JSON event (at most 1 MB; larger or unreadable input with a package-manager word in it is can't-tell) on stdin, prints at most one JSON object on stdout and always exits 0; diagnostics go to stderr. It MUST return without importing more than the standard library when the event isn't a PreToolUse shell call or the command has no package-manager word where a shell reads a program name. Otherwise it parses the command (below), runs the wrapper's steps 1 to 4 for each pip and uv command (it never installs, writes back or hands off) and answers by its own deadline of 240 seconds:
+
+| Outcome | Answer (`hookSpecificOutput` unless noted) |
+|---|---|
+| Not a package command | nothing |
+| Checked, nothing at or above `fail_on` (`info` counts as pass; warn adds a top-level `systemMessage`) | `additionalContext` with the changes and any findings, and no `permissionDecision` |
+| At or above `fail_on` | `permissionDecision: "deny"`, with each finding's rule ID, package, versions, first evidence line and `garnet explain RULE` |
+| Can't check, or can't tell | Claude Code `"ask"`, Codex `"deny"`, with the reason and the form Garnet can check |
+| A tool Garnet doesn't check yet (npm, pnpm, yarn, poetry, `uv pip`, `uv tool`, `uvx`, `uv run --with`) | `additionalContext` and a top-level `systemMessage` saying the install wasn't checked and why, and no decision |
+
+Pass and warn MUST NOT send `allow`: on Claude Code it skips the user's permission prompt, and on Codex `allow` without `updatedInput` fails the hook and drops the context. Codex has no `ask`, so can't-check is a deny there. Every text field MUST stay under 8,000 bytes (Claude Code keeps 10,000 characters of a field, Codex 2,500 tokens of `additionalContext` at 4 bytes a token). When the answer leaves something out (findings, whose evidence it gives one line of, or text past that cap), the full report goes to a file only the user can read, in Claude Code's `scratchpad_dir` or else the system temp folder, and the answer names it; a pass, a can't-tell or a not-checked note writes no file. Package-supplied text MUST be escaped (hard rule 5) and introduced as data. The hook MUST NOT start a pip or uv that git tracks in the repository, since it runs before the user approves the command.
+
+**Recognizing commands.** The command text is untrusted: it is parsed with the standard library's `shlex` and never run; only the recognized pip or uv command, rebuilt as an argument list, runs, for the resolve step. The parser splits on `&&`, `||`, `;`, `|`, `&` and newlines, drops redirections, applies leading assignments and literal `export`, `cd`, `pushd` and `source <venv>/bin/activate`, unwraps `sudo`, `env`, `command`, `time`, `nice`, `nohup`, `exec` and `timeout`, follows one level of `bash|sh|zsh -c '<literal>'`, and accepts Codex's argument-list form. Substitutions, variables in a package command, `eval`, `xargs`, here-documents, unbalanced quotes, nested shells and PowerShell are can't-tell when a package-manager word is present. Scripts, aliases and shell functions are not visible to the hook.
 
 ## 11. Non-functional requirements
 

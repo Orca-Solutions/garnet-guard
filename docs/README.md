@@ -9,7 +9,7 @@
 - [rule-coverage.md](rule-coverage.md): what stands behind each rule: crafted tests, real attacks replayed, real routine updates, and what is not yet proven.
 - [action.md](action.md): setting up the GitHub Action, its inputs and outputs, and the two-workflow pattern for pull requests from forks.
 - [policy.md](policy.md): the `garnet.toml` policy file: severities, expiring ignores and how the Action reads it.
-- [install-wrapper.md](install-wrapper.md): `garnet pip install` and `garnet uv add|remove|lock|sync`: what runs, what each outcome looks like, and the limits.
+- [install-wrapper.md](install-wrapper.md): `garnet pip install`, `garnet uv add|remove|lock|sync` and the Claude Code and Codex hooks: what runs, what each outcome looks like, and the limits.
 - [marketplace.md](marketplace.md): how the Action gets listed on GitHub Marketplace (maintainer steps).
 - [expert-brief.md](expert-brief.md): a one-page summary for the packaging and security experts reviewing the approach before launch.
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) and [../THREAT_MODEL.md](../THREAT_MODEL.md): overview and security model. Read the threat model before touching anything that reads package contents or runs in CI.

@@ -166,6 +166,17 @@ def _parser() -> argparse.ArgumentParser:
         )
         w.add_argument("args", nargs=argparse.REMAINDER, help=f"the {tool} command's arguments")
 
+    h = sub.add_parser(
+        "hook",
+        help="print an agent hook configuration, or run the hook",
+        description="garnet hook claude-code|codex prints the hook configuration to add to\n"
+        "the agent's settings. With run, it reads one PreToolUse event on stdin and\n"
+        "answers it on stdout (the agent runs this; see docs/install-wrapper.md).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    h.add_argument("agent", choices=("claude-code", "codex"))
+    h.add_argument("run", nargs="?", choices=("run",), help="answer one hook event")
+
     sub.add_parser("version", help="print the version")
     return p
 
@@ -196,6 +207,14 @@ def _wrapper(tool: str, words: list[str]) -> int:
     return wrapper.main(tool, words)
 
 
+def _hook(agent: str, run: bool) -> int:
+    from .install import gate, hooks
+
+    if run:
+        return gate.run(agent)
+    return hooks.print_config(agent)
+
+
 def _guarded(task: Callable[[], int]) -> int:
     try:
         return task()
@@ -210,6 +229,8 @@ def _guarded(task: Callable[[], int]) -> int:
 
 
 def _dispatch(args: argparse.Namespace) -> int:
+    if args.command == "hook":
+        return _hook(args.agent, args.run == "run")
     if args.command in ("pip", "uv"):  # only reached for --help, handled by argparse
         return 0
     if args.command == "version":

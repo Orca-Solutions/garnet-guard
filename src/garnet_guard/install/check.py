@@ -1,5 +1,5 @@
-"""The resolve-and-check step behind ``garnet pip`` and ``garnet uv``
-(SPEC §10.3).
+"""The resolve-and-check step that ``garnet pip``, ``garnet uv`` and the agent
+hooks share (SPEC §10.3).
 
 1. Read the command and every file it names; refuse what would build or
    what Garnet can't compare (``pip.plan``, ``uv.plan``).
