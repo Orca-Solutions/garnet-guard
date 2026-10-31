@@ -16,10 +16,31 @@ KeyPath = tuple[str, ...]
 # character. Numbers and literals aren't needed to follow the nesting.
 _TOKEN = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[{}\[\]:]')
 _NOT_A_KEY = "\x00"  # stands for the top level or an array on a key path
+_STRING = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"')
+_BRACKET = re.compile(r"[{}\[\]]")
+# npm writes about six levels; lockfileVersion 1 adds two for each level of
+# nested node_modules. Python's own limit depends on the version and the
+# stack size (3.14 measures the C stack), so Garnet sets its own.
+MAX_DEPTH = 256
+
+
+def _too_deep(text: str) -> bool:
+    """True if objects and arrays nest more than ``MAX_DEPTH`` levels."""
+    depth = 0
+    for c in _BRACKET.findall(_STRING.sub("", text)):
+        if c in "{[":
+            depth += 1
+            if depth > MAX_DEPTH:
+                return True
+        else:
+            depth -= 1
+    return False
 
 
 def _load(text: str) -> dict[str, Any]:
     """The parsed document. Errors name a position, never the file's text."""
+    if _too_deep(text):
+        raise LockfileError("JSON nested too deeply to read")
     try:
         doc = json.loads(text)
     except json.JSONDecodeError as err:

@@ -630,6 +630,16 @@ def test_a_link_target_outside_the_project_is_skipped() -> None:
     assert [(p.package, p.source) for p in pins] == [("ms", "registry")]
 
 
+def test_nesting_past_garnets_own_limit_is_refused_on_every_python() -> None:
+    # 300 levels parse with json.loads on every supported Python; 100,000 parse
+    # on 3.14 with a large stack. Garnet's limit decides, not the interpreter's.
+    deep = b'{"lockfileVersion": 3, "packages": {}, "x": ' + b"[" * 300 + b"]" * 300 + b"}"
+    with pytest.raises(LockfileError, match="nested too deeply"):
+        parse("package-lock.json", deep)
+    brackets_in_strings = b'{"lockfileVersion": 3, "packages": {}, "x": "' + b"[" * 300 + b'"}'
+    assert parse("package-lock.json", brackets_in_strings) == []
+
+
 def test_oversized_lockfiles_are_refused_before_parsing(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(lock_base, "MAX_LOCKFILE_BYTES", 100)
     with pytest.raises(LockfileError, match="larger than 64 MiB"):
