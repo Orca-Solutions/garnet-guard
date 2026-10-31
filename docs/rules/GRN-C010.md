@@ -10,7 +10,7 @@ status: implemented
 
 | | |
 |---|---|
-| Default severity | `warn` for `sitecustomize.py`, `usercustomize.py`, a script named like a common command and a file installed under `etc/`; `info` for any other new script or data file |
+| Default severity | `warn` for a `sitecustomize` or `usercustomize` module, a script named like a common command and a file installed under `etc/`; `info` for any other new script or data file |
 | Kind | diff rule: fires only when the trusted version had the property and the new version lost it, or the new version gained a risky property the trusted version lacked. |
 | Status | Implemented in 0.2 (PyPI wheels) |
 
@@ -21,8 +21,15 @@ somewhere else, where something other than an import of the package runs or read
 Garnet compares the new version's wheel with the trusted version's and reports each of these
 files that is new:
 
-- **`sitecustomize.py` or `usercustomize.py` at the top of `site-packages`.** Python imports
-  them by itself at every start, before any of your code runs.
+- **A `sitecustomize` or `usercustomize` module at the top of `site-packages`.** Python imports
+  it by itself at every start, before any of your code runs. Garnet matches the module name,
+  not the file name: `sitecustomize.py`, a `sitecustomize/` package, a `.pyc` with no source,
+  and an extension module (`sitecustomize.cpython-312-x86_64-linux-gnu.so`, `.abi3.so`, `.pyd`)
+  all count, in any case, since a case-insensitive filesystem treats `SiteCustomize.py` as the
+  same file. The same goes under `<name>.data/purelib/` or `platlib/`, and for one under
+  `<name>.data/data/` inside a `site-packages` (or `dist-packages`) folder, such as
+  `<name>.data/data/lib/python3.12/site-packages/sitecustomize.py`. A
+  `__pycache__/sitecustomize.*.pyc` with no source beside it isn't imported and isn't reported.
 - **A script under `<name>.data/scripts/`.** The installer copies it into the environment's
   `bin` (or `Scripts`) folder, where it runs as a command.
 - **A file under `<name>.data/data/`.** The installer copies it under the environment's prefix:

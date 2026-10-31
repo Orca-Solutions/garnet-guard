@@ -1328,7 +1328,15 @@ def new_entry_point(
 # wheel's ``.data/scripts/`` files become commands on PATH, and ``.data/data/``
 # files land under the environment's prefix, where other tools read their
 # configuration (``etc/jupyter/``).
-_STARTUP_MODULES = frozenset({"sitecustomize.py", "usercustomize.py"})
+#
+# The startup modules are matched by top-level module name, not file name:
+# Python imports a ``sitecustomize/`` package, a ``.pyc`` with no source and an
+# extension module (``sitecustomize.cpython-312-x86_64-linux-gnu.so``,
+# ``.abi3.so``, ``.pyd``) just as it imports ``sitecustomize.py``, and a
+# case-insensitive filesystem treats ``SiteCustomize.py`` as the same file. A
+# ``__pycache__/sitecustomize.*.pyc`` with no source beside it isn't imported.
+_STARTUP_MODULES = frozenset({"sitecustomize", "usercustomize"})
+_SITE_DIRS = frozenset({"site-packages", "dist-packages"})
 _DATA_DIR = re.compile(r"^[^/]+\.data/(scripts|data)/(.+)$")
 # Windows runs a command named git from git.exe, git.cmd, git.bat or git.com.
 _WINDOWS_RUNNABLE = frozenset({"bat", "cmd", "com", "exe"})
@@ -1375,24 +1383,42 @@ _COMMANDS = frozenset(
 )
 
 
+def _is_startup_module(site: str) -> bool:
+    """Whether a path relative to site-packages imports as sitecustomize or
+    usercustomize: its first part up to the first dot, in any case."""
+    return site.split("/", 1)[0].split(".", 1)[0].lower() in _STARTUP_MODULES
+
+
 def _startup_kind(path: str) -> tuple[str, str] | None:
-    """(where, name) for a wheel file that runs or installs outside the package."""
+    """(where, name) for a wheel file that runs or installs outside the package.
+
+    ``where`` is "site-packages" for a startup module in site-packages,
+    "site-data" for one under ``.data/data/`` that installs into a
+    site-packages folder below the prefix, else "scripts" or "data".
+    """
     site = _site_name(path)
-    if site in _STARTUP_MODULES:
+    if _is_startup_module(site):
         return "site-packages", site
     m = _DATA_DIR.match(path)
-    if m:
-        return m.group(1), m.group(2)
-    return None
+    if not m:
+        return None
+    where, name = m.group(1), m.group(2)
+    if where == "data":
+        parts = name.split("/")
+        for i, part in enumerate(parts[:-1]):
+            if part.lower() in _SITE_DIRS and _is_startup_module("/".join(parts[i + 1 :])):
+                return "site-data", name
+    return where, name
 
 
 def new_startup_file(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
     """GRN-C010: the candidate's wheel adds a file that runs, or installs,
-    outside the package: ``sitecustomize.py`` or ``usercustomize.py`` in
-    site-packages, a script under ``.data/scripts/``, or a file under
-    ``.data/data/``.
+    outside the package: a ``sitecustomize`` or ``usercustomize`` module,
+    package or extension in site-packages (also under ``.data/purelib/``,
+    ``platlib/``, or a site-packages folder under ``.data/data/``), a script
+    under ``.data/scripts/``, or a file under ``.data/data/``.
 
     The startup modules, scripts named like a common command, and data files
     under ``etc/`` keep the rule's severity; other scripts and data files are
@@ -1415,6 +1441,9 @@ def new_startup_file(
         where, name = k
         if where == "site-packages":
             why = "Python imports it from site-packages at every start"
+            loud += 1
+        elif where == "site-data":
+            why = f"installs as <prefix>/{name}, where Python imports it at every start"
             loud += 1
         elif where == "scripts":
             command = posixpath.basename(name)
