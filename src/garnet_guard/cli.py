@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import posixpath
 import sys
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime
@@ -31,10 +32,13 @@ from .workspace import (
     changes_for,
     dedupe,
     discover,
+    disk_reader,
+    git_reader,
     git_show,
     plain_file,
     read_lockfile,
     registry_settings,
+    requirement_includes,
 )
 
 _FAIL_ON = {"warn": Severity.WARN, "block": Severity.BLOCK, "never": Severity.OFF}
@@ -282,6 +286,11 @@ def _today() -> date:
     return datetime.now(UTC).date()
 
 
+def _rel(name: str) -> str:
+    """A lockfile's path as ``workspace.requirement_includes`` keys it."""
+    return posixpath.normpath(Path(name).as_posix())
+
+
 def _check(args: argparse.Namespace) -> int:
     """``garnet check``: every dependency change between two lockfiles."""
     if args.offline or args.cache_dir:
@@ -301,6 +310,7 @@ def _check(args: argparse.Namespace) -> int:
 
     changes: list[Change] = []
     unchecked: list[Unchecked] = []
+    read: list[tuple[Path, str, bytes, bytes | None]] = []
     for head in heads:
         if not plain_file(head, cwd):
             if head.is_symlink() or head.exists():
@@ -310,9 +320,29 @@ def _check(args: argparse.Namespace) -> int:
             read_lockfile(Path(args.base)) if args.base else git_show(args.git_base, head, cwd=cwd)
         )
         name = os.path.relpath(head, cwd) if head.is_absolute() else head.as_posix()
-        data = read_lockfile(head)
+        read.append((head, name, read_lockfile(head), base))
+    # A requirements file's -r and -c files, and the files that bring it in,
+    # decide its index too: in the working tree for head, and for the base
+    # at --git-base, or beside the --base file.
+    included = requirement_includes({_rel(n): d for _, n, d, _ in read}, disk_reader(cwd))
+    base_key = ""
+    if args.base:
+        base_key = _rel(os.path.relpath(Path(args.base).absolute(), cwd))
+        base_files = {base_key: read[0][3]} if read[0][3] is not None else {}  # one --head
+        base_included = requirement_includes(base_files, disk_reader(cwd))
+    else:
+        base_files = {_rel(n): b for _, n, _, b in read if b is not None}
+        base_included = requirement_includes(base_files, git_reader(args.git_base, cwd))
+    for head, name, data, base in read:
         registries = registry_settings(head, data, cwd)
-        found, skipped = changes_for(name, data, base, registries=registries)
+        found, skipped = changes_for(
+            name,
+            data,
+            base,
+            registries=registries,
+            included=included.get(_rel(name)),
+            base_included=base_included.get(base_key if args.base else _rel(name)),
+        )
         changes += found
         unchecked += skipped
 
