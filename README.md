@@ -10,6 +10,7 @@
 <p align="center">
   <a href="https://github.com/orca-solutions/garnet-guard/actions/workflows/ci.yml"><img src="https://github.com/orca-solutions/garnet-guard/actions/workflows/ci.yml/badge.svg" alt="CI" height="20"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/Orca-Solutions/garnet-guard"><img src="https://api.scorecard.dev/projects/github.com/Orca-Solutions/garnet-guard/badge" alt="OpenSSF Scorecard" height="20"></a>
+  <a href="https://www.bestpractices.dev/projects/16128"><img src="https://www.bestpractices.dev/projects/16128/badge" alt="OpenSSF Best Practices" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-8E1B2C" alt="License: Apache-2.0" height="20"></a>
   <a href="https://pypi.org/project/garnet-guard/"><img src="https://img.shields.io/pypi/v/garnet-guard?color=8E1B2C" alt="PyPI version" height="20"></a>
   <img src="https://img.shields.io/badge/status-alpha-5C636B" alt="Status: alpha" height="20">
@@ -84,16 +85,17 @@ The example pins the commit tagged `v0.2.0`, the release on PyPI. Inputs, permis
 
 **Locally.** `garnet check` compares two lockfiles, for example your branch against `main`, and checks every package that changed. Once you've reviewed a finding, an ignore in `garnet.toml` silences it until a date you choose ([docs/policy.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/policy.md)). In VS Code, the same findings show on the lockfile lines through the SARIF Viewer extension ([docs/vscode.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/vscode.md)).
 
-**Before an install (preview, on `main` for 0.3).** Put `garnet` in front of pip or uv, and it checks the change before anything is installed, then installs exactly what it checked:
+**Before an install (preview, on `main` for 0.3).** Put `garnet` in front of pip, uv or npm, and it checks the change before anything is installed, then installs exactly what it checked:
 
 ```sh
 garnet pip install requests==2.32.3
 garnet uv add httpx
+garnet npm install left-pad@1.3.0
 ```
 
-It resolves with builds turned off, so no package's build code runs during the check. Findings at or above `fail_on` stop the install (exit 2 for block). A command it can't resolve without building, such as a release that needs a source-only dependency, is reported as not checked, with what you can do, and nothing is installed (exit 3). Details and limits: [docs/install-wrapper.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md).
+It resolves with builds turned off (for npm, with scripts and git turned off), so no package's code runs during the check. npm then installs the checked lockfile with `npm ci --ignore-scripts`, and runs install scripts only for packages that didn't change. Findings at or above `fail_on` stop the install (exit 2 for block). A command it can't resolve without building, such as a release that needs a source-only dependency, is reported as not checked, with what you can do, and nothing is installed (exit 3). Details and limits: [docs/install-wrapper.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md).
 
-**In agent hooks (preview, on `main` for 0.3).** `garnet hook claude-code` and `garnet hook codex` print a PreToolUse hook configuration. Before the agent runs a pip or uv install, the hook checks it the same way and answers: findings as context, a deny at or above `fail_on`, and an ask (Claude Code) or a deny (Codex) when it can't check the command. The hook never installs. npm, pnpm, yarn and poetry aren't checked yet; the hook says so instead of staying silent. The configurations for both agents: [docs/install-wrapper.md#agent-hooks](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md#agent-hooks).
+**In agent hooks (preview, on `main` for 0.3).** `garnet hook claude-code` and `garnet hook codex` print a PreToolUse hook configuration. Before the agent runs a pip, uv or npm install, the hook checks it the same way and answers: findings as context, a deny at or above `fail_on`, and an ask (Claude Code) or a deny (Codex) when it can't check the command. The hook never installs. pnpm, yarn, npx and poetry aren't checked yet; the hook says so instead of staying silent. The configurations for both agents: [docs/install-wrapper.md#agent-hooks](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md#agent-hooks).
 
 ## Replays of real malicious releases
 

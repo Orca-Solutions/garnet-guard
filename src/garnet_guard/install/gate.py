@@ -25,11 +25,17 @@ MAX_INPUT_BYTES = 1024 * 1024
 # ``echo "pip install x"`` gets this far and no further. It is matched
 # against the text with backslashes and quotes taken out too (``fold``), as
 # the shell takes them out of ``\pip`` and ``p'i'p``, and with the start of a
-# ``${NAME:-default}`` taken out, so the default is read as a word.
+# ``${NAME:-default}`` taken out, so the default is read as a word. npm's
+# own files count too, since node can start npm from them: ``npm-cli.js``,
+# ``npx-cli.js`` and anything in a ``node_modules/npm`` or ``node_modules/npx``
+# folder (``node ./node_modules/npm/index.js i x``).
 PM_WORD = re.compile(
     r"(?:^|[\s;&|()`'\"/=<>{}\\]|-m)"
-    r"(?:pip(?:3(?:\.\d+)?)?|uvx?|poetry|npm|npx|pnpm|yarn)(?:\.exe)?"
-    r"(?=$|[\s;&|()`'\"<>{}\\])"
+    r"(?:"
+    r"(?:pip(?:3(?:\.\d+)?)?|uvx?|poetry|npm|npx|pnpm|yarn|np[mx]-cli(?:\.[cm]?js)?)"
+    r"(?:\.exe)?(?=$|[\s;&|()`'\"<>{}\\])"
+    r"|node_modules[/\\]np[mx](?=$|[\s;&|()`'\"<>{}\\/])"
+    r")"
 )
 _CHUNK = 1024 * 1024
 
