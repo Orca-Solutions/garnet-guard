@@ -114,6 +114,7 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 
 - [ ] Meet every acceptance criterion in SPEC §13
 - [ ] Freeze the JSON schema, policy `version = 1`, Action inputs and the public Python API
+- [ ] VS Code extension, built after 0.3 and alongside the freeze (about February to March 2027): a thin shell over the CLI in its own repository, free, on the Marketplace and Open VSX. It watches the lockfiles `garnet check` reads, runs the check in the background when one changes against the git base, shows each finding on the line that pins the new version with the rule page linked (`warn` and `block` as squiggles, `info` in the Problems panel only), and offers one quick fix that writes an expiring ignore to `garnet.toml`. No rule lives in the extension, it runs only in trusted workspaces, and it sends nothing anywhere. It needs the download cache (`--cache-dir`), the npm lockfile parsers and the frozen JSON schema first. Until it ships, `garnet check --format sarif` opens in Microsoft's SARIF Viewer extension with the same findings on the same lines.
 - [ ] Long-run fuzzing for every parser; an external security review of `safe_archive.py`, `net.py` and the Action if a grant or volunteer allows
 - [ ] Respond to launch feedback: false-positive fixes take priority over new rules
 - [ ] OpenSSF Alpha-Omega application in its first window after launch data (target April 2027)
