@@ -1,8 +1,9 @@
 """yarn.lock from Yarn 1 (``# yarn lockfile v1``).
 
-Yarn 2 and later (Berry) write a YAML lockfile that starts with ``__metadata:``.
-Reading it needs a YAML parser, so it is refused here, and
-``workspace.discover`` leaves it out.
+Yarn 2 and later (Berry) write a YAML lockfile that starts with
+``__metadata:``; :func:`parse` hands one to ``berry.parse``. Only the shape
+Yarn 1 ignores counts as Berry (:func:`is_berry`), so a file Yarn 1 would
+install from is always read as Yarn 1's.
 
 The file is read with a port of Yarn 1's own tokenizer and parser
 (``src/lockfile/parse.js`` in yarn 1.22), so Garnet sees the entries yarn
@@ -29,11 +30,9 @@ from .npm import (
     split_spec,
     valid_name,
 )
+from .registries import NONE, Registries
 
 V1_HEADER = "# yarn lockfile v1"
-BERRY = (
-    "a Yarn 2 or later (Berry) lockfile, which Garnet doesn't read yet; it reads Yarn 1 lockfiles"
-)
 
 _BERRY_VERSION = re.compile(rb"  version: \S")
 
@@ -56,6 +55,14 @@ def is_berry(head: bytes) -> bool:
         following = lines[i + 1] if i + 1 < len(lines) else b""
         return raw.rstrip(b"\r") == b"__metadata:" and bool(_BERRY_VERSION.match(following))
     return False
+
+
+def is_berry_text(text: str) -> bool:
+    """:func:`is_berry` on the part of a decoded yarn.lock that :func:`parse`
+    looks at: its first 65,536 characters, after a byte order mark. Garnet
+    decides Berry or Yarn 1 only here, so the parser and the registry
+    settings it reads always agree."""
+    return is_berry(text.removeprefix("\ufeff")[:65536].encode())
 
 
 # --- Yarn 1's tokenizer and parser --------------------------------------------------
@@ -356,18 +363,20 @@ def _pin(entry: _Entry) -> Pin | None:
     return Pin(real, version, line, "unsupported", why, "npm", origin)
 
 
-def parse(text: str) -> list[Pin]:
-    """Pins from a Yarn 1 yarn.lock, one per entry, at its ``version`` line.
+def parse(text: str, registries: Registries = NONE) -> list[Pin]:
+    """Pins from a yarn.lock. A Yarn 2+ one goes to ``berry.parse`` with
+    ``registries``, what the project's .yarnrc.yml says.
 
-    An alias (``alias@npm:real@range``) is the package it installs. Every
-    entry counts, dev and optional dependencies too; yarn doesn't list
-    workspace members, and an entry whose patterns are all ``link:`` is
-    skipped.
+    From Yarn 1, one pin per entry, at its ``version`` line. An alias
+    (``alias@npm:real@range``) is the package it installs. Every entry
+    counts, dev and optional dependencies too; yarn doesn't list workspace
+    members, and an entry whose patterns are all ``link:`` is skipped.
     """
-    text = text.removeprefix("﻿")
-    head = text[:65536].encode()
-    if is_berry(head):
-        raise LockfileError(f"this is {BERRY}")
+    if is_berry_text(text):
+        from . import berry
+
+        return berry.parse(text, registries)
+    text = text.removeprefix("\ufeff")
     leading = []
     for raw in text.splitlines():
         if raw.strip() and not raw.startswith("#"):

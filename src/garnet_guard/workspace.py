@@ -6,21 +6,33 @@ never runs anything from a package.
 
 from __future__ import annotations
 
+import os
 import stat
 import subprocess
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .lockfiles import LockfileError, Pin, diff_pins, parse
+from .lockfiles import LockfileError, Pin, detect, diff_pins, parse
 from .lockfiles.base import MAX_LOCKFILE_BYTES
 from .lockfiles.diff import new_unchecked
-from .lockfiles.yarn import is_berry
+from .lockfiles.registries import (
+    NONE,
+    NPMRC,
+    PNPM_WORKSPACE,
+    YARNRC,
+    Registries,
+    npmrc,
+    pnpm_workspace,
+    yarnrc,
+)
+from .lockfiles.yarn import is_berry_text
 from .models import Change
 
 _DIRECT = ("uv.lock", "poetry.lock", "pylock.toml")
-# Only the npm formats Garnet parses. pnpm-lock.yaml, and a yarn.lock from
-# Yarn 2 or later, need a YAML parser, so they aren't picked up yet.
-_NPM = ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock")
+_NPM = ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml")
+# Registry settings files are a few KB; anything this size isn't one.
+MAX_SETTINGS_BYTES = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -35,17 +47,6 @@ class Unchecked:
 def _present(path: Path) -> bool:
     # Symlinks are listed too, so the caller refuses them instead of skipping.
     return path.is_file() or path.is_symlink()
-
-
-def _yarn_berry(path: Path, root: Path) -> bool:
-    """True for a regular yarn.lock written by Yarn 2 or later."""
-    if not plain_file(path, root):
-        return False  # listed, so the caller refuses it
-    try:
-        with path.open("rb") as fh:
-            return is_berry(fh.read(65536))
-    except OSError:
-        return False
 
 
 def discover(root: Path) -> list[Path]:
@@ -65,31 +66,9 @@ def discover(root: Path) -> list[Path]:
     if req_dir.is_dir():
         found += sorted(p for p in req_dir.glob("*.txt") if _present(p))
     for name in _NPM:
-        path = root / name
-        if _present(path) and not (name == "yarn.lock" and _yarn_berry(path, root)):
-            found.append(path)
+        if _present(root / name):
+            found.append(root / name)
     return found
-
-
-def left_out(root: Path) -> list[Path]:
-    """Lockfiles in ``root`` that :func:`discover` leaves out because Garnet
-    can't read them yet: a Yarn 2 or later yarn.lock."""
-    path = root / "yarn.lock"
-    return [path] if _present(path) and _yarn_berry(path, root) else []
-
-
-def refuse_switch_to_berry(path: Path, base: bytes | None) -> None:
-    """Raise if a yarn.lock left out as Yarn 2 or later wasn't one in the base.
-
-    The switch can come with any change to what installs, and Garnet can read
-    only the base side of it, so it isn't skipped.
-    """
-    if base is not None and not is_berry(base[:65536]):
-        raise LockfileError(
-            f"{path.name} is now a Yarn 2 or later (Berry) lockfile, which Garnet doesn't "
-            "read yet, and the base version isn't one, so the change can't be checked; "
-            "review it by hand"
-        )
 
 
 def plain_file(path: Path, root: Path) -> bool:
@@ -115,6 +94,67 @@ def plain_file(path: Path, root: Path) -> bool:
     except OSError:
         return False
     return stat.S_ISREG(mode)
+
+
+def registry_settings(lockfile: Path, data: bytes, root: Path) -> Registries:
+    """What the repository says about registries for this lockfile: the
+    .npmrc and pnpm-workspace.yaml beside a pnpm-lock.yaml, or the
+    .yarnrc.yml beside a Yarn 2+ yarn.lock. Other formats record the
+    registry themselves.
+
+    Only the registry keys are read, and nothing from the files is shown. A
+    settings file that is a symlink is refused, as a lockfile is.
+    """
+    try:
+        fmt = detect(lockfile.name, data)
+    except LockfileError:
+        return NONE  # parse reports it
+    if fmt == "pnpm-lock.yaml":
+        files = [(NPMRC, npmrc), (PNPM_WORKSPACE, pnpm_workspace)]
+    elif fmt == "yarn.lock" and _berry(data):
+        files = [(YARNRC, yarnrc)]
+    else:
+        return NONE
+    found = []
+    for name, read in files:
+        settings = _settings_file(lockfile.parent / name, read, lockfile, root)
+        if settings is not None:
+            found.append(settings)
+    if not found:
+        return NONE
+    first, *rest = found
+    return replace(first, also=rest[0]) if rest else first
+
+
+def _berry(data: bytes) -> bool:
+    """True if ``yarn.parse`` reads ``data`` as a Yarn 2+ lockfile."""
+    try:
+        return is_berry_text(data.decode("utf-8"))
+    except UnicodeDecodeError:
+        return False  # parse reports it
+
+
+def _settings_file(
+    path: Path, read: Callable[[str], Registries], lockfile: Path, root: Path
+) -> Registries | None:
+    if not (path.exists() or path.is_symlink()):
+        return None
+    shown = os.path.relpath(path, root) if path.is_absolute() else path.as_posix()
+    if not plain_file(path, root):
+        raise LockfileError(
+            f"{shown} is not a regular file, so Garnet can't tell which registry "
+            f"{lockfile.name} installs from"
+        )
+    if path.stat().st_size > MAX_SETTINGS_BYTES:
+        raise LockfileError(f"{shown} is larger than 1 MiB, the most Garnet reads")
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as err:
+        raise LockfileError(f"{shown} is not UTF-8") from err
+    try:
+        return read(text)
+    except LockfileError as err:
+        raise LockfileError(f"{shown}: {err}") from err
 
 
 def read_lockfile(path: Path) -> bytes:
@@ -147,18 +187,19 @@ def git_show(ref: str, path: Path, *, cwd: Path) -> bytes | None:
 
 
 def changes_for(
-    head_name: str, head: bytes, base: bytes | None
+    head_name: str, head: bytes, base: bytes | None, *, registries: Registries | None = None
 ) -> tuple[list[Change], list[Unchecked]]:
     """The changes to check in one lockfile, and the new entries Garnet can't check.
 
     ``base`` is None when the lockfile is new, so every entry is a change.
-    Each change carries its pin's ecosystem.
+    Each change carries its pin's ecosystem. ``registries`` (from
+    :func:`registry_settings`) applies to both versions.
     """
-    head_pins = parse(head_name, head)
+    head_pins = parse(head_name, head, registries=registries)
     base_pins: list[Pin] = []
     if base is not None:
         try:
-            base_pins = parse(head_name, base)
+            base_pins = parse(head_name, base, registries=registries)
         except LockfileError as err:
             raise LockfileError(f"{err} (in the base version)") from err
     changes = [

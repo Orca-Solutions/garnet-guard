@@ -36,6 +36,7 @@ Import rules, enforced by an `import-linter` contract in CI:
 - `checks` imports only `models` (and the standard library). No `net`, no `ecosystems`, no `safe_archive`.
 - `facts` may use `safe_archive` but not `net`.
 - Only `net.py` imports the HTTP client. Only `safe_archive.py` imports `zipfile` and `tarfile`.
+- Only `lockfiles/yamldoc.py` imports PyYAML, and it uses only the parser's events, never a loader (ADR-0016).
 - Surfaces import only `garnet_guard` public names and `engine`.
 
 ## 3. Public Python API
@@ -322,11 +323,11 @@ Runtime, for 1.0. Each needs an ADR to add or swap.
 | `pypi-attestations` (brings `sigstore`) | Verify PEP 740 attestations; the reference implementation |
 | `packaging` | Version parsing, specifiers, name normalization, wheel tags |
 | `platformdirs` | Cache location |
-| `pyyaml` (safe loader only) | pnpm-lock.yaml |
+| `pyyaml` (parser events only, no loader; ADR-0016) | pnpm-lock.yaml, Yarn 2+ yarn.lock, .yarnrc.yml |
 
 `tomllib` (standard library) covers TOML. CLI argument parsing uses `argparse` to avoid a dependency. npm Sigstore verification goes through `sigstore` directly.
 
-Development: `pytest`, `respx`, `hypothesis`, `atheris` (Linux CI only), `ruff`, `mypy`, `import-linter`, `jsonschema`.
+Development: `pytest`, `respx`, `hypothesis`, `atheris` (Linux CI only), `ruff`, `mypy`, `import-linter`, `jsonschema`, `types-pyyaml`.
 
 ## 9. Repository layout
 
@@ -335,7 +336,8 @@ src/garnet_guard/
   __init__.py            # public API (§3) and __all__
   models.py  policy.py  baseline.py  engine.py
   net.py  safe_archive.py  cache.py
-  lockfiles/   uv.py poetry.py pylock.py requirements.py npm_lock.py pnpm.py yarn.py
+  lockfiles/   base.py diff.py toml_locks.py pylock.py requirements.py npm.py
+               package_lock.py yarn.py berry.py pnpm.py yamldoc.py registries.py
   ecosystems/  pypi.py npm.py github.py gittree.py source.py osv.py
   facts/       inventory.py pyindex.py npmmeta.py jsscan.py
   checks/      trust.py wheel_tags.py content.py known_bad.py errors.py __init__.py

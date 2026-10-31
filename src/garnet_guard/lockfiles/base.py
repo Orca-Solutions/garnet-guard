@@ -6,7 +6,10 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePath
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from .registries import Registries
 
 PYPI_INDEXES = frozenset(
     {
@@ -19,7 +22,13 @@ PYPI_INDEXES = frozenset(
 PYPI_FILE_HOST = "https://files.pythonhosted.org/"
 
 Format = Literal[
-    "uv.lock", "poetry.lock", "pylock.toml", "requirements.txt", "package-lock.json", "yarn.lock"
+    "uv.lock",
+    "poetry.lock",
+    "pylock.toml",
+    "requirements.txt",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
 ]
 
 # The most Garnet reads from one lockfile. Real ones are a few MB; the largest
@@ -75,16 +84,13 @@ def normalize(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-_PNPM = "which Garnet doesn't read yet; pnpm support is planned"
-
-
 def detect(name: str, data: bytes) -> Format:
     """The lockfile's format, from its file name, else from its first bytes.
 
-    pnpm-lock.yaml is recognized and refused, as is a Yarn 2+ yarn.lock when
-    it is read: both need a YAML parser.
+    "yarn.lock" covers Yarn 1 and Yarn 2+ (Berry); ``yarn.parse`` tells
+    them apart.
     """
-    from .yarn import BERRY, V1_HEADER, is_berry
+    from .yarn import V1_HEADER, is_berry
 
     base = PurePath(name).name
     if base == "uv.lock":
@@ -100,7 +106,7 @@ def detect(name: str, data: bytes) -> Format:
     if base == "yarn.lock":
         return "yarn.lock"
     if base == "pnpm-lock.yaml":
-        raise LockfileError(f"{base} is a pnpm lockfile, {_PNPM}")
+        return "pnpm-lock.yaml"
     head = data[:4096]
     if b"lock-version" in head and b"[[packages]]" in data:
         return "pylock.toml"
@@ -110,18 +116,28 @@ def detect(name: str, data: bytes) -> Format:
         return "poetry.lock"
     if head.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"{") and b'"lockfileVersion"' in head:
         return "package-lock.json"
-    if V1_HEADER.encode() in head:
+    if V1_HEADER.encode() in head or is_berry(head):
         return "yarn.lock"
-    if is_berry(head):
-        raise LockfileError(f"{base} is {BERRY}")
-    if re.match(rb"lockfileVersion: ", head):
-        raise LockfileError(f"{base} looks like a pnpm lockfile, {_PNPM}")
+    if re.match(rb"(?:\xef\xbb\xbf)?lockfileVersion: ", head):
+        return "pnpm-lock.yaml"
     raise LockfileError(f"unsupported lockfile: {base}")
 
 
-def parse(name: str, data: bytes, *, format: Format | None = None) -> list[Pin]:
-    """Every package entry in a lockfile. Raises ``LockfileError``."""
-    from . import package_lock, pylock, requirements, toml_locks, yarn
+def parse(
+    name: str,
+    data: bytes,
+    *,
+    format: Format | None = None,
+    registries: Registries | None = None,
+) -> list[Pin]:
+    """Every package entry in a lockfile. Raises ``LockfileError``.
+
+    ``registries`` is what the repository's .npmrc and pnpm-workspace.yaml
+    (for pnpm-lock.yaml) or .yarnrc.yml (for a Yarn 2+ yarn.lock) say about
+    registries; the other formats record the registry in the lockfile.
+    """
+    from . import package_lock, pnpm, pylock, requirements, toml_locks, yarn
+    from .registries import NONE
 
     if len(data) > MAX_LOCKFILE_BYTES:
         raise LockfileError(f"{name} is larger than 64 MiB, the most Garnet reads")
@@ -130,13 +146,15 @@ def parse(name: str, data: bytes, *, format: Format | None = None) -> list[Pin]:
         text = data.decode("utf-8")
     except UnicodeDecodeError as err:
         raise LockfileError(f"{name} is not UTF-8") from err
+    settings = registries or NONE
     parsers: dict[Format, Callable[[str], list[Pin]]] = {
         "uv.lock": toml_locks.parse_uv,
         "poetry.lock": toml_locks.parse_poetry,
         "pylock.toml": pylock.parse,
         "requirements.txt": requirements.parse,
         "package-lock.json": package_lock.parse,
-        "yarn.lock": yarn.parse,
+        "pnpm-lock.yaml": lambda t: pnpm.parse(t, settings),
+        "yarn.lock": lambda t: yarn.parse(t, settings),
     }
     try:
         return parsers[fmt](text)

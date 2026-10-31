@@ -164,13 +164,13 @@ uv sync
 uv run python -m backtest      # replay 52 malicious releases and the clean corpus
 ```
 
-`garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json and Yarn 1 yarn.lock for npm (on `main` for 0.3; 0.2.0 reads the PyPI lockfiles only). Entries it can't check (not pinned with `==`; from git, a path, a private index or registry; bundled inside another npm package) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. pnpm-lock.yaml and Yarn 2+ lockfiles aren't read yet: `garnet check` leaves them out when it looks for lockfiles, and names one passed with `--head`, or a yarn.lock that was a Yarn 1 lockfile in the `--git-base` commit, as unsupported (exit code 3). `garnet --help` lists every option.
+`garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml and yarn.lock (Yarn 1, and Yarn 2 and later) for npm (on `main` for 0.3; 0.2.0 reads the PyPI lockfiles only). Entries it can't check (not pinned with `==`; from git, a path, a private index or registry; bundled inside another npm package) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. pnpm-lock.yaml and a Yarn 2+ yarn.lock don't record which registry a package comes from, so `garnet check` reads the registry settings beside them (`registry` and `@scope:registry` in .npmrc, `registries` in pnpm-workspace.yaml, `npmRegistryServer` and `npmScopes` in .yarnrc.yml) and lists a package they send to another registry as GRN-E005; nothing else in those files is read or shown. A pnpm-lock.yaml from pnpm 7 or earlier is refused with exit code 3. `garnet --help` lists every option.
 
 The exit code is 0 below `--fail-on` (default: the policy's `fail_on`, else `block`), 1 for warn, 2 for block and 3 if Garnet Guard itself failed.
 
 ## Ecosystems
 
-PyPI (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt) and npm (package-lock.json and npm-shrinkwrap.json, lockfileVersion 1 to 3, and Yarn 1 yarn.lock, on `main` for 0.3). npm releases are checked for provenance, tags, install scripts and OSV advisories, from a lockfile with `garnet check` or one release at a time with `garnet diff npm:<name> <old> <new>`. pnpm-lock.yaml and Yarn 2+ (Berry) lockfiles need a YAML parser and follow.
+PyPI (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt) and npm (package-lock.json and npm-shrinkwrap.json, lockfileVersion 1 to 3; pnpm-lock.yaml, lockfileVersion 9.0 and 6.x; yarn.lock from Yarn 1 and from Yarn 2 and later; on `main` for 0.3). npm releases are checked for provenance, tags, install scripts and OSV advisories, from a lockfile with `garnet check` or one release at a time with `garnet diff npm:<name> <old> <new>`.
 
 ## Project
 
