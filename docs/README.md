@@ -10,6 +10,7 @@
 - [action.md](action.md): setting up the GitHub Action, its inputs and outputs, and the two-workflow pattern for pull requests from forks.
 - [policy.md](policy.md): the `garnet.toml` policy file: severities, expiring ignores and how the Action reads it.
 - [install-wrapper.md](install-wrapper.md): `garnet pip install`, `garnet uv add|remove|lock|sync` and the Claude Code and Codex hooks: what runs, what each outcome looks like, and the limits.
+- [vscode.md](vscode.md): Garnet Guard in VS Code today: the Action's comment through the GitHub Pull Requests extension, and the CLI's findings on the lockfile lines through the SARIF Viewer. The extension itself is planned after 0.3.
 - [marketplace.md](marketplace.md): how the Action gets listed on GitHub Marketplace (maintainer steps).
 - [expert-brief.md](expert-brief.md): a one-page summary for the packaging and security experts reviewing the approach before launch.
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) and [../THREAT_MODEL.md](../THREAT_MODEL.md): overview and security model. Read the threat model before touching anything that reads package contents or runs in CI.

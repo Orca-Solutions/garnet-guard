@@ -26,7 +26,16 @@ from .policy import (
 )
 from .report import escape, to_json, to_text
 from .sarif import to_sarif
-from .workspace import Unchecked, changes_for, dedupe, discover, git_show, plain_file
+from .workspace import (
+    Unchecked,
+    changes_for,
+    dedupe,
+    discover,
+    git_show,
+    plain_file,
+    read_lockfile,
+    registry_settings,
+)
 
 _FAIL_ON = {"warn": Severity.WARN, "block": Severity.BLOCK, "never": Severity.OFF}
 
@@ -71,7 +80,8 @@ def _parser() -> argparse.ArgumentParser:
         help="check every dependency change between two lockfiles",
         description="Compare a trusted lockfile with an updated one and check every package\n"
         "version that changed. Reads uv.lock, poetry.lock, pylock.toml and pinned\n"
-        "requirements files.",
+        "requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json,\n"
+        "pnpm-lock.yaml and yarn.lock (Yarn 1 and Yarn 2+) for npm.",
         epilog=_EXIT_CODES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -295,9 +305,13 @@ def _check(args: argparse.Namespace) -> int:
             if head.is_symlink() or head.exists():
                 raise UsageError(f"refusing {head}: lockfiles must be regular files, not symlinks")
             raise UsageError(f"no such lockfile: {head}")
-        base = Path(args.base).read_bytes() if args.base else git_show(args.git_base, head, cwd=cwd)
+        base = (
+            read_lockfile(Path(args.base)) if args.base else git_show(args.git_base, head, cwd=cwd)
+        )
         name = os.path.relpath(head, cwd) if head.is_absolute() else head.as_posix()
-        found, skipped = changes_for(name, head.read_bytes(), base)
+        data = read_lockfile(head)
+        registries = registry_settings(head, data, cwd)
+        found, skipped = changes_for(name, data, base, registries=registries)
         changes += found
         unchecked += skipped
 

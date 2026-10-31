@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import quote, urlsplit
 
 from ..facts.npmmeta import inspect_tarball
+from ..lockfiles.npm import valid_name
 from ..models import (
     ArtifactFacts,
     DependencyProfile,
@@ -65,20 +66,20 @@ class FetchContext:
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
-_NAME_RE = re.compile(r"^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$", re.IGNORECASE)
-
-
 def normalize(package: str) -> str:
     """npm names are used as written: the registry is case-sensitive and scoped
-    names keep their ``@scope/`` prefix. Anything else is refused."""
+    names keep their ``@scope/`` prefix. A name that breaks npm's rules is
+    refused, so it never reaches a URL; the lockfile parsers apply the same
+    rules, so every name they pass is one this accepts."""
     name = package.strip()
-    if not _NAME_RE.match(name) or len(name) > 214:
+    if not valid_name(name):
         raise ValueError(f"not an npm package name: {package!r}")
     return name
 
 
 def registry_url(package: str) -> str:
-    """The packument URL; a scoped name's slash is percent-encoded."""
+    """The packument URL. The name is one path segment: a scoped name's slash
+    is percent-encoded, and so is anything else a URL would read."""
     return f"{REGISTRY}/{quote(package, safe='@')}"
 
 

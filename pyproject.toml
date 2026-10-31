@@ -26,6 +26,7 @@ dependencies = [
     "httpx>=0.28.1",
     "packaging>=26.3",
     "pypi-attestations>=0.0.30",
+    "pyyaml>=6.0.2",
     "sigstore>=4.5.1,<5",
 ]
 
@@ -41,6 +42,7 @@ dev = [
     "pytest>=9.1.1",
     "respx>=0.23.1",
     "ruff>=0.17.0",
+    "types-pyyaml>=6.0.12.20260906",
 ]
 
 [project.urls]
@@ -183,3 +185,12 @@ source_modules = [
     "garnet_guard.safe_archive",
 ]
 forbidden_modules = ["garnet_guard.install", "garnet_guard.console"]
+
+[[tool.importlinter.contracts]]
+name = "only lockfiles/yamldoc.py imports PyYAML (ADR-0016)"
+type = "forbidden"
+# The whole package, so a module added later is covered too.
+source_modules = ["garnet_guard"]
+forbidden_modules = ["yaml"]
+ignore_imports = ["garnet_guard.lockfiles.yamldoc -> yaml"]
+allow_indirect_imports = true

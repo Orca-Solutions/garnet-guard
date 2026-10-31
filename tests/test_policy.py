@@ -265,6 +265,33 @@ def test_what_an_ignore_matches(fields: dict[str, str], change: Change, applies:
     assert (result.findings[0].suppressed_by is not None) is applies
 
 
+NPM = Change("npm", "@Scope/Foo_Bar", "1.0.0", "1.1.0")
+
+
+@pytest.mark.parametrize(
+    ("fields", "change", "applies"),
+    [
+        # npm names match exactly as written: no PEP 503 normalization.
+        ({"package": '"@Scope/Foo_Bar"'}, NPM, True),
+        ({"package": '"@scope/foo-bar"'}, NPM, False),
+        ({"package": '"@Scope/Foo-Bar"'}, NPM, False),
+        ({"package": '"Foo_Bar"'}, Change("npm", "Foo_Bar", "1.0.0", "1.1.0"), True),
+        ({"package": '"Foo_Bar"'}, Change("npm", "foo-bar", "1.0.0", "1.1.0"), False),
+        ({"package": '"Foo_Bar"'}, Change("pypi", "foo-bar", "1.0", "1.1"), True),
+        ({"package": '"@Scope/Foo_Bar"', "ecosystem": '"npm"'}, NPM, True),
+        ({"package": '"@Scope/Foo_Bar"', "ecosystem": '"pypi"'}, NPM, False),
+        # versions is PEP 440 only, so it never matches an npm change yet.
+        ({"package": '"@Scope/Foo_Bar"', "versions": '">=1.0"'}, NPM, False),
+    ],
+)
+def test_what_an_ignore_matches_on_npm(
+    fields: dict[str, str], change: Change, applies: bool
+) -> None:
+    result = lost_tag_result(policy(ignore_toml(**fields)), change=change)
+    assert result.findings[0].rule_id == "GRN-T004"
+    assert (result.findings[0].suppressed_by is not None) is applies
+
+
 def test_ignore_expires_after_its_until_date() -> None:
     p = policy(ignore_toml(until='"2026-12-31"'))
     assert lost_tag_result(p, today=date(2026, 12, 31)).verdict == "pass"  # last day applies
@@ -466,6 +493,27 @@ def test_policy_changes_for_new_deleted_broken_and_unchanged_files() -> None:
         )
         == ()
     )
+
+
+def test_policy_changes_compare_npm_names_as_written() -> None:
+    from garnet_guard.policy import policy_changes
+
+    def one(package: str, ecosystem: str | None) -> bytes:
+        eco = f'ecosystem = "{ecosystem}"\n' if ecosystem else ""
+        return (
+            f'[garnet]\nversion = 1\n\n[[garnet.ignore]]\n{eco}package = "{package}"\n'
+            'rules = ["GRN-T004"]\nreason = "checked by hand"\nuntil = "2027-01-31"\n'
+        ).encode()
+
+    # On PyPI, Foo_Bar and foo-bar are one project, so renaming changes nothing.
+    assert (
+        policy_changes(one("Foo_Bar", "pypi"), one("foo-bar", "pypi"), source="garnet.toml") == ()
+    )
+    # On npm they are two packages: the ignore now covers a different one.
+    for eco in ("npm", None):
+        lines = policy_changes(one("foo_bar", eco), one("foo-bar", eco), source="garnet.toml")
+        assert lines[0].startswith("loosens: new ignore: ") and "foo-bar GRN-T004" in lines[0]
+        assert lines[1].startswith("ignore removed: ") and "foo_bar GRN-T004" in lines[1]
 
 
 def test_tightening_is_listed_without_loosens() -> None:
