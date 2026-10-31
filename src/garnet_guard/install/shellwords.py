@@ -34,6 +34,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from . import npm as npm_commands
 from .gate import PM_WORD, fold, has_pm_word
 from .runner import LIBC_MODULE_PATHS, loader_preload
 
@@ -52,7 +53,9 @@ _PIP = re.compile(r"^pip(?:3(?:\.\d+)?)?(?:\.exe)?$")
 _PYTHON = re.compile(r"^(?:(?:python|pypy)(?:\d+(?:\.\d+)?)?[tdm]?|py)(?:\.exe)?$")
 # Environment variables that change which package manager runs or where it
 # installs. An unknown value for one of these makes later commands unclear.
-_RELEVANT_ENV = re.compile(r"^(?:PIP_|UV_|PYTHON|VIRTUAL_ENV$|PATH$|CONDA_PREFIX$)")
+_RELEVANT_ENV = re.compile(
+    r"^(?:PIP_|UV_|PYTHON|VIRTUAL_ENV$|PATH$|CONDA_PREFIX$|npm_config_|NPM_CONFIG_)"
+)
 
 
 def _relevant(name: str) -> bool:
@@ -106,21 +109,33 @@ _PRINTS = frozenset(
 _SHELL_VALUE_OPTIONS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
 
 # Install-like subcommands of the tools Garnet doesn't wrap yet.
-_NPM_INSTALLS = frozenset(
-    {
-        "install", "i", "in", "ins", "inst", "insta", "instal", "isnt", "isnta", "isntal",
-        "isntall", "add", "ci", "clean-install", "ic", "install-clean", "isntall-clean",
-        "update", "up", "upgrade", "udpate", "install-test", "it", "install-ci-test", "cit",
-        "exec", "x",
-    }
-)  # fmt: skip
 _PNPM_INSTALLS = frozenset({"add", "install", "i", "update", "up", "upgrade", "dlx"})
 _YARN_INSTALLS = frozenset({"add", "install", "up", "upgrade", "upgrade-interactive", "dlx"})
 _POETRY_INSTALLS = frozenset({"add", "install", "update", "lock", "sync"})
 _NPM_WHY = (
-    "Garnet Guard can't read npm, pnpm or yarn lockfiles yet, so it can't compare what "
-    "this would install with what the project has now."
+    "Garnet Guard checks npm install, ci and update; it doesn't check pnpm, yarn, npx or "
+    "npm exec yet, so it can't compare what this would install with what the project has now."
 )
+_NPM_ASK_WHY = (
+    "It may install packages or run their scripts, and Garnet Guard checks only npm install, "
+    "ci and update."
+)
+_NPM_FETCH_WHY = (
+    "It names {}, which isn't a registry package. npm may fetch it to read its package.json, "
+    "and npm 10 runs a git package's prepare script when it does. Garnet Guard checks only "
+    "npm install, ci and update."
+)
+_NPX_PM_WHY = "It runs a package manager through npx or npm exec, which Garnet Guard can't check."
+_NPM_PROGRAM_WHY = (
+    "Garnet Guard can't tell which npm this runs; it checks npm commands that start with npm."
+)
+# npm options Garnet reads before the subcommand (npm takes options anywhere).
+_NPM_LEADING = frozenset(
+    {
+        "-s", "--silent", "-q", "--quiet", "-d", "--verbose", "--no-audit", "--no-fund",
+        "--no-progress", "--no-color", "-v", "--version", "-h", "--help", "-l", "--usage",
+    }
+)  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -150,6 +165,18 @@ class UvCommand:
 
 
 @dataclass(frozen=True)
+class NpmCommand:
+    """``npm install|ci|update …`` (any alias)."""
+
+    npm: str | None  # absolute path of npm; None if not found
+    subcommand: str  # "install", "ci" or "update"
+    args: tuple[str, ...]  # every argument except ``npm`` and the subcommand
+    cwd: str
+    env: Mapping[str, str]
+    text: str
+
+
+@dataclass(frozen=True)
 class Unsupported:
     """An install with a tool Garnet doesn't check yet. Reported, never passed.
 
@@ -171,7 +198,7 @@ class Unclear:
     text: str
 
 
-Found = PipCommand | UvCommand | Unsupported | Unclear
+Found = PipCommand | UvCommand | NpmCommand | Unsupported | Unclear
 
 
 @dataclass(frozen=True)
@@ -680,7 +707,7 @@ def _source(words: tuple[str, ...], state: _State) -> None:
 
 def _recognize(
     words: tuple[str, ...], text: str
-) -> Literal["pip", "uv", "uv-run"] | Unsupported | Unclear | None:
+) -> Literal["pip", "uv", "uv-run", "npm"] | Unsupported | Unclear | None:
     """What a command (wrappers removed) is, if it names a package manager."""
     base = os.path.basename(_plain(words[0]))
     args = tuple(_plain(w) for w in words[1:])
@@ -728,7 +755,13 @@ def _recognize(
         return Unsupported("uvx", _TOOL_WHY, text, ask=True)
     tool = base.split(".")[0]
     if tool == "npx":
+        if npm_commands.runs_package_manager(args):
+            return Unsupported("npx", _NPX_PM_WHY, text, ask=True)
         return Unsupported("npx", _NPM_WHY, text)
+    if tool == "npm":
+        return _npm_kind(args, text)
+    if _NODE.match(tool) and any(_npm_script(a) for a in args):
+        return Unclear(_NPM_PROGRAM_WHY, text)
     if tool in _JS_INSTALLS:
         sub = _subcommand(args, frozenset())[0]
         if sub is None and tool in ("pnpm", "yarn"):  # bare pnpm and yarn install
@@ -747,8 +780,26 @@ def _recognize(
 _TOOL_WHY = (
     "It installs a tool into an environment of its own, which Garnet Guard doesn't check yet."
 )
+# node (``node22``, ``nodejs``, ``node.exe``) and corepack, which can start
+# npm from its files: ``node ./node_modules/npm/index.js i x``.
+_NODE = re.compile(r"^(?:node(?:js)?[\d.]*|corepack)$", re.IGNORECASE)
+_NPM_FILES = frozenset({"npm", "npx", "npm-cli", "npx-cli"})
+
+
+def _npm_script(word: str) -> bool:
+    """True when ``word`` may be npm's or npx's own code: a file named npm,
+    npx, npm-cli or npx-cli (any extension), or a path inside an
+    ``npm`` or ``npx`` folder of a node_modules folder."""
+    parts = [p.lower() for p in re.split(r"[\\/]+", word) if p]
+    if parts and parts[-1].split(".")[0] in _NPM_FILES:
+        return True
+    return any(
+        a == "node_modules" and b in ("npm", "npx") for a, b in zip(parts, parts[1:], strict=False)
+    )
+
+
 _UV_RUN_WITH = frozenset({"--with", "--with-requirements", "--with-editable"})
-_JS_INSTALLS = {"npm": _NPM_INSTALLS, "pnpm": _PNPM_INSTALLS, "yarn": _YARN_INSTALLS}
+_JS_INSTALLS = {"pnpm": _PNPM_INSTALLS, "yarn": _YARN_INSTALLS}
 
 
 def subcommand(args: Sequence[str], value_options: frozenset[str]) -> tuple[str | None, int]:
@@ -821,6 +872,54 @@ def _subcommand(args: Sequence[str], value_options: frozenset[str]) -> tuple[str
     return None, j
 
 
+def _npm_kind(args: Sequence[str], text: str) -> Literal["npm"] | Unsupported | Unclear | None:
+    """npm's subcommand read as npm 10 and 11 read it (aliases, abbreviations,
+    camelCase). install, ci and update are checked; a command known to
+    install nothing gets no answer; npm exec gets a note unless it starts a
+    package manager; anything else is can't check."""
+    sub, at, unknown = npm_subcommand(args)
+    if unknown:
+        return Unclear(f"Garnet Guard can't tell what npm {unknown} means here.", text)
+    if sub is None:
+        return None  # npm, npm -v, npm --help
+    if npm_commands.checked_subcommand(sub):
+        return "npm"
+    commands = npm_commands.deref(sub)
+    rest = args[at + 1 :]
+    if commands and commands <= npm_commands.EXEC_COMMANDS:
+        if npm_commands.runs_package_manager(rest):
+            return Unsupported(f"npm {sub}", _NPX_PM_WHY, text, ask=True)
+        return Unsupported(f"npm {sub}", _NPM_WHY, text)
+    words = [w for w in rest if not w.startswith("-")]
+    spec = npm_commands.fetched_spec(commands, words)
+    if spec is not None:
+        return Unsupported(f"npm {sub}", _NPM_FETCH_WHY.format(spec), text, ask=True)
+    if npm_commands.quiet_command(commands, words):
+        return None
+    return Unsupported(f"npm {sub}", _NPM_ASK_WHY, text, ask=True)
+
+
+def npm_subcommand(args: Sequence[str]) -> tuple[str | None, int, str | None]:
+    """npm's subcommand and its index, like :func:`pip_subcommand`. npm takes
+    options before the subcommand too; one Garnet doesn't read makes the
+    subcommand unclear."""
+    j = 0
+    while j < len(args):
+        a = args[j]
+        if not a.startswith("-") or a == "-":
+            return a, j, None
+        if a == "--":  # npm takes the next word as the subcommand
+            return (args[j + 1], j + 1, None) if j + 1 < len(args) else (None, j, None)
+        name = a.split("=", 1)[0]
+        if a in _NPM_LEADING or (name == "--loglevel" and "=" in a):
+            if j + 1 < len(args) and args[j + 1] in ("true", "false"):
+                return None, j, f"{a} {args[j + 1]}"  # npm reads the word as the flag's value
+            j += 1
+            continue
+        return None, j, name
+    return None, j, None
+
+
 def _python_module(args: Sequence[str]) -> tuple[str | None, tuple[str, ...]]:
     """For ``python [options] -m MODULE args``: the module and its args."""
     j = 0
@@ -848,7 +947,10 @@ def _python_module(args: Sequence[str]) -> tuple[str | None, tuple[str, ...]]:
 
 
 def _locate(
-    kind: Literal["pip", "uv", "uv-run"], words: tuple[str, ...], cwd: str, env: Mapping[str, str]
+    kind: Literal["pip", "uv", "uv-run", "npm"],
+    words: tuple[str, ...],
+    cwd: str,
+    env: Mapping[str, str],
 ) -> Found | None:
     """Fill in where the package manager is: its path, and pip's interpreter."""
     text = " ".join(_plain(w) for w in words)
@@ -862,6 +964,10 @@ def _locate(
         if any(_expands(w) for w in raw[: at + 1]):
             return Unclear(_EXPANDS_WHY, text)
         return _uv_run(exe, args[:at], raw[at + 1 :], cwd, env, text)
+    if kind == "npm":
+        sub, at, _ = npm_subcommand(args)
+        canonical = npm_commands.checked_subcommand(sub or "") or ""
+        return NpmCommand(exe, canonical, args[:at] + args[at + 1 :], cwd, dict(env), text)
     if kind == "uv":
         sub, at = _subcommand(args, UV_GLOBAL_VALUE_OPTIONS)
         return UvCommand(exe, sub or "", args[:at] + args[at + 1 :], cwd, dict(env), text)
