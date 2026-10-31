@@ -12,7 +12,7 @@ Current state, open tasks, verification and review dispositions. Newest first.
 
 **Verification.** New tests in `tests/test_entry_points.py` (the mako files as shipped, the name-blind groups, renames that must still warn); 11 of them (the two mako tests and the nine name-blind groups) fail on main. `uv run pytest`, ruff, mypy (strict) and `lint-imports` pass.
 
-**Review dispositions.** None yet.
+**Review dispositions.** Independent review (an attacker's view; loaders of every name-blind group read in current and older releases: pygments 2.11/2.21, keyring 18/21/25, setuptools 45/59/84, opentelemetry 0.30/0.66, pdm 1.15/2.0/2.29, poetry 1.2/1.8/2.5): no way found to run new code quietly through this change. Minor, fixed: a baseline target importlib can't load (`demo.p q:L`) no longer covers a rename to a loadable one. Material but already on main, outside this change: pdm loads `pdm.plugin` exactly like `pdm`, and `pdm.plugin` is in none of GRN-C009's group lists, so a new plugin there is info; left for a separate change because it raises a default severity.
 
 ## 2026-10-31: Final clean-corpus numbers for 0.2.0
 

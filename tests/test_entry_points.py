@@ -415,6 +415,16 @@ def test_a_target_under_a_new_name_where_the_name_is_ignored_is_quiet(group: str
         assert f.evidence[0].summary.startswith(f"[{group}] z = ")
 
 
+@pytest.mark.parametrize("group", NAME_BLIND)
+def test_a_target_that_never_loaded_does_not_cover_a_rename(group: str) -> None:
+    # importlib can't load "demo.p q:L", so it never ran: "demo.pq:L" under
+    # another name is new, although the two read the same without spaces.
+    base = _wheel("1.0", f"[{group}]\nx = demo.p q:L\n")
+    (f,) = _c009(base, _wheel("1.1", f"[{group}]\ny = demo.pq:L\n"))
+    assert f.severity == Severity.WARN
+    assert f.evidence[0].summary.startswith(f"[{group}] y = demo.pq:L")
+
+
 @pytest.mark.parametrize(
     "group",
     sorted(set(EVERY_LINE) - set(NAME_BLIND) | {"virtualenv.discovery", "pytest11"}),

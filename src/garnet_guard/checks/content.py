@@ -1137,12 +1137,22 @@ def _running(eps: list[EntryPoint]) -> EntryPoint | None:
     return own[-1] if own else None
 
 
+# importlib.metadata's ``EntryPoint.pattern``: a target that doesn't match it
+# fails to load, so it never ran.
+_LOADABLE = re.compile(r"[\w.]+\s*(:\s*[\w.]+\s*)?(\[.*\]\s*)?$")
+
+
 def _loaded_targets(specs: tuple[EntryPoint, ...]) -> dict[str, set[str]]:
     """For each group in ``_NAME_BLIND_GROUPS``, every target its tool
-    loads, under any name it doesn't skip."""
+    loads, under any name it doesn't skip. A target that can't load isn't
+    one: ``demo.p q:L`` never ran, so ``demo.pq:L`` under another name is new."""
     out: dict[str, set[str]] = {}
     for e in specs:
-        if e.group in _NAME_BLIND_GROUPS and e.name not in _SKIPPED_NAMES.get(e.group, ()):
+        if (
+            e.group in _NAME_BLIND_GROUPS
+            and e.name not in _SKIPPED_NAMES.get(e.group, ())
+            and _LOADABLE.match(e.target.strip())
+        ):
             out.setdefault(e.group, set()).add(_spaceless(e.target))
     return out
 
