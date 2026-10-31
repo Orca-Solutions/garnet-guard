@@ -15,7 +15,7 @@ from garnet_guard.ecosystems.gittree import TreeLookup
 from garnet_guard.ecosystems.pypi import FetchContext, RegistryFile, ReplayRelease, release_facts
 from garnet_guard.ecosystems.sdist import match_sdist
 from garnet_guard.engine import run_checks
-from garnet_guard.facts.inventory import file_reader
+from garnet_guard.facts.inventory import exec_lines, file_reader
 from garnet_guard.models import (
     CallSite,
     Change,
@@ -35,6 +35,7 @@ APPENDED = CLIENT + "\nimport subprocess\n\ndef setup():\n    subprocess.run(['s
 PAIRED = {"demo/__init__.py": INIT, "demo/_client.py": CLIENT}
 FETCH = "import urllib.request\n\ndef get(url):\n    return urllib.request.urlopen(url)\n"
 PY2 = "def setup():\n    print 'hi'\n"
+DEEP = "\nTABLE = " + " + ".join(["1"] * 1500) + "\n"  # parses, too deep to walk
 WHEEL1, SDIST1 = "demo-1.1-py3-none-any.whl", "demo-1.1.tar.gz"
 
 
@@ -216,6 +217,41 @@ def test_pth_files_are_compared_with_the_sdists_copy() -> None:
     assert match.code == (WheelOnlyCode("demo.pth", None),)
 
 
+def test_pth_lines_are_read_as_every_python_runs_them() -> None:
+    """Python 3.11 and 3.12 end a .pth line only at \\n, \\r or \\r\\n, so a
+    line with a form feed runs whole; 3.13 and later split at the form feed and
+    a vertical tab too, and drop a leading BOM."""
+    line = "import os; os.getcwd()"
+    assert exec_lines(f"{line}\x0c;os.system('id')\n".encode()) == (
+        f"{line}\x0c;os.system('id')",
+        line,
+    )
+    assert exec_lines(b"\xef\xbb\xbfimport os; os.system('id')\nlib\n") == (
+        "import os; os.system('id')",
+    )
+    assert exec_lines(b"lib\x0bimport os\n") == ("import os",)
+    assert exec_lines(b"import a\r\nlib\rimport\tb\n\nimport a\n") == ("import a", "import\tb")
+    # Hidden behind a form feed or a BOM, a line the sdist's copy lacks is recorded.
+    hidden = f"{line}\x0c;os.system('id')"
+    match, _, _ = _matched({**PAIRED, "demo.pth": hidden + "\n"}, {**PAIRED, "demo.pth": line})
+    assert match.code == (WheelOnlyCode("demo.pth", "demo.pth", lines=(hidden,)),)
+    bom = b"\xef\xbb\xbfimport os; os.system('id')\nlib\n"
+    match, _, _ = _matched({**PAIRED, "demo.pth": bom}, {**PAIRED, "demo.pth": "lib\n"})
+    assert match.code == (
+        WheelOnlyCode("demo.pth", "demo.pth", lines=("import os; os.system('id')",)),
+    )
+
+
+def test_a_wheel_file_too_deep_to_walk_is_recorded_not_dropped() -> None:
+    """It parses, so the inventory keeps it, but its calls can't be listed:
+    counted as differing, never matched, and named for GRN-E002."""
+    match, _, _ = _matched({**PAIRED, "demo/_client.py": APPENDED + DEEP}, PAIRED)
+    assert (match.matched, match.differ, match.absent) == (1, 1, 0)
+    assert (match.code, match.unwalked) == ((), ("demo/_client.py",))
+    match, _, _ = _matched({**PAIRED, "demo/_deep.py": DEEP}, PAIRED)
+    assert (match.absent, match.unwalked) == (1, ("demo/_deep.py",))
+
+
 # --- The rule: what it reports, and what the trusted version already had ---
 
 
@@ -335,6 +371,82 @@ def test_lines_past_the_evidence_cap_are_counted() -> None:
     ((title, evidence),) = _c006(base, release("1.1", {**PAIRED, **many}, sdist_files=PAIRED))
     assert title == "1.1's wheel has code that is not in its sdist (30 file(s))"
     assert len(evidence) == 27 and evidence[-1] == "and 5 more"
+
+
+def _e002(base: ReleaseFacts | None, cand: ReleaseFacts) -> list[tuple[str, list[str]]]:
+    result = run_checks(Change("pypi", "demo", "1.0", cand.version), base, cand)
+    return [
+        (f.title, [e.summary for e in f.evidence])
+        for f in result.findings
+        if f.rule_id == "GRN-E002"
+    ]
+
+
+def test_a_wheel_file_too_deep_to_walk_is_parse_failed_not_passed() -> None:
+    """A payload in a function of a file both files carry, beside a table too
+    deeply nested to walk: GRN-C006 can't list the calls, so GRN-E002 says so
+    and the update doesn't pass."""
+    base = release("1.0", PAIRED, sdist_files=PAIRED)
+    cand = release("1.1", {**PAIRED, "demo/_client.py": APPENDED + DEEP}, sdist_files=PAIRED)
+    assert _c006(base, cand) == []
+    assert _e002(base, cand) == [
+        (
+            f"1 Python file(s) in {WHEEL1} are nested too deep to compare with {SDIST1}",
+            [
+                f"demo/_client.py: not byte for byte in {SDIST1}, and nested too deep for "
+                "Garnet to list its calls (new or changed since 1.0's wheel)",
+                "not evaluated: GRN-C006",
+            ],
+        )
+    ]
+    assert run_checks(Change("pypi", "demo", "1.0", "1.1"), base, cand).verdict == Verdict.WARN
+    # The trusted version's files couldn't be read, or it had no wheel: said instead.
+    unread = replace(release("1.0"), artifacts=())
+    no_wheel = release("1.0", sdist_files=PAIRED, sdist_only=True)
+    assert [ev[0].rpartition("(")[2] for _, ev in _e002(unread, cand)] == [
+        "Garnet couldn't read 1.0's files, so it can't tell whether it changed)"
+    ]
+    assert [ev[0].rpartition("(")[2] for _, ev in _e002(no_wheel, cand)] == [
+        "1.0 had no wheel to compare with)"
+    ]
+    # No trusted version: GRN-C006 compares nothing, so nothing is left unevaluated.
+    assert _e002(None, cand) == []
+
+
+def test_a_deep_wheel_file_unchanged_since_the_trusted_wheel_is_not_reported() -> None:
+    """The trusted wheel installed the same bytes at the same path, so nothing
+    new runs; a changed copy is reported again."""
+    deep = {**PAIRED, "demo/_client.py": APPENDED + DEEP}
+    base = release("1.0", deep, sdist_files=PAIRED)
+    assert base.sdist_match is not None and base.sdist_match.unwalked == ("demo/_client.py",)
+    assert _e002(base, release("1.1", deep, sdist_files=PAIRED)) == []
+    changed = release(
+        "1.1", {**PAIRED, "demo/_client.py": APPENDED + DEEP + "Y = 2\n"}, sdist_files=PAIRED
+    )
+    assert [title for title, _ in _e002(base, changed)] == [
+        f"1 Python file(s) in {WHEEL1} are nested too deep to compare with {SDIST1}"
+    ]
+
+
+def test_pth_lines_hidden_by_a_form_feed_or_a_bom_are_reported() -> None:
+    line = "import os; os.getcwd()"
+    hidden = f"{line}\x0c;os.system('id')"
+    base = release("1.0", {**PAIRED, "demo.pth": line}, sdist_files={**PAIRED, "demo.pth": line})
+    cand = release(
+        "1.1", {**PAIRED, "demo.pth": hidden + "\n"}, sdist_files={**PAIRED, "demo.pth": line}
+    )
+    ((_, evidence),) = _c006(base, cand)
+    assert evidence[1] == (
+        f"demo.pth has 1 executable line(s) that demo.pth in {SDIST1} doesn't: {hidden}"
+    )
+    lib = {**PAIRED, "demo.pth": "lib\n"}
+    bom = b"\xef\xbb\xbfimport os; os.system('id')\nlib\n"
+    cand = release("1.1", {**PAIRED, "demo.pth": bom}, sdist_files=lib)
+    ((_, evidence),) = _c006(release("1.0", lib, sdist_files=lib), cand)
+    assert evidence[1] == (
+        f"demo.pth has 1 executable line(s) that demo.pth in {SDIST1} doesn't: "
+        "import os; os.system('id')"
+    )
 
 
 # --- The fetcher: only a wheel and an sdist read to the end are compared ---

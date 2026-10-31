@@ -17,7 +17,10 @@ status: implemented
 ## What it checks
 
 The new version contains a `.pth` file at a path the trusted version didn't have, or an
-existing `.pth` file gained executable lines (lines starting with `import`).
+existing `.pth` file gained executable lines (lines starting with `import`). Lines are read
+the way each supported Python reads them: Python 3.11 and 3.12 end a line only at a line
+break, so a line with a form feed in it runs whole, and 3.13 and later skip a leading UTF-8
+BOM and also end a line at a form feed. A line either reading gives counts.
 
 In a wheel, only a `.pth` that lands in `site-packages` itself counts: at the wheel's root
 or at the root of its `<name>-<version>.data/purelib/` or `platlib/` folder (the folder's

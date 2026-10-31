@@ -12,7 +12,7 @@ status: implemented
 |---|---|
 | Default severity | `warn` |
 | Kind | diff rule: fires only when the trusted version had the property and the new version lost it, or the new version gained a risky property the trusted version lacked. |
-| Status | Implemented in 0.2 (PyPI) |
+| Status | Implemented in 0.3 (PyPI) |
 
 ## What it checks
 
@@ -41,13 +41,16 @@ file, from the bytes it has already downloaded and checked against PyPI's hashes
   every call counts too, and the evidence says the copy couldn't be parsed to compare.
 - A `.pth` file in the wheel fires when the sdist has no copy of it (looked for at its
   install path, then by name anywhere in the sdist), or when it has executable (`import`)
-  lines that copy lacks.
+  lines that copy lacks. Lines are read as every supported Python reads them: Python 3.11
+  and 3.12 run a line past a form feed whole, and 3.13 and later skip a leading UTF-8 BOM
+  and run the line behind it.
 
 A call the trusted version's wheel already carried outside its own sdist, in the same file,
 isn't new. Neither is a `.pth` line the trusted wheel carried in a `.pth` file its sdist
-lacked, at any path, because setuptools names namespace `.pth` files after the version. When
-the trusted version gives nothing to compare with (it had no sdist or no wheel, or Garnet
-couldn't read them), the evidence says so.
+lacked, at any path, because setuptools names namespace `.pth` files after the version, nor
+a `.pth` file with no executable lines at a path where the trusted wheel had a `.pth` file
+its sdist lacked. When the trusted version gives nothing to compare with (it had no sdist or
+no wheel, or Garnet couldn't read them), the evidence says so.
 
 Files a build writes, such as a `_version.py` from setuptools-scm or hatch-vcs, are in the
 wheel and not the sdist, or differ between the two. They don't run processes, load code or
@@ -66,8 +69,11 @@ mismatch to report. telnyx 4.87.1 and 4.87.2 (March 2026) did that. Issue #60 li
 `telnyx/_client.py` in the wheel is byte for byte `src/telnyx/_client.py` in the sdist
 (SHA-256 `23b1ec58…` in 4.87.1, `ab4c4aeb…` in 4.87.2), and so is each of the other 2,490
 Python files. This rule stays quiet on both; GRN-C003 reports them, because the appended code
-runs at import. The other replays and the clean corpus have not been run with this rule yet;
-[docs/rule-coverage.md](../rule-coverage.md) will carry those numbers.
+runs at import. The same holds for the other replayed malicious releases that ship both
+files: in each, every Python and `.pth` file of the wheel is in the sdist byte for byte,
+apart from a `conftest.py` that xinference's trusted 2.5.0 wheel already carried. On the 974
+routine updates of the top-100 PyPI corpus the rule reports nothing
+([docs/rule-coverage.md](../rule-coverage.md) has the details).
 
 ## Example finding
 
@@ -86,9 +92,10 @@ demo 1.0 → 1.1: WARN
 1. Open the flagged line in the wheel and the file the evidence names in the sdist. Read
    what the extra code does.
 2. Ask whether the build is supposed to write it. A build hook or code generator is named in
-   the project's `pyproject.toml`, `setup.py` or build scripts, and the code it writes
-   won't download or run anything. Then look at the same file in the repository at the
-   release's tag.
+   the project's `pyproject.toml`, `setup.py` or build scripts, and the call the evidence
+   names is what that hook is there to generate: a `ctypes` loader for a library the
+   project bundles, say, not a download or a shell command. Then look at the same file in
+   the repository at the release's tag.
 3. If it is expected, merge and add a time-limited ignore with the reason. If nothing
    explains it, don't merge, and tell the maintainers: the wheel they published wasn't built
    from the sdist beside it.
@@ -135,7 +142,10 @@ matched. How to write one is in [the policy guide](../policy.md); the format is 
 - Files other than `.py` and `.pth`. A native library is GRN-C004's.
 - The release's other wheels. GRN-C012 compares them with the wheel this rule reads.
 - A wheel file Garnet couldn't parse. It is GRN-E002 when it is new or changed since the
-  trusted version, and one over the 5 MB parse limit is GRN-E003, which names this rule.
+  trusted version, and one over the 5 MB parse limit is GRN-E003, which names this rule. A
+  file that parses but is nested too deep for Garnet to list its calls, and isn't in the
+  sdist byte for byte, is GRN-E002 naming this rule, unless the trusted version's wheel had
+  the same bytes at the same path.
 
 ## See also
 

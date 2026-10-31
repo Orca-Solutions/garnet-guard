@@ -571,6 +571,20 @@ def test_renamed_pth_with_the_same_lines_is_quiet() -> None:
     )
 
 
+def test_pth_lines_a_form_feed_or_a_bom_hid_are_read() -> None:
+    """Python 3.11 and 3.12 run a line past a form feed whole, and 3.13 drops
+    a leading BOM and runs the line behind it, so both count as executable."""
+    line = "import os; os.getcwd()"
+    base = release("1.0", {"demo/__init__.py": INIT, "demo.pth": f"{line}\n"})
+    hidden = f"{line}\x0c;os.system('id')\n"
+    assert "GRN-C001" in rules(base, release("1.1", {"demo/__init__.py": INIT, "demo.pth": hidden}))
+    path_only = release("1.0", {"demo/__init__.py": INIT, "demo.pth": "lib\n"})
+    bom = b"\xef\xbb\xbfimport os; os.system('id')\nlib\n"
+    assert "GRN-C001" in rules(
+        path_only, release("1.1", {"demo/__init__.py": INIT, "demo.pth": bom})
+    )
+
+
 def test_modules_under_purelib_keep_their_names_across_versions() -> None:
     mod = "import os\nos.system('id')\n"
     base = release("1.0", {"demo-1.0.data/purelib/demo/__init__.py": mod})

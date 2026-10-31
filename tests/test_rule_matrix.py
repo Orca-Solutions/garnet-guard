@@ -607,6 +607,19 @@ def _rows() -> list[Row]:
         release("1.1", {**PKG, "demo_boot.pth": "import demo._boot\n"}, sdist_files=PKG),
         eco=PYPI,
     )
+    # Python 3.11 and 3.12 run the text past a form feed as part of the line.
+    boot = {**PKG, "demo.pth": "import demo._boot\n"}
+    fires(
+        "GRN-C006",
+        "a .pth line runs on past a form feed the sdist's copy lacks",
+        release("1.0", boot, sdist_files=boot),
+        release(
+            "1.1",
+            {**PKG, "demo.pth": "import demo._boot\x0c;import os; os.system('id')\n"},
+            sdist_files=boot,
+        ),
+        eco=PYPI,
+    )
     # The telnyx 4.87.1 and 4.87.2 shape as published: both files carry the
     # payload byte for byte, so it is GRN-C003's to report.
     both = {**paired, "demo/_client.py": client + THREAD_PAYLOAD}
@@ -1380,6 +1393,24 @@ def _rows() -> list[Row]:
             wheel_unparsed=(UnparsedWheelFile(win1, "Windows", legacy, legacy_sha),),
         ),
         Verdict.WARN,
+    )
+    # A wheel file GRN-C006 compares that parses but is too deep to walk: its
+    # calls are unknown, so GRN-C006 isn't evaluated for it.
+    deep = appended + "\nTABLE = " + " + ".join(["1"] * 1500) + "\n"
+    fires(
+        "GRN-E002",
+        "a wheel file not in the sdist is too deep for GRN-C006 to walk",
+        release("1.0", paired, sdist_files=paired),
+        release("1.1", {**paired, "demo/_client.py": deep}, sdist_files=paired),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-E002",
+        "a wheel file too deep to walk, unchanged since the trusted wheel",
+        release("1.0", {**paired, "demo/_client.py": deep}, sdist_files=paired),
+        release("1.1", {**paired, "demo/_client.py": deep}, sdist_files=paired),
+        eco=PYPI,
     )
     quiet(
         "GRN-E002",

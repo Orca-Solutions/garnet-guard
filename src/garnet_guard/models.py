@@ -359,6 +359,9 @@ class SdistMatch:
     differ: int  # the sdist's copy at the same install path has other bytes
     absent: int  # the sdist has no copy
     code: tuple[WheelOnlyCode, ...] = ()
+    # Install paths of files counted in ``differ`` or ``absent`` that parse but
+    # are nested too deep for Garnet to list their calls (GRN-E002 names GRN-C006)
+    unwalked: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

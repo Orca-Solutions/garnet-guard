@@ -638,10 +638,12 @@ def unparsed_changed(
 ) -> Iterator[RawFinding]:
     """GRN-E002 for new or changed .py files ast couldn't parse, in the
     artifact the content rules read (a first wheel and its sdist each, see
-    ``each_view``) and in each wheel GRN-C012 compared. GRN-C012's wheels are
+    ``each_view``) and in each wheel GRN-C012 compared, and for the read
+    wheel's files GRN-C006 couldn't list the calls of. GRN-C012's wheels are
     read once, against the whole candidate."""
     yield from _unparsed_read(change, base, cand)
     yield from _compared_unparsed(base, cand)
+    yield from _sdist_unwalked(base, cand)
 
 
 def _families_read(base: ReleaseFacts) -> set[str]:
@@ -712,6 +714,48 @@ def _no_trusted_pair(base: ReleaseFacts) -> str:
     return (
         f"Garnet couldn't compare {v}'s wheel with its sdist, so it can't tell whether "
         f"{v} had this code"
+    )
+
+
+def _sdist_unwalked(base: ReleaseFacts | None, cand: ReleaseFacts) -> Iterator[RawFinding]:
+    """GRN-E002 naming GRN-C006 for the read wheel's Python files that aren't
+    in the sdist byte for byte and that parse but are nested too deep for
+    Garnet to list their calls, so GRN-C006 can't tell whether they make one
+    the sdist doesn't. A file the trusted version's wheel had with the same
+    bytes at the same install path is left out: what it installs is unchanged,
+    as GRN-E002 leaves out an unparsed file that didn't change."""
+    sm = cand.sdist_match
+    if base is None or sm is None or not sm.unwalked:
+        return  # GRN-C006 compares nothing without a trusted version
+    read = next((a for a in cand.artifacts if a.filename == sm.wheel), None)
+    mine = {_site_name(f.path): f.sha256 for f in read.files} if read is not None else {}
+    trusted = _pick(base, "wheel")
+    theirs = {_site_name(f.path): f.sha256 for f in trusted.files} if trusted else {}
+    if trusted is not None:
+        why = f"new or changed since {base.version}'s wheel"
+    elif not base.artifacts:
+        why = f"Garnet couldn't read {base.version}'s files, so it can't tell whether it changed"
+    else:
+        why = f"{base.version} had no wheel to compare with"
+    paths = [p for p in sm.unwalked if p not in theirs or theirs[p] != mine.get(p)]
+    if not paths:
+        return
+    evidence = [
+        Evidence(
+            "file",
+            f"{p}: not byte for byte in {sm.sdist}, and nested too deep for Garnet to list "
+            f"its calls ({why})",
+            path=p,
+        )
+        for p in paths[:MAX_EVIDENCE]
+    ]
+    if len(paths) > MAX_EVIDENCE:
+        evidence.append(Evidence("note", f"and {len(paths) - MAX_EVIDENCE} more"))
+    evidence.append(Evidence("note", "not evaluated: GRN-C006"))
+    yield RawFinding(
+        "GRN-E002",
+        f"{len(paths)} Python file(s) in {sm.wheel} are nested too deep to compare with {sm.sdist}",
+        tuple(evidence),
     )
 
 

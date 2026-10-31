@@ -107,6 +107,7 @@ def match_sdist(
     project = project_name(wheel.filename)
     matched = differ = absent = 0
     code: list[WheelOnlyCode] = []
+    unwalked: list[str] = []
     for m, site in zip(modules, sites, strict=True):
         if entries[m.path].sha256 in shas:
             matched += 1
@@ -127,7 +128,10 @@ def match_sdist(
         try:
             calls = sensitive_calls(data, path=m.path, own=own, project=project)
         except (SyntaxError, ValueError, RecursionError):
-            continue  # inventory parsed it once; nothing more can be said
+            # The inventory parsed it, so it is nested too deep to walk. Its
+            # calls are unknown, which is never a pass: the check reports it.
+            unwalked.append(site)
+            continue
         parsed = True
         if calls and theirs is not None and at is not None:
             known, parsed = _sdist_calls(theirs, at, own_there, project, limits)
@@ -142,6 +146,7 @@ def match_sdist(
         differ=differ,
         absent=absent,
         code=tuple(sorted(code, key=lambda w: w.path)),
+        unwalked=tuple(sorted(unwalked)),
     )
 
 
