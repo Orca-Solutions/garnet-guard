@@ -196,7 +196,12 @@ def _one(
             answer.details.append(escape(note))
         if skip:
             return
-    why = _preload_why(item, env) or _committed_why(item) or _in_project_why(item, env)
+    why = (
+        _preload_why(item, env)
+        or _discovery_why(item, env)
+        or _committed_why(item)
+        or _in_project_why(item, env)
+    )
     if why:
         answer.cant.append(escape(why))
         answer.details.append(escape(why))
@@ -296,6 +301,96 @@ def _preload_why(
     )
 
 
+# What uv reads to choose the Python it starts (python-preference defaults
+# to managed: the managed installs under UV_PYTHON_INSTALL_DIR, else
+# $XDG_DATA_HOME/uv/python, else ~/.local/share/uv/python; then python3 and
+# python on PATH), and where it reads settings that change that choice.
+# uv's -p, --python, UV_PYTHON and .python-version are checked as programs.
+UV_DISCOVERY = (
+    "PATH",
+    "HOME",
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "UV_PYTHON_INSTALL_DIR",
+    "UV_PROJECT_ENVIRONMENT",
+    "UV_PYTHON_PREFERENCE",
+    "UV_MANAGED_PYTHON",
+    "UV_NO_MANAGED_PYTHON",
+    "UV_CONFIG_FILE",
+    "CONDA_PREFIX",
+    "VIRTUAL_ENV",
+)
+# pip runs as the Python Garnet found; PATH is where a pip script's
+# ``#!/usr/bin/env python3`` line finds it, and where pip finds ``keyring``.
+PIP_DISCOVERY = ("PATH",)
+
+
+def _discovery_why(
+    item: shellwords.PipCommand | shellwords.UvCommand, env: Mapping[str, str]
+) -> str | None:
+    """Why the hook asks when the command changes where pip or uv find a program.
+
+    Compared with the hook's own environment, as for a loader preload. A
+    ``source <venv>/bin/activate`` of a virtual environment (a folder with a
+    ``pyvenv.cfg``) is the one change allowed: it sets ``VIRTUAL_ENV`` and puts
+    the venv's bin folder first on PATH. A relative or empty PATH entry, from
+    the command or the hook's own environment, makes pip or uv look in the
+    folder they run in, so it asks too.
+    """
+    tool = "pip" if isinstance(item, shellwords.PipCommand) else "uv"
+    names = PIP_DISCOVERY if tool == "pip" else UV_DISCOVERY
+    venv = _activated(item, env)
+    changed = []
+    for name in names:
+        value, before = item.env.get(name), env.get(name)
+        if value == before or (venv and _activation(name, value, before, venv)):
+            continue
+        changed.append(name)
+    if changed:
+        which = ", ".join(changed)
+        return (
+            f"{item.text}: not checked. The command sets {which}, which changes where {tool} "
+            "looks for the Python or other programs it starts, so Garnet Guard doesn't start "
+            f"{tool} with it before you approve the command."
+        )
+    path = item.env.get("PATH", "")
+    relative = [e for e in path.split(os.pathsep) if not os.path.isabs(e)] if path else []
+    if relative:
+        entry = relative[0] or "an empty entry"
+        return (
+            f"{item.text}: not checked. PATH has a relative entry ({entry}), so {tool} could "
+            "start a program from the folder the command runs in. Garnet Guard doesn't start "
+            f"{tool} with it before you approve the command."
+        )
+    return None
+
+
+def _activated(
+    item: shellwords.PipCommand | shellwords.UvCommand, env: Mapping[str, str]
+) -> str | None:
+    """The virtual environment the command activates, if it is one: an
+    absolute ``VIRTUAL_ENV`` with a ``pyvenv.cfg``, and its bin folder put
+    first on the hook's PATH, as ``activate`` does. ``VIRTUAL_ENV`` set alone
+    (``uv add --active`` starts that venv's Python) doesn't count."""
+    venv = item.env.get("VIRTUAL_ENV")
+    if not venv or not os.path.isabs(venv):
+        return None
+    if not os.path.isfile(os.path.join(venv, "pyvenv.cfg")):
+        return None
+    path = item.env.get("PATH")
+    return venv if _activation("PATH", path, env.get("PATH"), venv) else None
+
+
+def _activation(name: str, value: str | None, before: str | None, venv: str) -> bool:
+    """Whether a change is what activating ``venv`` makes."""
+    if name == "VIRTUAL_ENV":
+        return value == venv
+    if name == "PATH" and value is not None:
+        bindirs = (os.path.join(venv, "bin"), os.path.join(venv, "Scripts"))
+        return any(value == d + os.pathsep + (before or "") for d in bindirs)
+    return False
+
+
 def _committed_why(item: shellwords.PipCommand | shellwords.UvCommand) -> str | None:
     committed = _committed(item)
     if not committed:
@@ -344,7 +439,9 @@ def project_program(
     The project is the nearest folder at or above the working directory (and
     uv's ``--directory`` or ``--project``) that holds ``.git``, and the
     nearest that holds ``pyproject.toml``; not the home folder in the hook's
-    own environment ``env`` (a command can set ``HOME``). A program
+    own environment ``env`` (a command can set ``HOME``). With neither, the
+    folder itself is the project, unless it is ``/``, the home folder or a
+    folder above it. A program
     counts when its path or its real path (symlinks followed) is in one,
     unless that path is in the project's ``.venv`` or the active
     ``VIRTUAL_ENV`` (a folder with a ``pyvenv.cfg``, other than the project
@@ -363,12 +460,18 @@ def project_program(
     roots: list[Path] = []
     for start in starts:
         here = Path(os.path.normpath(os.path.join(item.cwd, start)))
+        found = False
         for marker in (".git", "pyproject.toml"):
             for folder in (here, *here.parents):
                 if os.path.lexists(folder / marker):
+                    found = True
                     if not _same(folder, home):
                         roots.append(folder)
                     break
+        # A plain folder, with neither: the folder itself is the project,
+        # unless it is the filesystem root, the home folder or above it.
+        if not found and here.parent != here and not _within(Path(home), here):
+            roots.append(here)
     if not roots:
         return None
     venvs = [root / ".venv" for root in roots]

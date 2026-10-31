@@ -370,6 +370,9 @@ def find_commands(
     line = _split(command)
     if line.unclear:
         return [Unclear(f"Garnet Guard can't tell what this runs: {line.unclear}.", command)]
+    builtin = _builtin_why(line.simple)
+    if builtin and has_pm_word(command):
+        return [Unclear(builtin, command)]
     state = _State(cwd, dict(env), line=command)
     out: list[Found] = []
     for words in line.simple:
@@ -380,6 +383,39 @@ def find_commands(
         elif found is not None:
             out.append(found)
     return out
+
+
+# Builtins that set or export variables in ways Garnet doesn't follow.
+_SETTERS = frozenset({"declare", "typeset", "readonly", "local", "builtin"})
+
+
+def _builtin_why(simple: Sequence[tuple[str, ...]]) -> str | None:
+    """Why the whole line is unclear, if any command in it (a function body
+    included, wherever it runs) is a builtin that can set or export a
+    variable Garnet doesn't follow: ``declare``, ``typeset``, ``readonly``,
+    ``local``, ``builtin``, ``set -a`` or ``set -o allexport``, and
+    ``export -n`` or ``-f``."""
+    for words in simple:
+        i = 0
+        while i < len(words) and _ASSIGNMENT.match(words[i]):
+            i += 1
+        rest, _ = _unwrap(words[i:], {})
+        if not rest:
+            continue
+        base = os.path.basename(_plain(rest[0]))
+        args = [_plain(w) for w in rest[1:]]
+        if base in _SETTERS:
+            return f"Garnet Guard can't tell what this installs: it uses {base}, which can set variables Garnet doesn't follow."
+        if base == "set" and (
+            any(re.match(r"^-[A-Za-z]*a", a) for a in args) or any(a == "allexport" for a in args)
+        ):
+            return (
+                "Garnet Guard can't tell what this installs: it uses set -a or "
+                "set -o allexport, which exports every later assignment."
+            )
+        if base == "export" and any(re.match(r"^-[A-Za-z]*[nf]", a) for a in args):
+            return f"Garnet Guard can't tell what this installs: it uses export {args[0]}, which Garnet doesn't follow."
+    return None
 
 
 def _simple(

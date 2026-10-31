@@ -916,8 +916,9 @@ def project(tmp_path: Path) -> dict[str, str]:
         ("uv sync --python ./bin/python", "bin/python"),
         ("{links}/uv lock", "{links}/uv (a link to {repo}/bin/uv)"),
         ("cd sub && ../bin/uv lock", "bin/uv"),
-        ("VIRTUAL_ENV=. bin/uv lock", "bin/uv"),  # the project isn't its own venv
-        ("VIRTUAL_ENV=tools tools/uv lock", "tools/uv"),  # no pyvenv.cfg: not a venv
+        # The project isn't its own venv, and a folder without pyvenv.cfg isn't one.
+        ("VIRTUAL_ENV=. bin/python -m pip install requests==2.32.3", "bin/python"),
+        ("VIRTUAL_ENV=tools tools/pip install requests==2.32.3", "tools/pip"),
         (
             ".venv/bin/python -m pip install requests==2.32.3",
             "{repo}/.venv/bin/python (a link to {repo}/bin/python)",
@@ -1028,6 +1029,186 @@ def test_a_project_at_the_home_folder_doesnt_count(project: dict[str, str]) -> N
     assert "there's no pyproject.toml" in inner["permissionDecisionReason"]
     # A command can't make the project its home folder.
     _program(Path(project["cwd"]) / "bin" / "uv")
-    payload = event(f"HOME={project['cwd']} bin/uv lock", project["cwd"])
+    _program(Path(project["cwd"]) / "bin" / "python", "")
+    payload = event(f"HOME={project['cwd']} bin/python -m pip install six", project["cwd"])
     inner = spec(answer("codex", payload, project, deps=deps(run)))
     assert "is inside the project" in inner["permissionDecisionReason"]
+
+
+# --- settings that change where pip and uv find a Python -------------------------
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+@pytest.mark.parametrize(
+    ("command", "names"),
+    [
+        ("UV_PYTHON_INSTALL_DIR=./py uv add six", "UV_PYTHON_INSTALL_DIR"),
+        ("PATH={outside}:/usr/bin uv add six", "PATH"),
+        ("UV_PROJECT_ENVIRONMENT=/tmp/env uv sync", "UV_PROJECT_ENVIRONMENT"),
+        ("UV_PYTHON_PREFERENCE=only-system uv lock", "UV_PYTHON_PREFERENCE"),
+        ("export UV_MANAGED_PYTHON=1; uv lock", "UV_MANAGED_PYTHON"),
+        ("UV_NO_MANAGED_PYTHON=1 uv lock", "UV_NO_MANAGED_PYTHON"),
+        ("XDG_DATA_HOME=./data uv lock", "XDG_DATA_HOME"),
+        ("HOME=./fakehome uv lock", "HOME"),
+        (
+            "XDG_CONFIG_HOME=./cfg UV_CONFIG_FILE=./u.toml uv sync",
+            "XDG_CONFIG_HOME, UV_CONFIG_FILE",
+        ),
+        ("CONDA_PREFIX=/tmp/conda uv lock", "CONDA_PREFIX"),
+        ("VIRTUAL_ENV=/tmp/fake uv add --active six", "VIRTUAL_ENV"),
+        # A real venv named by VIRTUAL_ENV alone, without activating it.
+        ("VIRTUAL_ENV={repo}/.venv uv add --active six", "VIRTUAL_ENV"),
+        # An activate script outside a virtual environment (no pyvenv.cfg).
+        ("source notvenv/bin/activate && uv lock", "PATH, VIRTUAL_ENV"),
+        ("PATH={outside}:/usr/bin pip install requests==2.32.3", "PATH"),
+        ("unset PATH; pip install requests==2.32.3", "PATH"),
+        ("source notvenv/bin/activate && pip install requests==2.32.3", "PATH"),
+    ],
+)
+def test_a_command_that_moves_python_discovery_asks(
+    agent: str, command: str, names: str, project: dict[str, str]
+) -> None:
+    repo = Path(project["cwd"])
+    (repo / "notvenv" / "bin").mkdir(parents=True)
+    (repo / "notvenv" / "bin" / "activate").write_text("")
+    _program(repo / ".venv" / "bin" / "python", "")
+    (repo / ".venv" / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    run = FakeRunner(lambda argv, cwd, env: pytest.fail("nothing runs"))
+    payload = event(command.format(outside=project["PATH"], repo=repo), project["cwd"])
+    inner = spec(answer(agent, payload, project, deps=deps(run)))
+    assert inner["permissionDecision"] == ("ask" if agent == "claude-code" else "deny")
+    assert (
+        f"not checked. The command sets {names}, which changes where"
+        in (inner["permissionDecisionReason"])
+    )
+    assert run.calls == []
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+@pytest.mark.parametrize(
+    ("extra", "entry"), [(":bin", "bin"), (":.", "."), (":", "an empty entry")]
+)
+@pytest.mark.parametrize("command", ["uv lock", "pip install requests==2.32.3"])
+def test_a_relative_path_entry_in_the_hooks_own_path_asks(
+    agent: str, extra: str, entry: str, command: str, project: dict[str, str]
+) -> None:
+    run = FakeRunner(lambda argv, cwd, env: pytest.fail("nothing runs"))
+    where = {**project, "PATH": project["PATH"] + extra}
+    inner = spec(answer(agent, event(command, project["cwd"]), where, deps=deps(run)))
+    assert inner["permissionDecision"] == ("ask" if agent == "claude-code" else "deny")
+    assert f"PATH has a relative entry ({entry})" in inner["permissionDecisionReason"]
+    assert run.calls == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "source .venv/bin/activate && uv lock",  # a real venv's activate is allowed
+        "UV_PYTHON_PREFERENCE=only-system uv lock",  # the hook's own value, unchanged
+        "HOME={home} uv lock",
+        "UV_PYTHON=3.12 uv lock",  # not a path; -p and UV_PYTHON paths are checked as programs
+    ],
+)
+def test_uv_with_its_discovery_unchanged_is_checked(command: str, project: dict[str, str]) -> None:
+    repo = Path(project["cwd"])
+    _program(repo / ".venv" / "bin" / "python", "")
+    (repo / ".venv" / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    run = _uv_runner(check_ok=True)
+    payload = event(command.format(home=project["HOME"]), project["cwd"])
+    out = answer(
+        "codex",
+        payload,
+        project,
+        deps=deps(run, committed_lock=lambda p: BASE_LOCK.encode()),
+        hook_env={"UV_PYTHON_PREFERENCE": "only-system"},
+    )
+    assert out is None or "permissionDecision" not in spec(out)
+    assert run.calls
+
+
+# --- builtins that set variables Garnet doesn't follow ----------------------------
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+@pytest.mark.parametrize(
+    "command",
+    [
+        "declare -x LD_PRELOAD=./x.so; pip install six",
+        "typeset -x PATH=./bin:/usr/bin; uv add six",
+        "readonly UV_PYTHON=./p; uv sync",
+        "f() { local -x LD_PRELOAD=./x.so; pip install six; }; f",
+        "f() { pip install six; }; declare -x LD_PRELOAD=./x.so; f",  # declared after, runs first
+        "builtin export LD_PRELOAD=./x.so; uv add six",
+        "sudo declare -x A=1; pip install six",
+        "set -a; LD_PRELOAD=./x.so; pip install six",
+        "set -ea; LD_PRELOAD=./x.so; pip install six",
+        "set -o allexport; LD_PRELOAD=x; pip install six",
+        "export -n PATH; uv add six",
+        "export -f f; pip install six",
+        "bash -c 'declare -x LD_PRELOAD=./x.so; pip install six'",
+    ],
+)
+def test_builtins_that_set_variables_make_the_command_cant_tell(
+    agent: str, command: str, where: dict[str, str]
+) -> None:
+    run = FakeRunner(lambda argv, cwd, env: pytest.fail("nothing runs"))
+    inner = spec(answer(agent, event(command, where["cwd"]), where, deps=deps(run)))
+    assert inner["permissionDecision"] == ("ask" if agent == "claude-code" else "deny")
+    assert (
+        "Garnet Guard can't tell what this installs: it uses" in (inner["permissionDecisionReason"])
+    )
+    assert run.calls == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "set -e; pip install requests==2.32.3",
+        "set -o pipefail; pip install requests==2.32.3",
+        "declare -x A=1; ls",  # no package command: no answer either way
+    ],
+)
+def test_other_set_options_are_still_checked(command: str, where: dict[str, str]) -> None:
+    out = answer("claude-code", event(command, where["cwd"]), where)
+    if "pip" not in command:
+        assert out is None
+        return
+    inner = spec(out)
+    assert "permissionDecision" not in inner
+    assert "requests 2.32.2 -> 2.32.3" in inner["additionalContext"]
+
+
+# --- a plain folder, with no .git or pyproject.toml -------------------------------
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+@pytest.mark.parametrize("command", ["bin/uv add six", "./bin/pip install requests==2.32.3"])
+def test_a_program_in_a_plain_folder_is_the_folders_own(
+    agent: str, command: str, tmp_path: Path
+) -> None:
+    plain = tmp_path / "plain"
+    _program(plain / "bin" / "uv")
+    _program(plain / "bin" / "pip", "#!/usr/bin/python3\n")
+    run = FakeRunner(lambda argv, cwd, env: pytest.fail("nothing runs"))
+    where = {"PATH": "/nonexistent", "HOME": str(tmp_path / "home"), "cwd": str(plain)}
+    inner = spec(answer(agent, event(command, str(plain)), where, deps=deps(run)))
+    assert inner["permissionDecision"] == ("ask" if agent == "claude-code" else "deny")
+    program = plain / command.split()[0].removeprefix("./")
+    assert f"{program} is inside the project ({plain})" in inner["permissionDecisionReason"]
+    # uv --directory names the plain folder from somewhere else.
+    if command.startswith("bin/uv"):
+        payload = event(f"{plain}/bin/uv --directory {plain} lock", str(tmp_path))
+        inner = spec(answer(agent, payload, where, deps=deps(run)))
+        assert f"is inside the project ({plain})" in inner["permissionDecisionReason"]
+    assert run.calls == []
+
+
+def test_the_home_folder_and_root_are_not_a_plain_project(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    local = _program(home / "bin" / "uv")
+    run = FakeRunner(lambda argv, cwd, env: pytest.fail("nothing runs"))
+    for cwd in (str(home), str(tmp_path), "/"):
+        where = {"PATH": str(local.parent), "HOME": str(home), "cwd": cwd}
+        inner = spec(answer("codex", event("uv lock", cwd), where, deps=deps(run)))
+        assert "inside the project" not in inner["permissionDecisionReason"]
+        assert "there's no pyproject.toml" in inner["permissionDecisionReason"]
