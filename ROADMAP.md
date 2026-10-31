@@ -18,7 +18,7 @@ Months count from the repository going live. Version numbers are targets, not pr
 - [x] Create `orca-solutions/garnet-guard` **public from day one** (ADR-0011) and seed it from the founding documents
 - [x] Turn on GitHub private vulnerability reporting
 - [ ] Branch protection and required signed commits
-- [x] Reserve `garnet-guard` on PyPI with Trusted Publishing configured (ADR-0007); 0.1.0a1 is published
+- [x] Reserve `garnet-guard` on PyPI with Trusted Publishing configured (ADR-0007); 0.1.0a1 and 0.2.0 are published
 - [ ] GitHub Sponsors and `.github/FUNDING.yml`
 - [ ] Enable GitHub Discussions as the community space (off for now; questions go to issues)
 
@@ -54,7 +54,7 @@ Launch means the replay write-up plus a working GitHub Action. The bar doesn't m
 - [ ] GitHub Marketplace listing for the Action
 - [ ] Launch write-up "We replayed the 2025–26 supply-chain attacks against Garnet Guard", then Show HN, Python Discourse, r/Python, Mastodon and Bluesky, newsletters (marketing owns the launch)
 - [ ] In launch week: apply to the GitHub Secure Open Source Fund (if a cohort is open) and to Open Source Collective as fiscal host (needs an org-owned repo, which `orca-solutions` satisfies, and a second admin by early December)
-- [ ] *Stretch, not a launch requirement:* npm adapter (package-lock, pnpm-lock, yarn.lock; npm provenance; lifecycle-script and `bin` diffs). `garnet diff npm:…`, provenance, tags and lifecycle-script diffs are built and backtested; the lockfile parsers and `bin` diffs are open.
+- [ ] *Stretch, not a launch requirement:* npm adapter (package-lock, pnpm-lock, yarn.lock; npm provenance; lifecycle-script and `bin` diffs). `garnet diff npm:…`, provenance, tags and lifecycle-script diffs are built and backtested; the lockfile parsers are done: `garnet check` reads package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml and yarn.lock from Yarn 1 and Yarn 2+ (PyYAML, ADR-0016). `bin` diffs are open.
 
 **Exit:** the launch success criteria in [VISION.md](VISION.md); the Action runs on real Dependabot and Renovate PRs.
 
@@ -114,6 +114,7 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 
 - [ ] Meet every acceptance criterion in SPEC §13
 - [ ] Freeze the JSON schema, policy `version = 1`, Action inputs and the public Python API
+- [ ] VS Code extension (SPEC §10.5), built after 0.3 and alongside the freeze (about February to March 2027): a thin shell over the CLI in its own repository, free, on the Marketplace and Open VSX. It watches the lockfiles `garnet check` reads, runs the check in the background when one changes against the git base, shows each finding on the line that pins the new version with the rule page linked (`warn` and `block` as squiggles, `info` in the Problems panel only), and offers one quick fix that writes an expiring ignore to `garnet.toml`. No rule lives in the extension, it runs only in trusted workspaces, and it sends nothing anywhere. It needs the download cache (`--cache-dir`), the npm lockfile parsers and the frozen JSON schema first. Until it ships, `garnet check --format sarif` opens in Microsoft's SARIF Viewer extension with the same findings on the same lines ([docs/vscode.md](docs/vscode.md)).
 - [ ] Long-run fuzzing for every parser; an external security review of `safe_archive.py`, `net.py` and the Action if a grant or volunteer allows
 - [ ] Respond to launch feedback: false-positive fixes take priority over new rules
 - [ ] OpenSSF Alpha-Omega application in its first window after launch data (target April 2027)

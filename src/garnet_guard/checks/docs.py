@@ -354,10 +354,13 @@ _DOCS += (
         "unsupported-source",
         "absolute",
         Severity.INFO,
-        "A dependency comes from a source Garnet doesn't check: git, a local path, a direct URL or a private index.",
-        "Garnet compares releases published on PyPI. Code from other sources wasn't checked, and it "
-        "isn't passed either.",
-        "Review the change to that dependency by hand.",
+        "A dependency comes from a source Garnet doesn't check: git, a local path, a direct URL, a private "
+        "index or registry, or another npm package's tarball (a bundled dependency).",
+        "Garnet compares releases published on PyPI and npm. Code from other sources wasn't checked, and "
+        "it isn't passed either.",
+        "Review the change to that dependency by hand. A bundled dependency changes only with the package "
+        "that ships it, so review that package's update, or the lockfile edit itself if that package "
+        "didn't change.",
     ),
 )
 

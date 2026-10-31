@@ -13,7 +13,7 @@ Garnet 1.0 compares dependency changes between two lockfiles and reports, for ea
 **In 1.0:**
 
 - Ecosystems: PyPI and npm.
-- Surfaces: the CLI, the GitHub Action, the install wrapper, and pre-install hooks for Claude Code and Codex.
+- Surfaces: the CLI, the GitHub Action, the install wrapper, pre-install hooks for Claude Code and Codex, and a VS Code extension.
 - The rules in §6, the policy format in §7, and the outputs in §9.
 
 **Not in 1.0:** other ecosystems, non-GitHub source hosts for tag checks, GitLab/Bitbucket CI integrations, multi-release registry history (planned for v2, see [ROADMAP.md](../ROADMAP.md)), third-party check plugins as a stable interface, any hosted service.
@@ -297,6 +297,10 @@ The Action MUST run on `pull_request`, MUST NOT check out or execute PR code und
 ### 10.4 Agent hooks
 
 `garnet hook claude-code` prints a Claude Code hook configuration that runs a `PreToolUse` hook on shell commands. The hook detects package-adding commands (`pip install`, `uv add`, `uv pip install`, `poetry add`, `npm install <pkg>`, `pnpm add`, `yarn add`), runs the wrapper's resolve-and-check step, and denies the tool call with the findings as the reason when the verdict is `block`. For `warn` it allows the call and returns the findings as context. `garnet hook codex` does the same with whatever hook or command-approval mechanism Codex offers at 1.0. *Confirm both mechanisms against current Claude Code and Codex docs when building.*
+
+### 10.5 VS Code extension
+
+A VS Code extension, in its own repository and published free on the Marketplace and Open VSX, shows the CLI's findings in the editor. It is a shell over the CLI: it MUST NOT contain rules, read package contents or talk to a registry itself. It runs `garnet check --git-base REF --format json` and maps each finding to a diagnostic on the lockfile line that pins the candidate version, the same location SARIF uses (§9.3): `block` as an error, `warn` as a warning, and `info` listed in the Problems panel without marking the line. It runs when a lockfile it watches (§3.1) changes against the git base, and on command, never on keystrokes, and only in workspaces the user has trusted. It MUST offer one quick fix, which writes an expiring ignore in the §7 format to the policy file, so the Action and the CLI honor the same decision. It sends nothing anywhere; the only network traffic is the CLI's (§4.4, §11). It requires the `garnet` command on the machine and offers to install it when it isn't found. Until it ships, `garnet check --format sarif` opens in Microsoft's SARIF Viewer extension with the same findings on the same lines ([vscode.md](vscode.md)).
 
 ## 11. Non-functional requirements
 

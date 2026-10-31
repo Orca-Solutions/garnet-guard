@@ -36,6 +36,7 @@ Import rules, enforced by an `import-linter` contract in CI:
 - `checks` imports only `models` (and the standard library). No `net`, no `ecosystems`, no `safe_archive`.
 - `facts` may use `safe_archive` but not `net`.
 - Only `net.py` imports the HTTP client. Only `safe_archive.py` imports `zipfile` and `tarfile`.
+- Only `lockfiles/yamldoc.py` imports PyYAML, and it uses only the parser's events, never a loader (ADR-0016).
 - Surfaces import only `garnet_guard` public names and `engine`.
 
 ## 3. Public Python API
@@ -235,12 +236,26 @@ class Ecosystem(Protocol):
 
 ### 4.3 Lockfile parser
 
+Each format is a module in `lockfiles/` with a `parse(text) -> list[Pin]`; `lockfiles.parse` picks one by file name, else by content, and every failure is a `LockfileError` whose message names a position, never the file's text.
+
 ```python
-class LockfileParser(Protocol):
-    ecosystem: ClassVar[str]
-    def detect(self, name: str, head: bytes) -> bool: ...
-    def parse(self, data: bytes) -> list[Pin]: ...   # Pin(package, version, line, source)
+def detect(name: str, head: bytes) -> Format: ...    # raises LockfileError for formats not read yet
+def parse(name: str, data: bytes, *, format: Format | None = None) -> list[Pin]: ...
+
+@dataclass(frozen=True)
+class Pin:
+    package: str             # PEP 503 normalized on PyPI; as written on npm
+    version: str | None
+    line: int                # where a report points: the entry's version line, or its key
+    source: Literal["registry", "unpinned", "unsupported"] = "registry"
+    detail: str | None = None        # why it's unpinned or unsupported (GRN-E004 / GRN-E005)
+    ecosystem: str = "pypi"          # "pypi" or "npm"
+    origin: str | None = None        # where an unsupported entry installs from; compared, never shown
+
+def diff_pins(base: list[Pin], head: list[Pin]) -> list[PinChange]: ...
 ```
+
+`diff_pins` matches pins by `(ecosystem, package)` and orders versions in the ecosystem's own way: PEP 440 on PyPI, SemVer 2.0 precedence on npm, with versions that don't parse first.
 
 ### 4.4 Check
 
@@ -308,11 +323,11 @@ Runtime, for 1.0. Each needs an ADR to add or swap.
 | `pypi-attestations` (brings `sigstore`) | Verify PEP 740 attestations; the reference implementation |
 | `packaging` | Version parsing, specifiers, name normalization, wheel tags |
 | `platformdirs` | Cache location |
-| `pyyaml` (safe loader only) | pnpm-lock.yaml |
+| `pyyaml` (parser events only, no loader; ADR-0016) | pnpm-lock.yaml, Yarn 2+ yarn.lock, .yarnrc.yml |
 
 `tomllib` (standard library) covers TOML. CLI argument parsing uses `argparse` to avoid a dependency. npm Sigstore verification goes through `sigstore` directly.
 
-Development: `pytest`, `respx`, `hypothesis`, `atheris` (Linux CI only), `ruff`, `mypy`, `import-linter`, `jsonschema`.
+Development: `pytest`, `respx`, `hypothesis`, `atheris` (Linux CI only), `ruff`, `mypy`, `import-linter`, `jsonschema`, `types-pyyaml`.
 
 ## 9. Repository layout
 
@@ -321,7 +336,8 @@ src/garnet_guard/
   __init__.py            # public API (§3) and __all__
   models.py  policy.py  baseline.py  engine.py
   net.py  safe_archive.py  cache.py
-  lockfiles/   uv.py poetry.py pylock.py requirements.py npm_lock.py pnpm.py yarn.py
+  lockfiles/   base.py diff.py toml_locks.py pylock.py requirements.py npm.py
+               package_lock.py yarn.py berry.py pnpm.py yamldoc.py registries.py
   ecosystems/  pypi.py npm.py github.py gittree.py source.py osv.py
   facts/       inventory.py pyindex.py npmmeta.py jsscan.py
   checks/      trust.py wheel_tags.py content.py known_bad.py errors.py __init__.py

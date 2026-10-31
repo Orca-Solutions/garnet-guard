@@ -146,7 +146,8 @@ class Ignore:
     """One ``[[garnet.ignore]]`` entry: findings someone reviewed and accepted.
 
     It applies to ``rules`` for ``package`` (and ``versions`` of the candidate,
-    when set) through ``until``, then stops applying. ``package`` is normalized.
+    when set) through ``until``, then stops applying. ``package`` is kept as
+    written; it matches PEP 503 normalized on PyPI and exactly on npm.
     """
 
     package: str
