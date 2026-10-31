@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from .registries import Registries
+    from .requirements import Included
 
 PYPI_INDEXES = frozenset(
     {
@@ -129,12 +130,15 @@ def parse(
     *,
     format: Format | None = None,
     registries: Registries | None = None,
+    included: Included | None = None,
 ) -> list[Pin]:
     """Every package entry in a lockfile. Raises ``LockfileError``.
 
     ``registries`` is what the repository's .npmrc and pnpm-workspace.yaml
     (for pnpm-lock.yaml) or .yarnrc.yml (for a Yarn 2+ yarn.lock) say about
     registries; the other formats record the registry in the lockfile.
+    ``included`` is what the files a requirements file is read with say
+    about its index (``workspace.requirement_includes``).
     """
     from . import package_lock, pnpm, pylock, requirements, toml_locks, yarn
     from .registries import NONE
@@ -151,7 +155,7 @@ def parse(
         "uv.lock": toml_locks.parse_uv,
         "poetry.lock": toml_locks.parse_poetry,
         "pylock.toml": pylock.parse,
-        "requirements.txt": requirements.parse,
+        "requirements.txt": lambda t: requirements.parse(t, included),
         "package-lock.json": package_lock.parse,
         "pnpm-lock.yaml": lambda t: pnpm.parse(t, settings),
         "yarn.lock": lambda t: yarn.parse(t, settings),
