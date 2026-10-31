@@ -10,6 +10,7 @@ fails when a rule is registered for an ecosystem without a firing and a quiet ro
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
@@ -17,6 +18,7 @@ import pytest
 
 from garnet_guard.checks import ALL_CHECKS
 from garnet_guard.engine import run_checks
+from garnet_guard.facts.npmmeta import declared_dependencies
 from garnet_guard.models import (
     CallSite,
     Change,
@@ -167,6 +169,14 @@ def _npm_depends(version: str, *deps: tuple[str, str]) -> ReleaseFacts:
     """An npm release whose package.json ``dependencies`` are ``deps``."""
     rel = _npm(version)
     reqs = tuple(Requirement(name, f"{name}@{rng}") for name, rng in deps)
+    art = replace(rel.artifacts[0], uploaded_at=UPLOADED, requirements=reqs, requirements_read=True)
+    return replace(rel, artifacts=(art,))
+
+
+def _npm_rel_from(version: str, package_json: dict[str, object]) -> ReleaseFacts:
+    """An npm release with the dependencies ``package_json`` declares."""
+    rel = _npm(version)
+    reqs = declared_dependencies(json.dumps(package_json).encode())
     art = replace(rel.artifacts[0], uploaded_at=UPLOADED, requirements=reqs, requirements_read=True)
     return replace(rel, artifacts=(art,))
 
@@ -677,6 +687,23 @@ def _rows() -> list[Row]:
         _profiled(
             _npm_depends("1.1", ("through", "~2.3.1"), ("streamhelper", "^0.1.0")),
             _profile("streamhelper", 35),
+        ),
+        Verdict.WARN,
+        eco=NPM,
+    )
+    fires(
+        "GRN-C008",
+        "npm: optionalDependencies declares a name again to install a young package",
+        _npm_depends("1.0", ("through", "~2.3.1")),
+        _profiled(
+            _npm_rel_from(
+                "1.1",
+                {
+                    "dependencies": {"through": "~2.3.1", "h2": "npm:established@^1"},
+                    "optionalDependencies": {"h2": "npm:young@^1"},
+                },
+            ),
+            _profile("established", 3000, 80),
         ),
         Verdict.WARN,
         eco=NPM,

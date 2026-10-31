@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from enum import IntEnum, StrEnum
 from typing import Literal
@@ -348,11 +348,33 @@ class Requirement:
     spec: str
     alias_of: str | None = None
     source: str | None = None
+    # Other declarations of this name in the same artifact that install
+    # something else, as written (a second Requires-Dist line, or the name in
+    # another package.json table, such as optionalDependencies, which npm lets
+    # override dependencies). Only the first is compared and looked up.
+    also: tuple[str, ...] = ()
+    # What those declarations install instead of this one's registry
+    # package: another registry package (an npm alias target), a URL, a git
+    # repository or a path. GRN-C008 keeps its severity for them.
+    also_installs: tuple[str, ...] = ()
 
     @property
     def package(self) -> str:
         """The registry package that installs."""
         return self.alias_of or self.name
+
+    def with_others(self, others: Sequence[Requirement]) -> Requirement:
+        """This requirement with the other declarations of its name that
+        install something other than its registry package: their specs in
+        ``also``, and what they install in ``also_installs``."""
+        differ = [o for o in others if (o.source, o.package) != (self.source, self.package)]
+        if not differ:
+            return self
+        return replace(
+            self,
+            also=tuple(o.spec for o in differ),
+            also_installs=tuple(dict.fromkeys(o.source or o.package for o in differ)),
+        )
 
 
 @dataclass(frozen=True)
