@@ -69,6 +69,31 @@ def test_publisher_rename_with_same_repo_id_is_quiet() -> None:
     assert "GRN-T002" not in rules(release("1.0"), cand)
 
 
+def test_publisher_gitlab_project_with_github_repo_number_fires() -> None:
+    # Fulcio puts GitLab project ids in the same extension as GitHub repository
+    # ids; the same number on another host is a different repository.
+    cand = release(
+        "1.1",
+        provenance=prov("demo-1.1-py3-none-any.whl", repo="gitlab.com/evil/r", repo_id="1"),
+    )
+    assert "GRN-T002" in rules(release("1.0"), cand)
+
+
+def test_publisher_rename_with_same_repo_id_host_case_is_quiet() -> None:
+    cand = release(
+        "1.1",
+        provenance=prov("demo-1.1-py3-none-any.whl", repo="GitHub.com/o/renamed", repo_id="1"),
+    )
+    assert "GRN-T002" not in rules(release("1.0"), cand)
+
+
+def test_publisher_same_id_without_host_fires() -> None:
+    cand = release(
+        "1.1", provenance=prov("demo-1.1-py3-none-any.whl", repo="other:unknown", repo_id="1")
+    )
+    assert "GRN-T002" in rules(release("1.0"), cand)
+
+
 def test_workflow_changed_fires() -> None:
     cand = release(
         "1.1", provenance=prov("demo-1.1-py3-none-any.whl", workflow=".github/workflows/other.yml")

@@ -19,8 +19,10 @@ status: implemented
 The source repository named in the new version's verified attestations differs from the
 one named in the trusted version's attestations.
 
-Repository renames that GitHub redirects don't fire: the rule compares GitHub's repository
-id, which survives a rename.
+Repository renames that GitHub redirects don't fire: the rule compares the repository id,
+which survives a rename. An id counts only on the same host: GitHub and GitLab number their
+repositories separately, so a GitLab project with the same number as the trusted GitHub
+repository is a different publisher.
 
 ## Why it matters
 
