@@ -44,6 +44,11 @@ dev = [
     "ruff>=0.17.0",
     "types-pyyaml>=6.0.12.20260906",
 ]
+# Atheris for tests/fuzz, run by .github/workflows/fuzz.yml. It ships wheels
+# only for Linux x86-64 on CPython 3.12 and later.
+fuzz = [
+    "atheris>=3.1.0; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version >= '3.12'",
+]
 
 [project.urls]
 Homepage = "https://garnetguard.dev/"
