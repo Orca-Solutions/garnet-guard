@@ -29,7 +29,15 @@ module whose import started the chain. Calls are resolved through imports and si
 aliasing (`sp = subprocess`), `from os import *`, and `getattr(os, "system")`,
 `getattr(sys.modules[__name__], "ctypes")`, `__import__("os")` or
 `importlib.import_module("os")` with a literal name, by reading the source with `ast`;
-nothing is executed. A dotted name counts only when its first part is a module the file
+nothing is executed. A `def` without decorators rebinds its name for the rest of the block
+it is in, so a call there after it calls that function, even when the name held an alias
+before. six's Python 2 branch defines `exec_` and calls it at once; that call runs the
+`exec_` just defined, not the builtin `exec` that the Python 3 branch binds to the same name.
+In mpmath 0.18's copy the call used to be listed as calling `builtins.exec`; the `exec` inside
+`exec_` is still reported. After the `if`, loop or `try` that holds the def, which may not
+have run, a call to the name is still reported as a call to the alias. A decorated def binds
+what its decorator returns, and default arguments run before the def binds its name, so
+neither unbinds the alias. A dotted name counts only when its first part is a module the file
 imports (a local list called `requests` is not the `requests` library), and a function or
 class the module defines shadows a builtin of the same name. A `base64` decode whose result
 reaches a sensitive call counts as a call of its own, so `exec(base64.b64decode(...))` is

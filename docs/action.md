@@ -2,7 +2,7 @@
 
 The Action runs `garnet check` on every pull request that changes a lockfile and posts one comment with the result. The comment is designed for Dependabot and Renovate pull requests, but it works on any pull request. It follows SPEC §10.2 and §9.4.
 
-> Status: preview. The examples below pin the commit tagged `v0.2.0` (`e6e9f44`), the release on PyPI. The commit tagged `v0.1.0a1` (`42547f6`), the first preview release, has been run on Renovate pull requests, on a pull request from a fork with both the single workflow and the two-workflow pattern, and on this repository's own pull requests. A Dependabot-opened pull request has been checked too, by this repository's own workflow, which pins a later commit on main (`69c8e01`): on 2026-10-30, Dependabot's ruff 0.17.2 → 0.17.3 pull request (#87) got the comment and the code scanning upload with the `permissions` block below.
+> Status: released with 0.2.0 and listed on the [GitHub Marketplace](https://github.com/marketplace/actions/garnet-guard). The examples below pin the commit tagged `v0.2.0` (`e6e9f44`), the release on PyPI. The commit tagged `v0.1.0a1` (`42547f6`), the first preview release, has been run on Renovate pull requests, on a pull request from a fork with both the single workflow and the two-workflow pattern, and on this repository's own pull requests. A Dependabot-opened pull request has been checked too, by this repository's own workflow, which pins a later commit on main (`69c8e01`): on 2026-10-30, Dependabot's ruff 0.17.2 → 0.17.3 pull request (#87) got the comment and the code scanning upload with the `permissions` block below.
 
 ## Quick start
 

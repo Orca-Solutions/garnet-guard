@@ -17,9 +17,12 @@ instead of the module body, so the inventory can follow a chain of calls
 across modules.
 
 Names are resolved through imports and simple aliasing (``sp = subprocess``),
-``from x import *`` of a sensitive module, ``getattr(x, "name")`` with a
+read in source order, ``from x import *`` of a sensitive module, ``getattr(x, "name")`` with a
 literal name, and ``__import__("x")`` or ``importlib.import_module("x")``
-with a literal name. A name under the module that defines a listed one counts
+with a literal name. A ``def`` without decorators rebinds its name for the
+rest of the block it is in: a call there after it calls that function, even
+when an alias for the name was assigned earlier in the walk, such as in the
+other branch of an ``if`` (six's ``exec_``). A name under the module that defines a listed one counts
 as that name (``posix.system`` as ``os.system``, ``builtins.exec`` as
 ``exec``) and is recorded as written.
 A ``base64.*decode`` whose result reaches a sensitive call is reported with
@@ -407,6 +410,9 @@ class _Resolver:
         self.star_modules: list[str] = []  # ``from m import *``, in order
         self.defined: set[str] = set()  # names the module defines itself
         self.package: str | None = None  # this module's package, for relative imports
+        # One per block being walked (``_walk_exec``): the names an undecorated
+        # def bound in it, each with the alias it unbound (None: none).
+        self._frames: list[dict[str, str | None]] = []
 
     def note_import(self, node: ast.Import | ast.ImportFrom) -> None:
         if isinstance(node, ast.Import):
@@ -448,6 +454,35 @@ class _Resolver:
         if head in self.aliases:
             self.aliases[node.targets[0].id] = ".".join([self.aliases[head], *parts[1:]])
 
+    def note_import_in_order(self, node: ast.Import | ast.ImportFrom) -> None:
+        """An import met in the walk binds again a name that a def unbound
+        (``bind_def``); every other alias stays as the walk left it."""
+        aliases, imports, stars = dict(self.aliases), set(self.imports), list(self.star_modules)
+        self.note_import(node)
+        self.aliases.update(aliases)
+        self.imports, self.star_modules = imports, stars
+
+    def open_block(self) -> None:
+        self._frames.append({})
+
+    def bind_def(self, name: str) -> None:
+        """An undecorated ``def name`` ran: until its block ends, ``name`` is
+        that function, not an alias assigned before it."""
+        if self._frames:
+            self._frames[-1].setdefault(name, self.aliases.get(name))
+            self.aliases.pop(name, None)
+
+    def close_block(self) -> None:
+        """After the block, the name may again hold what it held before (the
+        branch with the def may not have run), so an alias the def unbound
+        comes back unless something was assigned to the name since."""
+        for name, alias in self._frames.pop().items():
+            if alias is not None:
+                self.aliases.setdefault(name, alias)
+
+    def _bound(self, name: str) -> bool:
+        return any(name in frame for frame in self._frames)
+
     def _relative_base(self, level: int) -> str | None:
         if self.package is None:
             return None
@@ -467,7 +502,7 @@ class _Resolver:
         head, rest = parts[0], parts[1:]
         if head in self.aliases:
             return ".".join([self.aliases[head], *rest])
-        if head in self.defined:
+        if head in self.defined or self._bound(head):
             return None  # the module's own function, class or variable shadows the name
         if head not in _BUILTINS:
             # A bare name after ``from subprocess import *`` may be subprocess.run.
@@ -500,19 +535,54 @@ def _is_main_guard(node: ast.stmt) -> bool:
     )
 
 
-def _walk_exec(nodes: Iterable[ast.AST]) -> Iterator[ast.AST]:
+@dataclass(frozen=True)
+class _Mark:
+    """A point in the walk that is not a node: a block of statements opens or
+    closes, or an undecorated def binds its name."""
+
+    kind: str  # "open", "close" or "bind"
+    name: str = ""
+
+
+_OPEN, _CLOSE = _Mark("open"), _Mark("close")
+
+
+def _children(node: ast.AST) -> list[ast.AST | _Mark]:
+    """``ast.iter_child_nodes``, in the same order, with each list of
+    statements (an ``if`` or ``else`` branch, a loop, ``try`` or ``with``
+    body, an ``except`` handler, a class body) between an open and a close."""
+    out: list[ast.AST | _Mark] = []
+    for _, value in ast.iter_fields(node):
+        if isinstance(value, ast.AST):
+            out.append(value)
+        elif isinstance(value, list):
+            block = bool(value) and all(isinstance(v, ast.stmt) for v in value)
+            items = [v for v in value if isinstance(v, ast.AST)]
+            out.extend([_OPEN, *items, _CLOSE] if block else items)
+    return out
+
+
+def _walk_exec(nodes: Iterable[ast.AST]) -> Iterator[ast.AST | _Mark]:
     """Yield nodes that execute when these statements run (not function bodies).
 
     Nodes come out in source order, so an assignment is seen before the
-    statement that uses the name.
+    statement that uses the name. Each block of statements, ``nodes`` too,
+    comes between an open and a close mark, and an undecorated def is
+    followed, after its default arguments, by a mark that it binds its name.
     """
-    stack = list(reversed(list(nodes)))
+    stack: list[ast.AST | _Mark] = list(reversed([_OPEN, *nodes, _CLOSE]))
     while stack:
         node = stack.pop()
+        if isinstance(node, _Mark):
+            yield node
+            continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             yield node  # for its decorators; the body runs only when called
-            run_now = [*node.decorator_list, *node.args.defaults]
+            run_now: list[ast.AST | _Mark] = [*node.decorator_list, *node.args.defaults]
             run_now += [d for d in node.args.kw_defaults if d is not None]
+            if not node.decorator_list:
+                # A decorated def binds whatever the decorator returns.
+                run_now.append(_Mark("bind", node.name))
             stack.extend(reversed(run_now))
             continue
         if isinstance(node, ast.Lambda):
@@ -520,7 +590,7 @@ def _walk_exec(nodes: Iterable[ast.AST]) -> Iterator[ast.AST]:
         if isinstance(node, ast.stmt) and _is_main_guard(node):
             continue
         yield node
-        stack.extend(reversed(list(ast.iter_child_nodes(node))))
+        stack.extend(reversed(_children(node)))
 
 
 def _constructor(cls: ast.ClassDef, classes: Mapping[str, ast.ClassDef]) -> list[ast.stmt]:
@@ -699,6 +769,16 @@ def scan_module(
         local: dict[str, list[ast.AST]] = dict(scope if scope is not None else reachable)
         reached: list[tuple[str, str | None]] = []
         for node in _walk_exec(nodes):
+            if isinstance(node, _Mark):
+                if node is _OPEN:
+                    resolver.open_block()
+                elif node is _CLOSE:
+                    resolver.close_block()
+                else:
+                    resolver.bind_def(node.name)
+                continue
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                resolver.note_import_in_order(node)
             for read in _reads(node, resolver):
                 calls.append(
                     CallSite(read, getattr(node, "lineno", 0), via, handed_to=handed, read=True)

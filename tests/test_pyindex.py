@@ -645,3 +645,87 @@ def test_every_top_level_name_in_the_set_is_standard_library_unless_listed() -> 
     stdlib = set(sys.stdlib_module_names) | set(dir(builtins)) | removed
     heads = {n.split(".")[0] for n in (*pyindex._EXACT, *pyindex._PREFIXES, *pyindex._SAME_AS)}
     assert heads - stdlib == pyindex._THIRD_PARTY
+
+
+def sites(src: str) -> list[tuple[int, str, str | None]]:
+    calls, _ = index_module(src.encode())
+    return [(c.line, c.name, c.via) for c in calls]
+
+
+# The shape of six as mpmath 0.18 vendors it (mpmath/libmp/six.py:305-335):
+# exec_ is the builtin in the Python 3 branch and a function in the Python 2
+# branch, which calls it at once.
+SIX = """\
+import sys
+PY3 = sys.version_info[0] == 3
+if PY3:
+    import builtins
+    exec_ = getattr(builtins, "exec")
+    print_ = getattr(builtins, "print")
+else:
+    def exec_(code, globs=None, locs=None):
+        exec(\"\"\"exec code in globs, locs\"\"\")
+    exec_(\"\"\"def reraise(tp, value, tb=None):
+    raise tp, value, tb
+\"\"\")
+"""
+
+
+def test_a_def_rebinds_its_name_for_the_rest_of_its_block() -> None:
+    # Line 10 calls the exec_ defined at line 8, which calls exec at line 9.
+    # It used to be listed as calling builtins.exec, the value exec_ gets in
+    # the other branch, at line 5.
+    assert sites(SIX) == [(9, "exec", "exec_")]
+    # The same in straight-line code, and for a builtin's name.
+    alias = "import builtins\nexec_ = builtins.exec\ndef exec_(c):\n    return c\nexec_('x')\n"
+    assert sites(alias) == []
+    assert (
+        sites("import sys\nif sys.platform:\n    def exec(c):\n        return c\n    exec('x')\n")
+        == []
+    )
+
+
+def test_an_alias_a_def_unbinds_still_counts_where_the_def_may_not_have_run() -> None:
+    # After the if/else, exec_ may be the builtin: six 1.16 runs it there
+    # (awscli's copy, raise_from).
+    assert sites(SIX + "exec_('def raise_from(value, from_value): raise value')\n") == [
+        (9, "exec", "exec_"),
+        (13, "builtins.exec", None),
+    ]
+    # The def's branch may not run, so the other branch and the code after
+    # it still see the alias.
+    branch = (
+        "import subprocess, sys\nrun = subprocess.run\n"
+        "if sys.platform == 'x':\n    def run(c):\n        return c\nelse:\n    run(['id'])\n"
+        "run(['id'])\n"
+    )
+    assert sites(branch) == [(7, "subprocess.run", None), (8, "subprocess.run", None)]
+    # A function called later may run when the alias still held, so it sees it.
+    later = (
+        "import subprocess\nrun = subprocess.run\ndef g():\n    run(['id'])\ng()\n"
+        "def run(c):\n    return c\n"
+    )
+    assert sites(later) == [(4, "subprocess.run", "g")]
+
+
+def test_a_def_that_may_bind_something_else_keeps_the_alias() -> None:
+    head = "import subprocess\nrun = subprocess.run\n"
+    # A decorator decides what the name holds, and default arguments run
+    # before the def binds it.
+    decorated = head + "@staticmethod\ndef run(c):\n    return c\nrun(['id'])\n"
+    assert sites(decorated) == [(6, "subprocess.run", None)]
+    default = head + "def run(c=run(['id'])):\n    return c\n"
+    assert sites(default) == [(3, "subprocess.run", None)]
+    # An import after the def binds the name again.
+    imported = "def run(c):\n    return c\nfrom subprocess import run\nrun(['id'])\n"
+    assert sites(imported) == [(4, "subprocess.run", None)]
+    # An assignment after the def, and a loop or a try whose def may not
+    # have run.
+    again = head + "def run(c):\n    return c\nrun = subprocess.run\nrun(['id'])\n"
+    assert sites(again) == [(6, "subprocess.run", None)]
+    loop = head + "for i in range(0):\n    def run(c):\n        return c\nrun(['id'])\n"
+    assert sites(loop) == [(6, "subprocess.run", None)]
+    tried = (
+        head + "try:\n    def run(c):\n        return c\nexcept Exception:\n    pass\nrun(['id'])\n"
+    )
+    assert sites(tried) == [(8, "subprocess.run", None)]

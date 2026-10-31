@@ -55,3 +55,60 @@ def test_sdists_are_not_compared() -> None:
     cand = release("1.1", None, sdist_files={**PKG, **files}, sdist_only=True)
     result = run_checks(CHANGE, base, cand)
     assert "GRN-C010" not in {f.rule_id for f in result.findings}
+
+
+def test_startup_module_matched_by_module_name() -> None:
+    # Python imports each of these as sitecustomize or usercustomize; a
+    # case-insensitive filesystem treats the case variants as the same file.
+    for path in (
+        "sitecustomize/__init__.py",
+        "sitecustomize.pyc",
+        "sitecustomize.cpython-312-x86_64-linux-gnu.so",
+        "sitecustomize.abi3.so",
+        "usercustomize.cp312-win_amd64.pyd",
+        "SiteCustomize.py",
+        "USERCUSTOMIZE.PY",
+        "demo-1.1.data/platlib/sitecustomize.abi3.so",
+        "demo-1.1.data/purelib/sitecustomize/__init__.py",
+    ):
+        f = _c010({path: ""})
+        assert f is not None and f.severity == Severity.WARN, path
+        assert "Python imports it from site-packages at every start" in f.evidence[0].summary
+
+
+def test_startup_module_under_data_site_packages_warns() -> None:
+    for path in (
+        "demo-1.1.data/data/lib/python3.12/site-packages/sitecustomize.py",
+        "demo-1.1.data/data/Lib/Site-Packages/usercustomize/__init__.py",
+        "demo-1.1.data/data/lib/python3/dist-packages/sitecustomize.abi3.so",
+    ):
+        f = _c010({path: ""})
+        assert f is not None and f.severity == Severity.WARN, path
+        name = path.split("/data/", 1)[1]
+        assert f.evidence[0].summary == (
+            f"{path}: installs as <prefix>/{name}, where Python imports it at every start (0 bytes)"
+        )
+
+
+def test_names_that_do_not_import_as_startup_modules_stay_quiet_or_info() -> None:
+    # A sourceless __pycache__ file isn't imported; neither is a module inside
+    # the package, or one whose name only starts with the startup name.
+    for path in (
+        "__pycache__/sitecustomize.cpython-312.pyc",
+        "demo/sitecustomize.py",
+        "demo/sitecustomize/__init__.py",
+        "sitecustomize_helper.py",
+        "mysitecustomize.py",
+    ):
+        assert _c010({path: ""}) is None, path
+    # under .data/data/ but not in a site-packages folder: a plain data file
+    f = _c010({"demo-1.1.data/data/share/demo/sitecustomize.py": ""})
+    assert f is not None and f.severity == Severity.INFO
+    f = _c010({"demo-1.1.data/data/lib/python3.12/site-packages/demo_extra.py": ""})
+    assert f is not None and f.severity == Severity.INFO
+
+
+def test_startup_package_already_shipped_is_quiet() -> None:
+    files = {"sitecustomize/__init__.py": "import demo\n"}
+    result = run_checks(CHANGE, release("1.0", {**PKG, **files}), release("1.1", {**PKG, **files}))
+    assert "GRN-C010" not in {f.rule_id for f in result.findings}
