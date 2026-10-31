@@ -60,7 +60,7 @@ FIRST = {
 }
 NOT_DETECTION = {"GRN-K001", "GRN-E001", "GRN-E002", "GRN-E003"}
 RELEASES_PER_PACKAGE = 11  # 11 releases give 10 updates per package
-CACHE_FORMAT = 46
+CACHE_FORMAT = 47
 
 
 def _ecosystem(argv: list[str]) -> tuple[str, int, list[str]]:

@@ -494,7 +494,9 @@ def dependency_installs(
     ``_dependency_release``: the versions a lockfile pins (``pinned``), else
     every version npm lists that satisfies the range, whenever it was
     published (npm can pick any of them: the ``latest`` tag, a deprecated
-    version skipped, an ``engines`` preference, a tree reused). More than
+    version skipped, an ``engines`` preference, a tree reused), and every
+    version, prereleases too, for ``*``, ``x``, ``latest`` or an empty range,
+    where npm installs whatever ``latest`` points to. More than
     ``MAX_DEPENDENCY_VERSIONS`` aren't read. Raises ``NetError`` when a
     request fails; anything else that stops the read is in ``problem``.
     """
@@ -514,7 +516,7 @@ def dependency_installs(
             )
     else:
         try:
-            wanted = npm_range.matching(rng, versions)
+            wanted = npm_range.readable(rng, versions)
         except ValueError:
             return replace(out, problem=f"Garnet can't read the range {rng!r}")
         if not wanted:

@@ -64,6 +64,11 @@ class Options:
     pins: Mapping[ChangeKey, Mapping[tuple[str, str], tuple[str, ...]]] = field(
         default_factory=dict
     )
+    # Per change: the option (``--extra-index-url``, ``--find-links``, ...)
+    # in a lockfile it came from that lets pip install from somewhere other
+    # than PyPI. GRN-C008 then can't tell which index serves a young
+    # dependency, so it doesn't read one and keeps its severity.
+    other_index: Mapping[ChangeKey, str] = field(default_factory=dict)
 
 
 ECOSYSTEMS = ("pypi", "npm")
@@ -147,6 +152,7 @@ def with_dependency_profiles(
     base: ReleaseFacts | None,
     cand: ReleaseFacts,
     pins: Mapping[tuple[str, str], tuple[str, ...]] | None = None,
+    other_index: str | None = None,
 ) -> ReleaseFacts:
     """The candidate with a registry profile for each dependency the baseline
     didn't declare (GRN-C008). A lookup that fails is a GRN-E001 on the
@@ -157,7 +163,7 @@ def with_dependency_profiles(
     known = {p.name for p in cand.dependencies}
     names = [n for n in new_requirement_names(base, cand) if n not in known]
     if not names:
-        return with_dependency_installs(fetcher, base, cand, pins)
+        return with_dependency_installs(fetcher, base, cand, pins, other_index)
     profiles: list[DependencyProfile] = []
     errors: list[FactError] = []
     for name in names:
@@ -174,7 +180,7 @@ def with_dependency_profiles(
         dependencies=cand.dependencies + tuple(profiles),
         errors=cand.errors + tuple(errors),
     )
-    return with_dependency_installs(fetcher, base, cand, pins)
+    return with_dependency_installs(fetcher, base, cand, pins, other_index)
 
 
 def install_lookup_error(err: Exception, package: str, version: str) -> FactError:
@@ -193,6 +199,7 @@ def with_dependency_installs(
     base: ReleaseFacts | None,
     cand: ReleaseFacts,
     pins: Mapping[tuple[str, str], tuple[str, ...]] | None = None,
+    other_index: str | None = None,
 ) -> ReleaseFacts:
     """The candidate with the releases GRN-C008 reads for each young
     dependency that shares an owner with the trusted package, read after the
@@ -200,6 +207,8 @@ def with_dependency_installs(
     gives for it, else every published version its range allows. A read
     that fails is a GRN-E001 naming GRN-C008, and the rule keeps its
     severity for that dependency. Releases the facts already carry are kept.
+    When a lockfile the change came from lets pip use another index
+    (``other_index``), nothing is read: each gets a ``problem`` saying so.
     """
     known = {d.name for d in cand.dependency_installs}
     wanted = [r for r in owned_young_dependencies(base, cand) if r.package not in known]
@@ -208,6 +217,13 @@ def with_dependency_installs(
     got: list[DependencyInstalls] = []
     errors: list[FactError] = []
     for r in wanted:
+        if other_index is not None:
+            why = (
+                f"the lockfile sets {other_index}, so pip can install {r.package} from "
+                "somewhere other than PyPI and Garnet can't tell which release that is"
+            )
+            got.append(DependencyInstalls(r.package, r.spec, problem=why))
+            continue
         pinned = (pins or {}).get((cand.ecosystem, normalize(cand.ecosystem, r.package)), ())
         try:
             got.append(fetcher.dependency_installs(cand.ecosystem, r, pinned))
@@ -445,6 +461,7 @@ def evaluate(
             results = []
             for c, base, cand in pending:
                 b = base.result() if base else None
+                key = (c.ecosystem, c.package, c.baseline, c.candidate)
                 results.append(
                     run_checks(
                         c,
@@ -453,7 +470,8 @@ def evaluate(
                             fetcher,
                             b,
                             cand.result(),
-                            opts.pins.get((c.ecosystem, c.package, c.baseline, c.candidate)),
+                            opts.pins.get(key),
+                            opts.other_index.get(key),
                         ),
                         policy=policy,
                         today=opts.today,

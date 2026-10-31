@@ -11,7 +11,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .lockfiles import LockfileError, Pin, diff_pins, parse
+from .lockfiles import LockfileError, Pin, detect, diff_pins, parse, requirements
 from .lockfiles.diff import new_unchecked
 from .models import Change
 
@@ -141,8 +141,11 @@ def pinned_versions(head_name: str, head: bytes) -> PinTable:
 
     A package with any entry under an environment marker, or any entry that
     isn't a PyPI pin, is left out: on some machines something else installs,
-    so GRN-C008 reads the range instead.
+    so GRN-C008 reads the range instead. A requirements file that names
+    another index (``other_index``) pins nothing.
     """
+    if other_index(head_name, head) is not None:
+        return {}  # pip could install any of them from another index
     out: dict[tuple[str, str], set[str]] = {}
     unsure: set[str] = set()
     for p in parse(head_name, head):
@@ -151,6 +154,16 @@ def pinned_versions(head_name: str, head: bytes) -> PinTable:
         else:
             unsure.add(p.package)
     return {k: tuple(sorted(v)) for k, v in out.items() if k[1] not in unsure}
+
+
+def other_index(head_name: str, head: bytes) -> str | None:
+    """The option in a requirements file that lets pip install from somewhere
+    other than PyPI (``--extra-index-url``, ``--find-links``, ``--no-index``,
+    or ``--index-url`` naming another index), or None. GRN-C008 can't tell
+    which index serves a young dependency of a change from such a file."""
+    if detect(head_name, head) != "requirements.txt":
+        return None
+    return requirements.other_index(head.decode("utf-8", "replace"))
 
 
 def merge_pins(tables: list[PinTable]) -> PinTable:

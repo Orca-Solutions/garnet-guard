@@ -839,9 +839,32 @@ def _dependency_changes(
     moved = [
         (old[r.name], r)
         for r in c.requirements
-        if r.name in old and (r.source, r.alias_of) != (old[r.name].source, old[r.name].alias_of)
+        if r.name in old
+        and (
+            (r.source, r.alias_of) != (old[r.name].source, old[r.name].alias_of)
+            or set(r.also_installs) - set(old[r.name].also_installs)
+        )
     ]
     return new, moved, b, c
+
+
+def _again_said(r: Requirement, before: Requirement | None = None) -> str:
+    """The evidence for ``_declared_again``: the other declarations, and that
+    Garnet didn't look up what they install."""
+    others = "; ".join(_clip(a, 80) for a in r.also[:3])
+    targets = [t for t in r.also_installs if before is None or t not in before.also_installs]
+    said = ", ".join(_clip(t, 80) for t in targets[:3])
+    return f"also declared as {others}, which installs {said}; Garnet didn't look that up"
+
+
+def _declared_again(r: Requirement, before: Requirement | None = None) -> str | None:
+    """What a second declaration of ``r``'s name installs instead of its
+    registry package (an npm alias target, a URL, a repository, a path),
+    when the trusted version's ``before`` didn't, or None."""
+    targets = [t for t in r.also_installs if before is None or t not in before.also_installs]
+    if not targets:
+        return None
+    return f"{r.name} is declared again to install {', '.join(_clip(t, 80) for t in targets[:3])}"
 
 
 def new_requirement_names(base: ReleaseFacts | None, cand: ReleaseFacts) -> tuple[str, ...]:
@@ -917,6 +940,8 @@ def _not_one_range(
     r: Requirement, ecosystem: str, installers: dict[str, list[str]] | None = None
 ) -> str | None:
     """Why a requirement doesn't name one range of releases, or None."""
+    if r.bundled:
+        return f"{r.name} is in bundleDependencies, so the copy packed in the tarball installs, not a registry release"
     if r.also:
         others = "; ".join(_clip(a, 80) for a in r.also[:3])
         return f"{r.name} is declared more than once ({others} as well), so which release installs depends on how they combine"
@@ -1167,7 +1192,9 @@ def new_dependency(
 
     Every new dependency is reported, with what the registry says about it.
     The rule keeps its severity for one that installs from outside the
-    registry, one the registry doesn't have, and one whose first release came
+    registry, one the registry doesn't have, one whose name is declared again
+    to install something else (``Requirement.also_installs``, also for a kept
+    dependency when that is new), and one whose first release came
     within ``YOUNG_DEPENDENCY_DAYS`` of this release (or after it). A young
     dependency that an account owning the trusted package owns too drops to
     info only when every release of it Garnet read
@@ -1197,6 +1224,12 @@ def new_dependency(
 
     for old, r in moved:
         was = f"{old.spec} in {base.version}"
+        again = _declared_again(r, old)
+        if again is not None:
+            flagged.append(again)
+            evidence.append(Evidence("note", f"{_clip(r.spec, 120)}: {_again_said(r, old)}"))
+            if (r.source, r.alias_of) == (old.source, old.alias_of):
+                continue
         if r.source is not None:
             flagged.append(f"{r.name} now installs from outside {registry}")
             evidence.append(Evidence("note", f"{r.spec}: installs from {_installs(r)}; was {was}"))
@@ -1225,6 +1258,10 @@ def new_dependency(
         )
 
     for r in new:
+        again = _declared_again(r)
+        if again is not None:
+            flagged.append(again)
+            evidence.append(Evidence("note", f"{_clip(r.spec, 120)}: {_again_said(r)}"))
         if r.source is not None:
             flagged.append(f"{r.name} installs from outside {registry}")
             evidence.append(

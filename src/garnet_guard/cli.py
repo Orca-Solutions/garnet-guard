@@ -43,6 +43,7 @@ from .workspace import (
     discover,
     git_show,
     merge_pins,
+    other_index,
     pinned_versions,
     plain_file,
 )
@@ -245,6 +246,7 @@ def _check(args: argparse.Namespace) -> int:
     # The pins of each lockfile a change comes from, so GRN-C008 reads a
     # young dependency's version from those lockfiles only.
     tables: dict[ChangeKey, list[PinTable]] = {}
+    elsewhere: dict[ChangeKey, str] = {}
     for head in heads:
         if not plain_file(head, cwd):
             if head.is_symlink() or head.exists():
@@ -257,12 +259,16 @@ def _check(args: argparse.Namespace) -> int:
         changes += found
         unchecked += skipped
         table = pinned_versions(name, body)
+        index = other_index(name, body)
         for c in found:
-            tables.setdefault((c.ecosystem, c.package, c.baseline, c.candidate), []).append(table)
+            key = (c.ecosystem, c.package, c.baseline, c.candidate)
+            tables.setdefault(key, []).append(table)
+            if index is not None:
+                elsewhere.setdefault(key, f"{index} ({name})")
 
     token = os.environ.get(args.github_token_env) or None
     pins = {key: merge_pins(ts) for key, ts in tables.items()}
-    options = Options(github_token=token, today=today, pins=pins)
+    options = Options(github_token=token, today=today, pins=pins, other_index=elsewhere)
     results = evaluate(dedupe(changes), policy=policy, options=options)
     results += [
         unchecked_result(u.change, u.rule_id, u.detail, policy=policy, today=today)

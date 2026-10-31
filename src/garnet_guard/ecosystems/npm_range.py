@@ -186,6 +186,28 @@ def matching(rng: str, versions: Iterable[str]) -> list[str]:
     return [raw for v, raw in sorted(found) if any(_satisfies(v, s) for s in sets)]
 
 
+# A spec that admits any version: npm then installs the ``latest`` dist-tag,
+# even when that is a prerelease, which node-semver's rule leaves out.
+_ANY = re.compile(r"^(?:|latest|[xX*](?:\.[xX*]){0,2})$")
+
+
+def admits_any(rng: str) -> bool:
+    """Whether ``rng`` is ``*``, ``x``, ``latest`` or empty, which npm installs as
+    the ``latest`` dist-tag."""
+    return _ANY.match(rng.strip()) is not None
+
+
+def readable(rng: str, versions: Iterable[str]) -> list[str]:
+    """The ``versions`` GRN-C008 reads for ``rng``, lowest first: those that
+    satisfy it, and every version, prereleases included, when it admits any
+    (whatever ``latest`` points to installs then). Raises ``ValueError`` as
+    ``matching`` does."""
+    if admits_any(rng):
+        found = [(v, raw) for raw in versions if (v := parse(raw)) is not None]
+        return [raw for _, raw in sorted(found)]
+    return matching(rng, versions)
+
+
 def best_match(rng: str, versions: Iterable[str]) -> str | None:
     """The highest of ``versions`` that satisfies ``rng``, or None (see ``matching``)."""
     found = matching(rng, versions)

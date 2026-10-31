@@ -99,9 +99,10 @@ def declared_dependencies(package_json: bytes) -> tuple[Requirement, ...]:
         if isinstance(meta, dict)
         else set()
     )
+    bundle = doc.get("bundleDependencies", doc.get("bundledDependencies"))
     out: list[Requirement] = []
     seen: set[str] = set()
-    others: dict[str, list[str]] = {}
+    others: dict[str, list[Requirement]] = {}
     for table, label in _DEPENDENCY_TABLES:
         deps = doc.get(table)
         if not isinstance(deps, dict):
@@ -115,12 +116,19 @@ def declared_dependencies(package_json: bytes) -> tuple[Requirement, ...]:
             req = _dependency(name, rng.strip(), label)
             if name in seen:
                 # npm lets optionalDependencies override dependencies, and
-                # installs peers too: the same name twice is a second range.
-                others.setdefault(name, []).append(req.spec)
+                # installs peers too: the same name twice is a second range,
+                # or a second package or source.
+                others.setdefault(name, []).append(req)
                 continue
             seen.add(name)
             out.append(req)
-    return tuple(replace(r, also=tuple(others[r.name])) if r.name in others else r for r in out)
+    return tuple(
+        replace(
+            r.with_others(others.get(r.name, [])),
+            bundled=bundle is True or (isinstance(bundle, list) and r.name in bundle),
+        )
+        for r in out
+    )
 
 
 def inspect_tarball(filename: str, data: bytes, limits: Limits) -> NpmInspection:

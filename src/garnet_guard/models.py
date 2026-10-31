@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from enum import IntEnum, StrEnum
 from typing import Literal
@@ -348,15 +348,37 @@ class Requirement:
     alias_of: str | None = None
     source: str | None = None
     # Other requirements the same artifact declares for this name, as written
-    # (a second Requires-Dist line, or the same name in another package.json
-    # table). Only the first is compared; GRN-C008 keeps its severity for a
-    # young dependency that has more.
+    # (a second Requires-Dist line, one that needs an extra, or the same name
+    # in another package.json table). Only the first is compared; GRN-C008
+    # keeps its severity for a young dependency that has more.
     also: tuple[str, ...] = ()
+    # What those other requirements install when it isn't this one's
+    # registry package: an npm alias target, a URL, a git repository or a
+    # path. GRN-C008 keeps its severity for any dependency that has one.
+    also_installs: tuple[str, ...] = ()
+    # npm: the package lists this name in bundleDependencies, so the copy in
+    # its own tarball installs, not a registry release.
+    bundled: bool = False
 
     @property
     def package(self) -> str:
         """The registry package that installs."""
         return self.alias_of or self.name
+
+    def with_others(self, others: Sequence[Requirement]) -> Requirement:
+        """This requirement with the others declared for its name: their
+        specs in ``also``, and in ``also_installs`` what they install when it
+        isn't this one's registry package."""
+        if not others:
+            return self
+        installs = [
+            o.source or o.package
+            for o in others
+            if (o.source, o.package) != (self.source, self.package)
+        ]
+        return replace(
+            self, also=tuple(o.spec for o in others), also_installs=tuple(dict.fromkeys(installs))
+        )
 
 
 @dataclass(frozen=True)

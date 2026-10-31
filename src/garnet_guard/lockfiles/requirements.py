@@ -32,6 +32,26 @@ def _logical_lines(text: str) -> list[tuple[int, str]]:
     return out
 
 
+_FIND_ELSEWHERE = re.compile(r"^(--extra-index-url|--find-links|-f|--no-index)(?=$|[\s=])")
+_INDEX_URL = re.compile(r"^(--index-url|-i)(?:\s*=\s*|\s+)(\S+)")
+
+
+def other_index(text: str) -> str | None:
+    """The first option, anywhere in the file, that makes pip look for
+    packages somewhere other than PyPI (``--index-url`` naming another index,
+    ``--extra-index-url``, ``--find-links``, ``--no-index``), or None."""
+    for _, line in _logical_lines(text):
+        m = _FIND_ELSEWHERE.match(line)
+        if m is not None:
+            return m.group(1)
+        m2 = _INDEX_URL.match(line)
+        if m2 is not None and m2.group(2).rstrip("/") + "/" not in {
+            s.rstrip("/") + "/" for s in PYPI_INDEXES
+        }:
+            return m2.group(1)
+    return None
+
+
 def parse(text: str) -> list[Pin]:
     """Pins from a requirements file.
 

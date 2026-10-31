@@ -89,7 +89,8 @@ def test_package_json_dependencies() -> None:
         "bundleDependencies": ["through"],
     }
     assert declared_dependencies(json.dumps(doc).encode()) == (
-        Requirement("through", "through@~2.3.1"),
+        # bundled: the copy in the tarball installs, so GRN-C008 keeps warn
+        Requirement("through", "through@~2.3.1", bundled=True),
         Requirement("from", "from@~0"),
         Requirement("fsevents", "fsevents@^2 (optional)"),
         Requirement("react", "react@>=18 (peer)"),

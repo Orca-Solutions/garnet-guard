@@ -27,6 +27,11 @@ The rule reports every new dependency. It keeps its `warn` severity when the new
 
 - isn't on the registry at all;
 - installs from outside the registry: a git repository, a URL or a local path;
+- is declared a second time to install something else: another package under an npm alias
+  (`"helper": "^1"` with `"helper": "npm:other@^1"` in `optionalDependencies`, which npm
+  installs in its place), a repository, a URL or a path. Garnet doesn't look up what that
+  second declaration installs. This applies to a dependency the trusted version had, too, when
+  the second declaration is new;
 - was first released less than 90 days before the new version, or after it.
 
 On npm the first release is the date the registry created the package's record. When a name
@@ -59,7 +64,7 @@ dependency too, Garnet reads the releases of it listed below, and reports the de
   site-packages, or anything that imports as `sitecustomize` or `usercustomize` from there,
   matched by its first path part up to the first dot, in any case: a module
   (`sitecustomize.py`), a package (`sitecustomize/__init__.py`), compiled code
-  (`sitecustomize.pyc`, `__pycache__/sitecustomize.cpython-312.pyc`) or an extension module
+  (`sitecustomize.pyc`) or an extension module
   (`sitecustomize.cpython-312-x86_64-linux-gnu.so`, `sitecustomize.abi3.so`,
   `sitecustomize.pyd`). The same goes under `<name>.data/purelib/` and `platlib/`, which install
   into site-packages, and anywhere under `<name>.data/data/`, which installs relative to the
@@ -70,23 +75,33 @@ dependency too, Garnet reads the releases of it listed below, and reports the de
   repository id after a rename. A trusted version with no verified provenance gives nothing to
   match, so the dependency keeps `warn`.
 - **One requirement.** The new version declares the dependency once, with no environment
-  marker. A second requirement for the same name (another `Requires-Dist` line, or the name in
-  both `dependencies` and `optionalDependencies`), a second requirement on npm that installs the
+  marker, and doesn't bundle it. A second requirement for the same name (another
+  `Requires-Dist` line, one that needs an extra such as `helper>=2; extra == "x"`, which
+  installs for users of `demo[x]`, or the name in both `dependencies` and
+  `optionalDependencies`), a second requirement on npm that installs the
   same registry package under an alias (`"helper": "^1"` and `"h2": "npm:helper@^2"`, matched
   by the alias target, lowercased), or a marker makes the release that installs depend on how
-  they combine or on the machine, so the dependency keeps `warn` without a lookup.
+  they combine or on the machine, so the dependency keeps `warn` without a lookup. So does a
+  name in `bundleDependencies` (or `bundledDependencies`, or either set to `true`): the copy
+  packed in the new version's tarball installs, not a registry release.
 
 The releases Garnet reads are these. It doesn't work out which one an installer would pick:
 that depends on dist-tags, deprecations, `engines`, yanks, resolution strategy (uv's
-`lowest`) and what is already installed, so every candidate is read.
+`lowest`) and what is already installed, so it reads every version the range admits instead.
 
 - Under `garnet check`, when the dependency is pinned in every lockfile the change comes from,
   with no environment marker on the pin (a `;` marker in a requirements file, `marker` in
   `pylock.toml`, `resolution-markers` in `uv.lock`), the pinned versions. Pins in other
-  lockfiles of the repository aren't used.
+  lockfiles of the repository aren't used. A requirements file with `--extra-index-url`,
+  `--find-links` (`-f`), `--no-index` or an `--index-url` (`-i`) other than PyPI, anywhere in
+  it, pins nothing, and a change from such a file keeps `warn` without a read: pip can install
+  the helper from somewhere Garnet doesn't look.
 - Otherwise, every version the registry lists that the requirement admits, whenever it was
   published, up to the time of the lookup. On npm the range follows node-semver's rules, with
-  prereleases only when the range names one and `latest` read as `*`. On PyPI it is the
+  prereleases only when the range names one. A spec that admits any version (`*`, `x`, an
+  empty range, `latest`, or a bare `npm:helper` alias) installs whatever the `latest`
+  dist-tag points to, even a prerelease, so every version is read, prereleases too. Any other
+  dist-tag is a range Garnet can't read. On PyPI it is the
   requirement's specifier over every version with a file, prereleases and yanked releases
   included.
 - More than 5 such releases aren't read, so the dependency keeps `warn`, and the evidence says
@@ -196,7 +211,11 @@ matched. How to write one is in [the policy guide](../policy.md); the format is 
   pinned version itself.
 - **Which release installs.** Garnet reads every release the range admits, not the one an
   installer would choose, and doesn't read releases outside the range that a lockfile or an
-  override (npm `overrides`, pip constraints) could install instead.
+  override (npm `overrides`, pip constraints) could install instead. A requirement that needs
+  an extra counts only as a second declaration of a dependency the new version also requires
+  without one; a dependency installed only with an extra isn't reported. A bundled copy
+  (`bundleDependencies`) isn't read: the rule keeps `warn` for a young one from the trusted
+  package's owner, and reports any other one as it would a registry dependency.
 - **A changed version range** of a dependency the trusted version already had.
 - **An sdist without fixed metadata.** When a release has no wheel, the sdist's `PKG-INFO` is
   used only from metadata version 2.2 onwards and only when `Requires-Dist` isn't listed as

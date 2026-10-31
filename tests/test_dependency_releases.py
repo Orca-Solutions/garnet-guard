@@ -40,7 +40,7 @@ from garnet_guard.models import (
     Verdict,
 )
 from garnet_guard.net import Http, NetError, Response
-from garnet_guard.workspace import merge_pins, pinned_versions
+from garnet_guard.workspace import merge_pins, other_index, pinned_versions
 from tests.builders import prov, release, sdist, wheel
 
 UPLOADED = datetime(2026, 9, 1, tzinfo=UTC)
@@ -321,6 +321,69 @@ def test_an_alias_of_the_same_package_warns_and_is_not_read(trusted_has_it: bool
     assert "kept at warn" in said and "info: same owner" not in said
 
 
+@pytest.mark.parametrize("key", ["bundleDependencies", "bundledDependencies"])
+@pytest.mark.parametrize("value", [["helper"], True])
+def test_a_bundled_dependency_warns(key: str, value: Any) -> None:
+    doc = {"dependencies": {"helper": "^1.0.0", "other": "^1"}, key: value}
+    helper, other = declared_dependencies(json.dumps(doc).encode())
+    assert helper.bundled and other.bundled == (value is True)
+    base, cand = _rel("npm", "1.0"), _rel("npm", "1.1", helper)
+    assert owned_young_dependencies(base, replace(cand, dependencies=(_profile(),))) == ()
+    f = _c008(NPM, base, cand, (_installs(_npm_release()),))
+    assert f.severity == Severity.WARN
+    assert (
+        "kept at warn: helper is in bundleDependencies, so the copy packed in the tarball "
+        "installs, not a registry release" in f.evidence[0].summary
+    )
+    plain = declared_dependencies(json.dumps({"dependencies": {"helper": "^1.0.0"}}).encode())
+    assert not plain[0].bundled
+
+
+def _established(name: str) -> DependencyProfile:
+    return DependencyProfile(name, True, UPLOADED - timedelta(days=900), 30, owners=("zed",))
+
+
+@pytest.mark.parametrize(
+    ("optional", "installs"),
+    [("npm:young@^1", "young"), ("github:evil/helper", "github:evil/helper")],
+)
+def test_a_second_declaration_of_another_package_or_source_warns(
+    optional: str, installs: str
+) -> None:
+    """Without a shared owner too: npm installs the optionalDependencies entry."""
+    doc = {"dependencies": {"helper": "^1"}, "optionalDependencies": {"helper": optional}}
+    (req,) = declared_dependencies(json.dumps(doc).encode())
+    assert req.also_installs == (installs,)
+    base, cand = _rel("npm", "1.0"), _rel("npm", "1.1", req)
+    f = _c008(NPM, base, cand, profiles=(_established("helper"),))
+    assert f.severity == Severity.WARN
+    assert f.title.endswith(f"helper is declared again to install {installs}")
+    assert f.evidence[0].summary == (
+        f"helper@^1: also declared as helper@{optional} (optional), which installs "
+        f"{installs}; Garnet didn't look that up"
+    )
+    # a dependency the trusted version had, now declared again elsewhere
+    kept = declared_dependencies(json.dumps({"dependencies": {"helper": "^1"}}).encode())
+    f = _c008(NPM, _rel("npm", "1.0", *kept), cand, profiles=())
+    assert f.severity == Severity.WARN
+    assert f.title.endswith(f"helper is declared again to install {installs}")
+    # the trusted version already declared it that way: nothing new
+    assert _c008_or_none(NPM, _rel("npm", "1.0", req), cand) is None
+
+
+def test_a_second_range_of_the_same_package_is_unchanged_for_an_established_one() -> None:
+    doc = {"dependencies": {"helper": "^1"}, "optionalDependencies": {"helper": "^2"}}
+    (req,) = declared_dependencies(json.dumps(doc).encode())
+    assert req.also == ("helper@^2 (optional)",) and req.also_installs == ()
+    f = _c008(NPM, _rel("npm", "1.0"), _rel("npm", "1.1", req), profiles=(_established("helper"),))
+    assert f.severity == Severity.INFO
+
+
+def _c008_or_none(change: Change, base: ReleaseFacts, cand: ReleaseFacts) -> Finding | None:
+    found = [f for f in run_checks(change, base, cand).findings if f.rule_id == "GRN-C008"]
+    return found[0] if found else None
+
+
 # PyPI
 
 PYREQ = Requirement("helper", "helper>=1.0")
@@ -521,6 +584,34 @@ def test_pypi_marker_or_second_requirement_warns_and_is_not_read() -> None:
     assert f.severity == Severity.WARN and "declared more than once" in f.evidence[0].summary
 
 
+def test_pypi_requirement_with_an_extra_counts_as_a_second_one() -> None:
+    meta = (
+        b"Metadata-Version: 2.1\nName: demo\nVersion: 1.1\n"
+        b"Requires-Dist: helper>=2; extra == 'x'\nRequires-Dist: helper<2\n"
+        b"Requires-Dist: other @ https://example.invalid/o.whl ; extra == 'y'\n"
+    )
+    (req,) = declared_requirements(meta) or ()
+    assert req.spec == "helper<2" and req.also == ("helper>=2; extra == 'x'",)
+    assert req.also_installs == ()
+    base, cand = _rel("pypi", "1.0"), _rel("pypi", "1.1", req)
+    assert owned_young_dependencies(base, replace(cand, dependencies=(_profile(),))) == ()
+    f = _c008(PYPI, base, cand, (_installs(_py_release(), spec=req.spec),))
+    assert f.severity == Severity.WARN
+    assert (
+        "kept at warn: helper is declared more than once (helper>=2; extra == 'x' as well)"
+        in f.evidence[0].summary
+    )
+    # an extra that installs the same name from a URL is flagged for anyone
+    url = (
+        b"Requires-Dist: helper<2\nRequires-Dist: helper @ https://x.invalid/h.whl ; extra == 'x'\n"
+    )
+    (req,) = declared_requirements(b"Metadata-Version: 2.1\nName: demo\n" + url) or ()
+    assert req.also_installs == ("https://x.invalid/h.whl",)
+    f = _c008(PYPI, base, _rel("pypi", "1.1", req), profiles=(_established("helper"),))
+    assert f.severity == Severity.WARN
+    assert f.title.endswith("helper is declared again to install https://x.invalid/h.whl")
+
+
 # The engine's lookups
 
 
@@ -555,6 +646,21 @@ def test_engine_passes_lockfile_pins() -> None:
     pins = {("pypi", "helper"): ("1.0.2",)}
     with_dependency_profiles(cast(Any, fetcher), base, cand, pins)
     assert fetcher.calls == [("pypi", PYREQ, ("1.0.2",))]
+
+
+def test_engine_reads_nothing_when_the_lockfile_names_another_index() -> None:
+    fetcher = _Fetcher(_installs(_py_release()))
+    base, cand = _rel("pypi", "1.0"), _rel("pypi", "1.1", PYREQ)
+    pins = {("pypi", "helper"): ("1.0.2",)}
+    got = with_dependency_profiles(cast(Any, fetcher), base, cand, pins, "--extra-index-url")
+    assert fetcher.calls == []
+    (installs,) = got.dependency_installs
+    assert installs.problem == (
+        "the lockfile sets --extra-index-url, so pip can install helper from somewhere other "
+        "than PyPI and Garnet can't tell which release that is"
+    )
+    f = _c008(PYPI, base, got, got.dependency_installs)
+    assert f.severity == Severity.WARN and "can't tell which release" in f.evidence[0].summary
 
 
 @pytest.mark.parametrize(
@@ -662,6 +768,31 @@ version = "2.0"
     assert pinned_versions("poetry.lock", poetry) == {("pypi", "other"): ("2.0",)}
 
 
+@pytest.mark.parametrize(
+    ("line", "option"),
+    [
+        ("--extra-index-url https://mirror.invalid/simple", "--extra-index-url"),
+        ("--find-links=./wheels", "--find-links"),
+        ("-f ./wheels", "-f"),
+        ("--no-index", "--no-index"),
+        ("--index-url https://private.invalid/simple", "--index-url"),
+        ("-i https://private.invalid/simple", "-i"),
+    ],
+)
+def test_a_requirements_file_naming_another_index_pins_nothing(line: str, option: str) -> None:
+    # anywhere in the file: pip applies the option to every line
+    body = f"helper==1.0.2\n{line}\nother==2\n".encode()
+    assert other_index("requirements.txt", body) == option
+    assert pinned_versions("requirements.txt", body) == {}
+
+
+def test_pypi_index_or_other_options_pin_as_before() -> None:
+    body = b"-i https://pypi.org/simple\n--require-hashes\nhelper==1.0.2\n"
+    assert other_index("requirements.txt", body) is None
+    assert pinned_versions("requirements.txt", body) == {("pypi", "helper"): ("1.0.2",)}
+    assert other_index("uv.lock", b"version = 1\n") is None
+
+
 def test_check_takes_pins_from_the_lockfiles_each_change_is_in(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -687,9 +818,11 @@ def test_check_takes_pins_from_the_lockfiles_each_change_is_in(
         "tool==2\nhelper==1.0.3 ; python_version < '3.12'\n"
     )
     seen: dict[Any, Any] = {}
+    elsewhere: dict[Any, Any] = {}
 
     def fake_evaluate(changes: Any, *, policy: Any = None, options: Any = None) -> list[Any]:
         seen.update(options.pins)
+        elsewhere.update(options.other_index)
         return []
 
     monkeypatch.setattr(cli, "evaluate", fake_evaluate)
@@ -702,6 +835,14 @@ def test_check_takes_pins_from_the_lockfiles_each_change_is_in(
     assert seen[("pypi", "other", "1", "2")][("pypi", "helper")] == ("9.9",)
     # a pin under a marker leaves helper's range to be read
     assert ("pypi", "helper") not in seen[("pypi", "tool", "1", "2")]
+    assert elsewhere == {}
+    (tmp_path / "requirements-dev.txt").write_text(
+        "other==2\nhelper==9.9\n--extra-index-url https://mirror.invalid/simple\n"
+    )
+    seen.clear()
+    cli.main(args + [a for h in heads for a in ("--head", h)])
+    assert seen[("pypi", "other", "1", "2")] == {}
+    assert elsewhere == {("pypi", "other", "1", "2"): "--extra-index-url (requirements-dev.txt)"}
 
 
 # Fetching the releases (fake registry)
@@ -788,6 +929,29 @@ def test_npm_reads_every_published_match_whenever_published() -> None:
     assert first.provenance == (FileProvenance(TGZ, present=False, verified=False),)
     assert not any("attestations" in u for u in http.calls)
     assert "https://registry.npmjs.org/helper/-/helper-2.0.0.tgz" not in http.calls
+
+
+@pytest.mark.parametrize(
+    "req",
+    [
+        Requirement("helper", "helper@*"),
+        Requirement("helper", "helper@"),
+        Requirement("helper", "helper@latest"),
+        Requirement("helper", "helper@x"),
+        Requirement("helper", "helper@x.x"),
+        Requirement("h2", "h2@npm:helper", alias_of="helper"),
+        Requirement("h2", "h2@npm:helper@latest", alias_of="helper"),
+    ],
+)
+def test_npm_any_version_spec_reads_every_version_with_prereleases(req: Requirement) -> None:
+    """npm installs the ``latest`` dist-tag for these, even a prerelease."""
+    tarballs = {"1.0.0": _plain(), "1.1.0-evil.0": _plain(), "0.9.0": _plain()}
+    times = dict.fromkeys(tarballs, "2026-08-31T00:00:00Z")
+    ctx, _ = _npm_ctx(_npm_registry(tarballs, times))
+    found = npm.dependency_installs(ctx, req)
+    assert [r.version for r in found.releases] == ["0.9.0", "1.0.0", "1.1.0-evil.0"]
+    assert npm_range.readable("^1.0.0", tarballs) == ["1.0.0"]
+    assert npm_range.readable(">=0", tarballs) == ["0.9.0", "1.0.0"]
 
 
 def test_npm_reads_only_the_pinned_versions() -> None:
