@@ -36,7 +36,7 @@ from typing import Literal
 
 from . import npm as npm_commands
 from .gate import PM_WORD, fold, has_pm_word
-from .runner import loader_preload
+from .runner import LIBC_MODULE_PATHS, loader_preload
 
 # What the pre-scan writes in place of characters the shell would expand,
 # so a word that held one is still known after shlex has removed the quotes.
@@ -61,7 +61,7 @@ _RELEVANT_ENV = re.compile(
 def _relevant(name: str) -> bool:
     """Whether a variable's value matters to the check: pip's, uv's and
     Python's settings, and the loader settings the hooks ask about."""
-    return bool(_RELEVANT_ENV.match(name)) or loader_preload(name)
+    return bool(_RELEVANT_ENV.match(name)) or loader_preload(name) or name in LIBC_MODULE_PATHS
 
 
 # pip's general options, before the subcommand, and whether each takes a
@@ -148,6 +148,7 @@ class PipCommand:
     cwd: str
     env: Mapping[str, str]  # assignments in effect for this command
     text: str
+    exe: str | None = None  # the program the command runs: the pip script, or the python
 
 
 @dataclass(frozen=True)
@@ -396,6 +397,9 @@ def find_commands(
     line = _split(command)
     if line.unclear:
         return [Unclear(f"Garnet Guard can't tell what this runs: {line.unclear}.", command)]
+    builtin = _builtin_why(line.simple)
+    if builtin and has_pm_word(command):
+        return [Unclear(builtin, command)]
     state = _State(cwd, dict(env), line=command)
     out: list[Found] = []
     for words in line.simple:
@@ -406,6 +410,39 @@ def find_commands(
         elif found is not None:
             out.append(found)
     return out
+
+
+# Builtins that set or export variables in ways Garnet doesn't follow.
+_SETTERS = frozenset({"declare", "typeset", "readonly", "local", "builtin"})
+
+
+def _builtin_why(simple: Sequence[tuple[str, ...]]) -> str | None:
+    """Why the whole line is unclear, if any command in it (a function body
+    included, wherever it runs) is a builtin that can set or export a
+    variable Garnet doesn't follow: ``declare``, ``typeset``, ``readonly``,
+    ``local``, ``builtin``, ``set -a`` or ``set -o allexport``, and
+    ``export -n`` or ``-f``."""
+    for words in simple:
+        i = 0
+        while i < len(words) and _ASSIGNMENT.match(words[i]):
+            i += 1
+        rest, _ = _unwrap(words[i:], {})
+        if not rest:
+            continue
+        base = os.path.basename(_plain(rest[0]))
+        args = [_plain(w) for w in rest[1:]]
+        if base in _SETTERS:
+            return f"Garnet Guard can't tell what this installs: it uses {base}, which can set variables Garnet doesn't follow."
+        if base == "set" and (
+            any(re.match(r"^-[A-Za-z]*a", a) for a in args) or any(a == "allexport" for a in args)
+        ):
+            return (
+                "Garnet Guard can't tell what this installs: it uses set -a or "
+                "set -o allexport, which exports every later assignment."
+            )
+        if base == "export" and any(re.match(r"^-[A-Za-z]*[nf]", a) for a in args):
+            return f"Garnet Guard can't tell what this installs: it uses export {args[0]}, which Garnet doesn't follow."
+    return None
 
 
 def _simple(
@@ -936,9 +973,9 @@ def _locate(
         return UvCommand(exe, sub or "", args[:at] + args[at + 1 :], cwd, dict(env), text)
     if _PYTHON.match(os.path.basename(prog)):
         _, pip_args = _python_module(args)
-        return PipCommand(exe, prog, pip_args, cwd, dict(env), text)
+        return PipCommand(exe, prog, pip_args, cwd, dict(env), text, exe)
     python = interpreter_for_pip(exe, path) if exe else None
-    return PipCommand(python, prog, args, cwd, dict(env), text)
+    return PipCommand(python, prog, args, cwd, dict(env), text, exe)
 
 
 # uv run's options that take a value (uv 0.11.32), besides the global ones.

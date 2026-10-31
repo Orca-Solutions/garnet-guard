@@ -47,7 +47,7 @@ from ..policy import load_policy
 from ..report import escape, to_text
 from ..workspace import Unchecked, changes_for, dedupe, git_show
 from . import npm, pip, uv
-from .runner import Ran, Registry, Runner, TimedOut
+from .runner import Ran, Registry, Runner, TimedOut, loader_env
 from .runner import run as run_program
 
 Evaluate = Callable[[list[Change], Policy, Options], list[ChangeResult]]
@@ -289,7 +289,9 @@ def pip_python(given: str | None, cwd: Path) -> str | None:
 
 
 def _pip_env(env: Mapping[str, str]) -> dict[str, str]:
-    out = dict(env)
+    """The environment for pip's config, inspect and dry-run calls: no prompts,
+    no version check, and no loader preload from the command (runner.loader_env)."""
+    out = loader_env(env)
     out["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     out["PIP_NO_INPUT"] = "1"
     return out

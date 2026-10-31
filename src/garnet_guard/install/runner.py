@@ -118,3 +118,11 @@ def loader_env(env: Mapping[str, str], own: Mapping[str, str] | None = None) -> 
     out = {k: v for k, v in env.items() if not loader_preload(k)}
     out.update({k: v for k, v in own.items() if loader_preload(k)})
     return out
+
+
+# Where glibc loads character-set conversion modules (gconv, shared
+# libraries) and locale files from. A locale whose charset needs a module
+# makes the C library load one into a program as it starts. Kept apart from
+# LOADER_PRELOAD: the hooks ask when a command sets these, and the check
+# doesn't change them.
+LIBC_MODULE_PATHS = frozenset({"GCONV_PATH", "LOCPATH"})
