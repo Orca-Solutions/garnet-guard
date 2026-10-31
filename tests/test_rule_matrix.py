@@ -906,6 +906,14 @@ def _rows() -> list[Row]:
     )
     fires(
         "GRN-C010",
+        "a sitecustomize extension module in site-packages",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "sitecustomize.cpython-312-x86_64-linux-gnu.so": "\x7fELF"}),
+        Verdict.WARN,
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C010",
         "a script named like a common command",
         release("1.0", PKG),
         release("1.1", {**PKG, "demo-1.1.data/scripts/pip": "#!/bin/sh\n"}),
@@ -925,6 +933,13 @@ def _rows() -> list[Row]:
         "the same script as before",
         release("1.0", {**PKG, "demo-1.0.data/scripts/demo-run": "#!/bin/sh\n"}),
         release("1.1", {**PKG, "demo-1.1.data/scripts/demo-run": "#!/bin/sh\necho 1\n"}),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C010",
+        "a sourceless __pycache__/sitecustomize.pyc, which isn't imported",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "__pycache__/sitecustomize.cpython-312.pyc": "\x00"}),
         eco=PYPI,
     )
     quiet(
