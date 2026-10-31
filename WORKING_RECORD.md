@@ -2,6 +2,16 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-31: GRN-C009 compares a group's targets where the name is ignored
+
+**State.** In the final top-1,000 PyPI corpus, mako 1.3.12 → 1.4.1 warned for four "new" `pygments.lexers` entry points: 1.4.1 renamed `css+mako`, `html+mako`, `js+mako` and `xml+mako` to `css_mako` and so on, with the same classes (both wheels' `entry_points.txt`, read through `safe_archive.py`). GRN-C009 now compares targets across the whole group, not name by name, in the groups whose tool loads every line's target whatever the line's name: `pygments.lexers`, `keyring.backends`, `setuptools.file_finders`, `setuptools.finalize_distribution_options` (where a hook named `2to3_doctests`, which setuptools skips, doesn't count as having run), `opentelemetry_pre_instrument`, `opentelemetry_post_instrument`, `pdm`, `poetry.plugin` and `poetry.application.plugin`. Each was checked against the tool's own loader, read from its current wheel: pygments 2.21 `find_plugin_lexers`, keyring 25.7 `_load_plugins`, setuptools 84.2 `walk_revctrl` and `Distribution.finalize_options`, opentelemetry-instrumentation 0.66b2 `_load_instrumentors`, pdm 2.29 `Core.load_plugins`, poetry 2.2 `PluginManager.load_plugins`. The groups left name by name were checked the same way: setuptools 84.2 `_finalize_setup_keywords`, pydantic's plugin loader, opentelemetry `_load_instrumentors` (`OTEL_PYTHON_DISABLED_INSTRUMENTATIONS`), flake8 7.3 `_classify_plugins` (`enable_extensions`, reporters by name) and virtualenv 20.35 `PluginLoader` (a dict by name). A renamed line with a target the trusted version's group already listed is quiet; a new target, the same name pointed at another object or module, a target taken from another group, or a target setuptools skipped before still warns. Groups where the name decides what runs keep the name-by-name test: `distutils.setup_keywords` (a rename to `packages` would run a keyword hook in every build), `egg_info.writers`, `pydantic` and `opentelemetry_instrumentor` (disabled by name), flake8 and virtualenv (picked by name), and the other `setuptools.*` groups, where setuptools isn't known to ignore it. mako 1.4.1 now gets one `info` finding, for the extras its babel and lingua extractors dropped. Facts don't change, so CACHE_FORMAT stays 40.
+
+**Open tasks.** The backtest delta is pending: replays and corpus to be run. The loaders were read in today's releases of each tool; an older pdm or poetry that picked plugins by name would make a rename there matter.
+
+**Verification.** New tests in `tests/test_entry_points.py` (the mako files as shipped, the name-blind groups, renames that must still warn); 11 of them (the two mako tests and the nine name-blind groups) fail on main. `uv run pytest`, ruff, mypy (strict) and `lint-imports` pass.
+
+**Review dispositions.** None yet.
+
 ## 2026-10-31: Final clean-corpus numbers for 0.2.0
 
 **State.** The top-1,000 clean corpora were run again with every rule 0.2.0 ships: main at `17b8cd1` plus PR #96, which changes which wheel is read for a release with no wheel for this Python. Two passes each, with the same result:

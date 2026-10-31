@@ -316,6 +316,142 @@ def test_dropping_or_reordering_lines_the_tool_loads_every_one_of_is_quiet(group
     assert f.severity == Severity.WARN  # a new target still counts
 
 
+# mako 1.3.12 and 1.4.1's entry_points.txt, as both wheels have them: 1.4.1
+# renamed four lexers (css+mako to css_mako and so on) with the same classes,
+# and dropped the extras from its babel and lingua extractors.
+MAKO_OLD = """\
+[babel.extractors]
+mako = mako.ext.babelplugin:extract [babel]
+
+[console_scripts]
+mako-render = mako.cmd:cmdline
+
+[lingua.extractors]
+mako = mako.ext.linguaplugin:LinguaMakoExtractor [lingua]
+
+[pygments.lexers]
+css+mako = mako.ext.pygmentplugin:MakoCssLexer
+html+mako = mako.ext.pygmentplugin:MakoHtmlLexer
+js+mako = mako.ext.pygmentplugin:MakoJavascriptLexer
+mako = mako.ext.pygmentplugin:MakoLexer
+xml+mako = mako.ext.pygmentplugin:MakoXmlLexer
+
+[python.templating.engines]
+mako = mako.ext.turbogears:TGPlugin
+"""
+MAKO_NEW = (
+    MAKO_OLD.replace(" [babel]", "")
+    .replace(" [lingua]", "")
+    .replace("css+mako", "css_mako")
+    .replace("html+mako", "html_mako")
+    .replace("js+mako", "js_mako")
+    .replace("xml+mako", "xml_mako")
+)
+MAKO = Change("pypi", "mako", "1.3.12", "1.4.1")
+
+
+def _mako(version: str, ini: str) -> ReleaseFacts:
+    files = {"mako/__init__.py": "", f"mako-{version}.dist-info/entry_points.txt": ini}
+    return release(version, files, package="mako")
+
+
+def test_renamed_lexers_with_the_same_classes_are_quiet() -> None:
+    # mako 1.4.1 used to warn for four "new" pygments.lexers entry points:
+    # pygments loads every lexer by class, so no new class runs. The extras
+    # dropped from the two extractors are still listed, at info.
+    (f,) = _c009(_mako("1.3.12", MAKO_OLD), _mako("1.4.1", MAKO_NEW), MAKO)
+    assert f.severity == Severity.INFO
+    assert f.title == "1.4.1 adds or changes 2 entry point(s)"
+    assert [e.summary for e in f.evidence] == [
+        "[babel.extractors] mako = mako.ext.babelplugin:extract "
+        "(was mako.ext.babelplugin:extract [babel])",
+        "[lingua.extractors] mako = mako.ext.linguaplugin:LinguaMakoExtractor "
+        "(was mako.ext.linguaplugin:LinguaMakoExtractor [lingua])",
+    ]
+
+
+def test_a_renamed_lexer_that_loads_another_class_warns() -> None:
+    # The same rename, with css_mako now loading another class, or a class
+    # from another module: that class never ran, so it warns.
+    for target in ("mako.ext.pygmentplugin:MakoCssLexer2", "mako.ext._css:MakoCssLexer"):
+        new = MAKO_NEW.replace(
+            "css_mako = mako.ext.pygmentplugin:MakoCssLexer", f"css_mako = {target}"
+        )
+        (f,) = _c009(_mako("1.3.12", MAKO_OLD), _mako("1.4.1", new), MAKO)
+        assert f.severity == Severity.WARN
+        assert f.title == (
+            "1.4.1 adds or changes 3 entry point(s), including [pygments.lexers] css_mako"
+        )
+        assert f.evidence[0].summary == (
+            f"[pygments.lexers] css_mako = {target} (new); "
+            "[pygments.lexers] is loaded automatically by the tool that reads it"
+        )
+
+
+# Groups whose tool loads every line's target whatever its name.
+NAME_BLIND = [
+    "keyring.backends",
+    "opentelemetry_post_instrument",
+    "opentelemetry_pre_instrument",
+    "pdm",
+    "poetry.application.plugin",
+    "poetry.plugin",
+    "pygments.lexers",
+    "setuptools.file_finders",
+    "setuptools.finalize_distribution_options",
+]
+
+
+@pytest.mark.parametrize("group", NAME_BLIND)
+def test_a_target_under_a_new_name_where_the_name_is_ignored_is_quiet(group: str) -> None:
+    base = _wheel("1.0", f"[{group}]\nx = demo.a:A\ny = demo.b:B\n")
+    # Renamed, renamed onto another line's name, or listed a second time.
+    for lines in ("z = demo.a:A\ny = demo.b:B\n", "y = demo.a:A\ny = demo.b:B\n", "w = demo.b:B\n"):
+        assert _c009(base, _wheel("1.1", f"[{group}]\n{lines}")) == []
+    # A new target under the new name, or an old target's object changed.
+    for lines in ("z = demo.c:A\n", "z = demo.a:C\n", "x = demo.a:A\nz = demo.a:A [extra]\n"):
+        (f,) = _c009(base, _wheel("1.1", f"[{group}]\n{lines}"))
+        assert f.severity == Severity.WARN
+        assert f.evidence[0].summary.startswith(f"[{group}] z = ")
+
+
+@pytest.mark.parametrize(
+    "group",
+    sorted(set(EVERY_LINE) - set(NAME_BLIND) | {"virtualenv.discovery", "pytest11"}),
+)
+def test_a_target_under_a_new_name_where_the_name_decides_warns(group: str) -> None:
+    # distutils.setup_keywords loads a line when setup() uses the keyword it
+    # names (a rename to packages runs it in every build), egg_info.writers
+    # writes the file it names, pydantic and opentelemetry_instrumentor skip
+    # the names a user turns off, virtualenv picks a creator or discovery by
+    # name, flake8 a formatter: a renamed line can run where it didn't.
+    base = _wheel("1.0", f"[{group}]\nuse_demo = demo.kw:run\n")
+    (f,) = _c009(base, _wheel("1.1", f"[{group}]\npackages = demo.kw:run\n"))
+    assert f.severity == Severity.WARN
+    assert f.evidence[0].summary.startswith(f"[{group}] packages = demo.kw:run (new); ")
+
+
+def test_a_target_setuptools_skipped_by_its_name_is_new_under_another() -> None:
+    # setuptools drops a finalize_distribution_options hook named 2to3_doctests,
+    # so its target never ran; the same target under another name runs now.
+    group = "setuptools.finalize_distribution_options"
+    base = _wheel("1.0", f"[{group}]\n2to3_doctests = demo.x:run\n")
+    (f,) = _c009(base, _wheel("1.1", f"[{group}]\nhook = demo.x:run\n"))
+    assert f.severity == Severity.WARN
+    assert f.evidence[0].summary.startswith(f"[{group}] hook = demo.x:run (new); ")
+
+
+def test_a_target_from_another_group_is_new() -> None:
+    # Only the same group counts: a formatter class listed as a lexer is new.
+    base = _wheel("1.0", "[pygments.formatters]\nx = demo.a:A\n")
+    (f,) = _c009(
+        base,
+        _wheel("1.1", "[pygments.formatters]\nx = demo.a:A\n[pygments.lexers]\ny = demo.a:A\n"),
+    )
+    assert f.severity == Severity.WARN
+    assert f.evidence[0].summary.startswith("[pygments.lexers] y = demo.a:A (new); ")
+
+
 @pytest.mark.parametrize(
     ("group", "now"),
     [
