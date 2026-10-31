@@ -24,7 +24,8 @@ MAX_INPUT_BYTES = 1024 * 1024
 # (``python -mpip``). The command parser decides whether it really is one;
 # ``echo "pip install x"`` gets this far and no further. It is matched
 # against the text with backslashes and quotes taken out too (``fold``), as
-# the shell takes them out of ``\pip`` and ``p'i'p``.
+# the shell takes them out of ``\pip`` and ``p'i'p``, and with the start of a
+# ``${NAME:-default}`` taken out, so the default is read as a word.
 PM_WORD = re.compile(
     r"(?:^|[\s;&|()`'\"/=<>{}\\]|-m)"
     r"(?:pip(?:3(?:\.\d+)?)?|uvx?|poetry|npm|npx|pnpm|yarn)(?:\.exe)?"
@@ -33,10 +34,17 @@ PM_WORD = re.compile(
 _CHUNK = 1024 * 1024
 
 
+# The start of ``${NAME:-word}`` and its kin (``-``, ``=``, ``+``, ``?``, with or
+# without ``:``), whose word the shell may put in place of the variable.
+_DEFAULT = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=+?]")
+
+
 def fold(text: str) -> str:
     """``text`` with backslashes and quote characters removed, as the shell
-    removes them from a word."""
-    return text.replace("\\", "").replace("'", "").replace('"', "")
+    removes them from a word, and each ``${NAME:-`` made a space, so the
+    default value after it is a word of its own."""
+    text = text.replace("\\", "").replace("'", "").replace('"', "")
+    return _DEFAULT.sub(" ", text)
 
 
 def has_pm_word(text: str) -> bool:

@@ -262,6 +262,16 @@ def test_cant_tell_asks_or_denies(
         'echo "pip install requests" | sh',
         "stdbuf -oL pip install requests",
         "pip --bogus 1 install requests",
+        "$(echo pip) install requests",
+        "`echo pip` install requests",
+        "P=pip; $P install requests",
+        'P=pip && "$P" install requests',
+        "x=$(which pip); $x install requests",
+        "$(command -v pip) install requests",
+        '"$(which pip)" install requests',
+        "for t in pip; do $t install requests; done",
+        "PIP=pip3; ${PIP} install requests",
+        "${UV:-uv} add requests",
     ],
 )
 def test_forms_the_parser_cant_follow_are_never_silent(
@@ -284,6 +294,32 @@ def test_tools_that_install_unseen_packages_are_cant_check(
     inner = spec(answer(agent, event(command, where["cwd"]), where, deps=deps(run)))
     assert inner["permissionDecision"] == decision
     assert f"{command}: not checked." in inner["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize(("agent", "decision"), [("claude-code", "ask"), ("codex", "deny")])
+@pytest.mark.parametrize(
+    ("command", "shown"),
+    [
+        ("uv run http://example.invalid/s.py", "uv run http://example.invalid/s.py"),
+        ("uv run - < sub/x.py", "uv run -"),
+        ("cat sub/x.py | uv run -", "uv run -"),
+        ("uv --directory sub run x.py", "uv --directory sub run x.py"),
+        ("uv run --directory sub x.py", "uv run --directory sub x.py"),
+        ("uv run sub/x.py", "uv run sub/x.py"),
+        ("uv run -wsix python -c 1", "uv run -wsix python -c 1"),
+        ("uv run -qw six python", "uv run -qw six python"),
+    ],
+)
+def test_uv_run_scripts_and_with_are_cant_check_outside_a_project(
+    agent: str, decision: str, command: str, shown: str, where: dict[str, str]
+) -> None:
+    sub = Path(where["cwd"], "sub")
+    sub.mkdir()
+    (sub / "x.py").write_text('# /// script\n# dependencies = ["six"]\n# ///\nprint(1)\n')
+    run = FakeRunner(lambda argv, cwd, env: pytest.fail("nothing runs"))
+    inner = spec(answer(agent, event(command, where["cwd"]), _uv_where(where), deps=deps(run)))
+    assert inner["permissionDecision"] == decision
+    assert f"{shown}: not checked." in inner["permissionDecisionReason"]
 
 
 @pytest.mark.parametrize("agent", AGENTS)
@@ -603,7 +639,16 @@ def test_gate_lets_other_events_through_silently(payload: dict[str, Any]) -> Non
 
 
 @pytest.mark.parametrize(
-    "command", ["python -mpip install x", "\\pip install x", "p\\ip install x", "p'i'p install x"]
+    "command",
+    [
+        "python -mpip install x",
+        "\\pip install x",
+        "p\\ip install x",
+        "p'i'p install x",
+        "${UV:-uv} add x",
+        "${PIP-pip} install x",
+        "${UV:=uv} sync",
+    ],
 )
 def test_gate_is_as_wide_as_the_parser(command: str) -> None:
     payload = {

@@ -129,6 +129,20 @@ SHAPES = [
     ("uv tool install ruff", ["unsupported uv tool"]),
     ("uvx ruff", ["unsupported uvx"]),
     ("uv run --with requests python", ["unsupported uv run --with"]),
+    ("uv run --with=requests python", ["unsupported uv run --with"]),
+    ("uv run -w requests python", ["unsupported uv run --with"]),
+    ("uv run -wsix python -c 1", ["unsupported uv run --with"]),
+    ("uv run -w=six python", ["unsupported uv run --with"]),
+    ("uv run -qw six python", ["unsupported uv run --with"]),
+    ("uv run pytest --with x", ["uv sync"]),  # pytest's option, not uv's
+    ("uv run -qp3.12 pytest", ["uv sync --quiet --python 3.12"]),
+    ("uv run http://example.invalid/s.py", ["unsupported uv run <script>"]),
+    ("uv run HTTPS://example.invalid/s.py", ["unsupported uv run <script>"]),
+    ("uv run - < s.py", ["unsupported uv run <script>"]),
+    ("cat s.py | uv run -", ["unsupported uv run <script>"]),
+    ("uv run -- -", ["unsupported uv run <script>"]),
+    ('uv run "$S"', ["unclear"]),
+    ("uv run -m http.server", ["uv sync"]),
     ("npm install left-pad", ["unsupported npm install"]),
     ("npm i", ["unsupported npm i"]),
     ("npm test", []),
@@ -152,6 +166,23 @@ SHAPES = [
     ("source venv/bin/activate && pip install x", ["pip install x"]),
     ("source ./env.sh && pip install x", ["unclear"]),
     ("pip install '$HOME'", ["pip install $HOME"]),  # single quotes: literal
+    # A program name the shell expands, in a line with a package-manager word.
+    ("$(echo pip) install requests", ["unclear"]),
+    ("`echo pip` install requests", ["unclear"]),
+    ("P=pip; $P install requests", ["unclear"]),
+    ('P=pip && "$P" install requests', ["unclear"]),
+    ("x=$(which pip); $x install requests", ["unclear"]),
+    ("$(command -v pip) install requests", ["unclear"]),
+    ('"$(which pip)" install requests', ["unclear"]),
+    ("for t in pip; do $t install requests; done", ["unclear"]),
+    ("PIP=pip3; ${PIP} install requests", ["unclear"]),
+    ("${UV:-uv} add requests", ["unclear"]),
+    ("sudo $P install x; echo pip", ["unclear"]),
+    ("$EDITOR notes.txt", []),
+    ("(cd proj; pip install x);ls", ["pip install x"]),
+    ("(pip install x)>log", ["pip install x"]),
+    ("pip install -r <(curl -s https://example.invalid/r.txt)", ["unclear"]),
+    ("$(git rev-parse --show-toplevel)/run.sh", []),
 ]
 
 
@@ -185,6 +216,25 @@ def test_programs_and_folders_are_located(tools: dict[str, str]) -> None:
     assert found.cwd == str(root / "proj") and found.uv == str(Path(tools["PATH"]) / "uv")
     (found,) = _find("PIP_NO_INPUT=1 pip install x", tools)
     assert isinstance(found, PipCommand) and found.env["PIP_NO_INPUT"] == "1"
+
+
+def test_uv_run_reads_a_script_where_uv_does(tools: dict[str, str]) -> None:
+    script = '# /// script\n# dependencies = ["six"]\n# ///\nprint(1)\n'
+    Path(tools["root"], "proj", "x.py").write_text(script)
+    env = {"PATH": tools["PATH"], "HOME": tools["HOME"]}
+    for command in (
+        "uv --directory proj run x.py",
+        "uv run --directory proj x.py",
+        "uv run --directory=proj x.py",
+        "UV_WORKING_DIR=proj uv run x.py",
+        "uv run proj/x.py",
+        "cd proj && uv run x.py",
+    ):
+        assert _shape(_find(command, tools)) == ["unsupported uv run <script>"], command
+    found = shellwords.find_commands("uv run x.py", cwd=tools["root"], env=env)
+    assert _shape(found) == ["uv sync"]  # no x.py here
+    # --project doesn't move where uv reads the script (uv 0.11.32).
+    assert _shape(_find("uv run --project proj x.py", tools)) == ["uv sync --project proj"]
 
 
 def test_unclear_never_names_a_program_to_run(tools: dict[str, str]) -> None:
