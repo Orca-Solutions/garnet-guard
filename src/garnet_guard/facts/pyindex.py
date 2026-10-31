@@ -783,12 +783,13 @@ def scan_module(
                 calls.append(
                     CallSite(read, getattr(node, "lineno", 0), via, handed_to=handed, read=True)
                 )
-            for what, line, key in tracker.sites(node):
-                calls.append(CallSite(what, line, via, handed_to=handed, obscured=key))
+            obscured = tracker.sites(node)
             if isinstance(node, (ast.For, ast.AsyncFor, ast.AugAssign)):
-                tracker.forget(node.target)
+                obscured += tracker.forget(node.target)
             elif isinstance(node, ast.AnnAssign):
-                tracker.note_assign(node)
+                obscured += tracker.note_assign(node)
+            for what, line, key in obscured:
+                calls.append(CallSite(what, line, via, handed_to=handed, obscured=key))
             if isinstance(node, ast.Call):
                 args = [*node.args, *(k.value for k in node.keywords)]
                 name = resolver.resolve(node.func)
@@ -833,7 +834,8 @@ def scan_module(
                     local[node.name] = list(node.body)
             elif isinstance(node, ast.Assign):
                 resolver.note_assignment(node)
-                tracker.note_assign(node)
+                for what, line, key in tracker.note_assign(node):
+                    calls.append(CallSite(what, line, via, handed_to=handed, obscured=key))
                 for decode in _decoded_inputs([node.value], resolver, decoded):
                     decoded.update((t.id, decode) for t in node.targets if isinstance(t, ast.Name))
                 if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):

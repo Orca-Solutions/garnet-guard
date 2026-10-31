@@ -445,3 +445,132 @@ def test_a_comprehension_variable_used_twice_still_folds() -> None:
     )
     ((_, what),) = sites(src)
     assert what.startswith("looks up os.system by a name built with chr() and .join()")
+
+
+# --- review findings (2026-10-31) -------------------------------------------
+
+RUN = "import subprocess\nsubprocess.run(['git', 'status'])\n"
+
+
+def test_an_expression_that_fails_when_folded_keeps_grn_c003s_scan() -> None:
+    # A zero slice step raises ValueError when run. It isn't folded, and the
+    # call after it is still read.
+    src = f"P = 'getcwd'[::0]\n{RUN}"
+    calls, _ = index_module(src.encode())
+    assert [c.name for c in calls] == ["subprocess.run"]
+    boot = "import subprocess\ndef start():\n    if 0:\n        _ = 'abc'[::0]\n    subprocess.run(['git', 'status'])\n"
+    init = INIT + "from demo import _boot\n_boot.start()\n"
+    old = release("1.0", {"demo/__init__.py": init, "demo/_boot.py": "def start():\n    pass\n"})
+    new = release("1.1", {"demo/__init__.py": init, "demo/_boot.py": boot})
+    rules = {f.rule_id for f in run_checks(CHANGE, old, new).findings}
+    assert "GRN-C003" in rules
+
+
+def test_a_value_garnet_cannot_read_is_reported_not_passed(monkeypatch) -> None:
+    import garnet_guard.facts.obfuscation as ob
+
+    def broken(self: object, node: object, bound: object) -> None:
+        raise ValueError("synthetic")
+
+    monkeypatch.setattr(ob.Tracker, "_build", broken)
+    src = f"import os\nP = 'x'\ngetattr(os, P)\n{RUN}"
+    calls = scan_module(src.encode()).calls
+    stopped = [c for c in calls if c.obscured is not None]
+    assert [(c.line, c.obscured) for c in stopped] == [
+        (2, "unread:an expression Garnet couldn't read (ValueError)")
+    ]
+    assert [c.name for c in calls if c.obscured is None] == ["subprocess.run"]
+    # Reported even when the trusted version stopped at the same place.
+    old = release("1.0", {"demo/__init__.py": INIT + src})
+    new = release("1.1", {"demo/__init__.py": INIT + src + "\n"})
+    assert lines(c005(old, new)) == [
+        "demo/__init__.py:4 stops reading values built from literals here: an expression "
+        "Garnet couldn't read (ValueError); the rest of the module isn't checked for GRN-C005"
+    ]
+
+
+def test_a_name_that_doubles_itself_stays_small() -> None:
+    src = "A0 = 'x'\n" + "".join(f"A{i + 1} = A{i} + A{i}\n" for i in range(40))
+    src += "import os\ngetattr(os, A40[:6])\n"
+    ((_, what),) = sites(src)
+    assert what.startswith("looks up an attribute of os by a name built with concatenation")
+
+
+def test_nested_comprehensions_stop_at_the_allowance() -> None:
+    text = "'" + "a" * 60 + "'"
+    expr = "0"
+    for i in range(4):
+        expr = f"[{expr} for c{i} in {text}]"
+    src = f"import os\ngetattr(os, {expr})\n{RUN}"
+    found = sites(src)
+    assert [w.split(":")[0] for _, w in found] == ["stops reading values built from literals here"]
+    calls, _ = index_module(src.encode())
+    assert [c.name for c in calls] == ["subprocess.run"]
+
+
+def test_pem_headers_without_an_end_are_read_in_one_pass() -> None:
+    import time
+
+    start = time.monotonic()
+    assert blob("-----BEGIN A-----" * 20000, BLOB_CHARS + 1) is None
+    assert time.monotonic() - start < 2  # about 30 s with the earlier pattern
+    pem = "-----BEGIN DATA-----\n" + B64 + "\n-----END DATA-----"
+    assert blob(pem, BLOB_CHARS + 1) is None
+    assert blob(pem + "\n" + B64, BLOB_CHARS + 1) is not None
+
+
+def test_a_literal_used_many_times_is_read_once() -> None:
+    import time
+
+    big = "QUJD" * 25000
+    src = f"import base64\nA = '{big}'\nL = [" + ", ".join(["A"] * 400) + "]\n"
+    src += "exec(base64.b64decode(''.join(L)))\n"
+    start = time.monotonic()
+    assert sites(src)
+    assert time.monotonic() - start < 2
+
+
+def test_a_changed_number_or_slice_bound_is_a_new_value() -> None:
+    def chars(word: str) -> str:
+        return str([ord(c) for c in word])
+
+    cases = [
+        (  # the same steps, other numbers
+            f"getattr(os, ''.join(map(chr, {chars('getcwd')})))\n",
+            f"getattr(os, ''.join(map(chr, {chars('getpid')})))\n",
+        ),
+        ("getattr(os, 'getcwdgetpid'[:6])\n", "getattr(os, 'getcwdgetpid'[6:])\n"),
+        (
+            "exec(bytes(c ^ 7 for c in b'wuni').decode())\n",
+            "exec(bytes(c ^ 9 for c in b'wuni').decode())\n",
+        ),
+    ]
+    for before, after in cases:
+        old = release("1.0", {"demo/__init__.py": INIT + "import os\n" + before})
+        new = release("1.1", {"demo/__init__.py": INIT + "import os\n" + before + after})
+        assert len(lines(c005(old, new))) == 1, after
+        same = release("1.1", {"demo/__init__.py": INIT + "import os\n\n" + before})
+        assert c005(old, same) == [], before
+
+
+def test_a_lookup_in_a_new_function_is_new() -> None:
+    old = release("1.0", {"demo/__init__.py": INIT + LOOKUP})
+    src = INIT + LOOKUP + "def _run(n):\n    getattr(os, n)()\n_run(OTHER)\n"
+    assert lines(c005(old, release("1.1", {"demo/__init__.py": src}))) == [
+        "demo/__init__.py:8 looks up an attribute of os by a name not written in the source: "
+        "getattr(os, n) (in _run(), reached at import)"
+    ]
+
+
+def test_a_module_name_the_source_assigns_is_not_the_modules_own() -> None:
+    src = "import sys\nclass K:\n    pass\nK.__module__ = ''.join(map(chr, [111, 115]))\n"
+    src += "sys.modules[K.__module__].getcwd()\n"
+    assert [line for line, _ in sites(src)] == [5]
+    assert sites("import sys\nclass K:\n    pass\nsys.modules[K.__module__]\n") == []
+
+
+def test_a_long_lookup_key_is_compared_in_full() -> None:
+    pad = " + ".join(f"K{i}" for i in range(80))
+    old = release("1.0", {"demo/__init__.py": INIT + f"import os\ngetattr(os, {pad} + A)\n"})
+    new = release("1.1", {"demo/__init__.py": INIT + f"import os\ngetattr(os, {pad} + B)\n"})
+    assert len(lines(c005(old, new))) == 1

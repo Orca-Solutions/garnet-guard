@@ -54,9 +54,20 @@ parsed with `ast`. Nothing is imported or run. Three kinds of thing are reported
 
 It reports only what the trusted version didn't have. A literal, or a value built from
 literals, that any module of the trusted version had is not new, so a blob that moved to
-another file is quiet and a blob whose bytes changed is reported. A lookup by a name not in
-the source is compared with the same module, or the file it was moved from. A file
-byte-identical to one in the trusted version is skipped.
+another file is quiet and a blob whose bytes changed is reported. A built value counts as
+the same only when every literal, number and slice bound that goes into it is the same, so
+`getattr(os, "getcwdsystem"[:6])` doesn't hide a later `[6:]`. A lookup by a name not in the
+source is compared with the same function in the same module, or the file it was moved
+from. A file byte-identical to one in the trusted version is skipped. A file that was both
+renamed and edited may not be matched with the one it came from, and its lookups then
+report as new.
+
+Garnet reads a bounded amount in each module: about 50 operations per syntax node, plus a
+fixed allowance. Past that, or at an expression it can't read, it reports one site, `stops
+reading values built from literals here`, and checks nothing more in that module for
+GRN-C005. That site is reported on every update, since what follows it wasn't checked.
+GRN-C003 reads the module in full either way. In Garnet's own measurement, none of 9,547
+distinct files from the standard library and installed packages reached the limit.
 
 What it leaves out, on purpose:
 
@@ -86,6 +97,18 @@ What it leaves out, on purpose:
 - **A name bound more than once.** A name assigned in two places (`import builtins as m`
   and later `m = __import__(x)`) may hold either value, and Garnet can't tell which without
   running the code, so it isn't read as a module or a literal.
+- **Names reached another way.** `g = getattr; g(os, name)`, a lookup through `vars()` of
+  a name bound to a module, and other aliases of the calls above aren't followed, as in
+  GRN-C003. Nor are `globals()["__builtins__"]`, `sys.modules["builtins"].__dict__[...]`,
+  `operator.attrgetter` or `os.__getattribute__`. A value kept in a class attribute, a list
+  item, a dict value or a function parameter (`def run(s): exec(s)`) isn't followed into a
+  decoder or a runner, though a long encoded literal in a class body is still reported. A name bound in two scopes is read as bound more than once, so it is left out
+  even when the two never meet.
+- **Steps Garnet doesn't fold.** A value disguised with `str.translate`, a custom table or a
+  function the module defines can't be built from literals here, so it is read as a name
+  from a variable: a lookup on one of the five modules still counts, a `getattr` on another
+  object doesn't. A blob split into pieces shorter than 2,048 characters and joined at run
+  time counts only when the joined value reaches a runner or a decoder.
 - **npm.** The rule reads Python. [GRN-C011](GRN-C011.md) lists, at `info`, JavaScript with
   names in the shape javascript-obfuscator writes; encoded literals and computed lookups in
   JavaScript aren't read yet.

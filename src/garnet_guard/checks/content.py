@@ -627,16 +627,21 @@ def obfuscated_blob(
     from sdist files outside the package, or in a function only handed to a
     call not known to run it are left out. A literal or a built value (keys
     ``blob:`` and ``built:``) the trusted release had in any module isn't new;
-    a computed lookup (``lookup:``) is compared with the same module, or the
-    one it moved from. A module byte-identical to a trusted file is skipped.
+    a computed lookup (``lookup:``) is compared with the same function in the
+    same module, or the one it moved from. A site Garnet stopped reading at
+    (``unread:``) is always reported. A module byte-identical to a trusted file is skipped.
     """
     if base is None:
         return
     b, c = _pair(base, cand)
     if b is None or c is None:
         return
-    trusted = [(m, {s.obscured for s in m.top_level_calls if s.obscured}) for m in b.modules]
-    anywhere = {k for _, keys in trusted for k in keys if not k.startswith("lookup:")}
+    # A computed lookup is matched with the function it sits in too, so the
+    # same ``getattr(os, n)`` written in a new function counts as new.
+    trusted = [
+        (m, {(s.obscured, s.via) for s in m.top_level_calls if s.obscured}) for m in b.modules
+    ]
+    anywhere = {k for _, keys in trusted for k, _ in keys if not k.startswith("lookup:")}
     by_module = {m.module: keys for m, keys in trusted}
     old_hashes = {f.sha256 for f in b.files}
     old_unparsed = set(b.unparsed)
@@ -660,7 +665,10 @@ def obfuscated_blob(
             before = by_module.get(moved.module, set()) if moved is not None else set()
         listed: set[tuple[int, str, str | None]] = set()
         for s in sites:
-            if s.obscured in before or s.obscured in anywhere:
+            stopped = s.obscured is not None and s.obscured.startswith(
+                "unread:"
+            )  # couldn't be read: never passed
+            if not stopped and ((s.obscured, s.via) in before or s.obscured in anywhere):
                 continue
             if reach.kind(m, s)[0] != "module" or (s.line, s.name, s.via) in listed:
                 continue

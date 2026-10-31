@@ -30,7 +30,10 @@ which records three things as call sites marked ``obscured``:
 Nothing is run. To name what a built value holds, small values are folded
 here from the literals with a fixed set of pure operations (``chr``,
 ``bytes``, ``join``, slicing, base64 and hex decoding, rot13), each capped in
-size; decompression and formatting are never folded.
+size; decompression and formatting are never folded. Each module is read up
+to an allowance in proportion to its size. Past it, or at an expression that
+can't be read, the tracker records one ``unread:`` site and stops, so what
+wasn't read is reported rather than passed.
 """
 
 from __future__ import annotations
@@ -64,7 +67,8 @@ _ALPHABETS: tuple[tuple[str, re.Pattern[str], float], ...] = (
     ("Ascii85", re.compile(r"[!-u]+"), 5.5),
 )
 _BINARY_BITS = 4.5
-_PEM = re.compile(r"-----BEGIN [A-Z0-9 ]{1,64}-----.*?-----END [A-Z0-9 ]{1,64}-----", re.S)
+_PEM_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]{1,64}-----")
+_PEM_END = re.compile(r"-----END [A-Z0-9 ]{1,64}-----")
 
 # The modules whose attributes reach the §6.3 calls, and the modules that
 # define what they hold (``posix.system is os.system``).
@@ -167,6 +171,13 @@ ASSEMBLING = frozenset(
 )
 _FOLD_CAP = 4096  # characters or bytes in any folded value
 MAX_DEPTH = 100  # nested operations read in one value
+_MAX_LITERALS = 32  # encoded literals a built value keeps for its evidence
+# Values read in one module: a fixed allowance plus a few per node, so a
+# module that builds values without end (nested comprehensions, a name that
+# doubles itself) costs time in proportion to its size, and what is left past
+# the allowance is reported as unread.
+BUILD_ALLOWANCE = 100_000
+BUILDS_PER_NODE = 50
 _MAX_SOURCE_NODES = 200  # nodes printed of an expression in evidence
 _TEXT_CODECS = frozenset({"utf-8", "utf8", "ascii", "latin-1", "latin1", "iso-8859-1"})
 _ROT13 = str.maketrans(
@@ -217,6 +228,20 @@ def _text_like(data: bytes) -> bool:
     return other <= BINARY_SHARE * len(data)
 
 
+def _without_pem(text: str) -> str:
+    """``text`` with each PEM block replaced by a space. Read left to right
+    once: after a BEGIN with no END after it, no later block can close."""
+    out: list[str] = []
+    at = 0
+    while (begin := _PEM_BEGIN.search(text, at)) is not None:
+        end = _PEM_END.search(text, begin.end())
+        if end is None:
+            break
+        out += [text[at : begin.start()], " "]
+        at = end.end()
+    return "".join(out) + text[at:] if out else text
+
+
 def _groups(text: str) -> Iterable[str]:
     """Runs of text with no whitespace in them, a block of lines wrapped at one
     width (each line but the last that width, at least ``MIN_WRAP``) joined
@@ -251,7 +276,7 @@ def blob(value: str | bytes, min_chars: int) -> Blob | None:
             return Blob("binary", len(value), round(bits, 1)) if bits > _BINARY_BITS else None
         value = value.decode("latin-1")
     best: Blob | None = None
-    for group in _groups(_PEM.sub(" ", value)):
+    for group in _groups(_without_pem(value)):
         if len(group) < min_chars:
             continue
         for kind, pattern, threshold in _ALPHABETS:
@@ -268,7 +293,7 @@ def blob(value: str | bytes, min_chars: int) -> Blob | None:
 def literal_key(value: str | bytes) -> str:
     """What identifies a literal across releases: its bytes."""
     data = value if isinstance(value, bytes) else value.encode("utf-8", "surrogatepass")
-    return "blob:" + hashlib.sha256(data).hexdigest()[:16]
+    return "blob:" + hashlib.sha256(data).hexdigest()
 
 
 class _Unknown:
@@ -281,12 +306,15 @@ Value = object
 
 @dataclass(frozen=True)
 class Built:
-    """A value made from literals: the steps that made it, the literals it was
-    made from, and the value itself when it was small enough to fold."""
+    """A value made from literals: the steps that made it, the encoded-length
+    literals it was made from (for evidence), the value itself when it was
+    small enough to fold, and ``shape``, a digest of every operation and
+    constant that went into it, in order."""
 
     steps: tuple[str, ...]
     literals: tuple[str | bytes, ...]
     value: Value = UNKNOWN
+    shape: bytes = b""
 
     @property
     def plain(self) -> bool:
@@ -315,9 +343,42 @@ class Built:
         return steps[0] if len(steps) == 1 else ", ".join(steps[:-1]) + " and " + steps[-1]
 
     def key(self) -> str:
-        """Identifies the value across releases: its steps and literals."""
-        data = repr((self.steps, self.literals)).encode("utf-8", "surrogatepass")
-        return hashlib.sha256(data).hexdigest()[:16]
+        """Identifies the value across releases: how it is made, down to each
+        number, slice bound and literal. Names bound to a value don't count."""
+        return self.shape.hex()
+
+
+def _constant(v: object) -> Built:
+    """A literal as a built value. One too long to fold keeps only its shape."""
+    if not isinstance(v, (str, bytes)):
+        return Built(
+            (), (), v, hashlib.sha256(b"r" + repr(v).encode("utf-8", "surrogatepass")).digest()
+        )
+    data = b"b" + v if isinstance(v, bytes) else b"s" + v.encode("utf-8", "surrogatepass")
+    lits: tuple[str | bytes, ...] = (v,) if len(v) >= DECODED_CHARS else ()
+    value: Value = UNKNOWN if len(v) > 2 * _FOLD_CAP else v
+    return Built((), lits, value, hashlib.sha256(data).digest())
+
+
+def _made(
+    tag: str, parts: Iterable[Built], steps: Iterable[str], value: Value, *atoms: object
+) -> Built:
+    """A value made by one operation (``tag`` and ``atoms``) from ``parts``.
+    Steps and literals are kept once each, so a name that doubles itself
+    stays small."""
+    ps = tuple(parts)
+    h = hashlib.sha256(repr((tag, len(ps), atoms)).encode("utf-8", "surrogatepass"))
+    for p in ps:
+        h.update(p.shape)
+    lits = tuple(dict.fromkeys(_join(p.literals for p in ps)))[:_MAX_LITERALS]
+    return Built(tuple(dict.fromkeys(steps)), lits, value, h.digest())
+
+
+_BOUND = Built((), (), UNKNOWN, hashlib.sha256(b"bound").digest())
+
+
+class _Spent(Exception):
+    """The module's allowance of values read is used up."""
 
 
 def show(value: str) -> str:
@@ -360,6 +421,11 @@ class Tracker:
         self.rebound = _rebound(tree) if tree is not None else frozenset()
         self.depth = 0
         self.loop: dict[str, Built] = {}  # a comprehension's variable, while it is folded
+        nodes = sum(1 for _ in ast.walk(tree)) if tree is not None else 0
+        self.allowance = BUILD_ALLOWANCE + BUILDS_PER_NODE * nodes
+        self.stopped = False  # past a value Garnet couldn't read: nothing more is tracked
+        self.blobs: dict[tuple[int, str | bytes], Blob | None] = {}
+        self.stored = _stored(tree) if tree is not None else frozenset()
 
     def callee(self, func: ast.expr) -> str | None:
         """The dotted name of what a call calls. ``bytes.fromhex`` too, which the
@@ -380,6 +446,9 @@ class Tracker:
         the stack."""
         if self.depth >= MAX_DEPTH:
             return None
+        self.allowance -= 1
+        if self.allowance < 0:
+            raise _Spent
         self.depth += 1
         try:
             return self._build(node, bound)
@@ -388,14 +457,12 @@ class Tracker:
 
     def _build(self, node: ast.expr, bound: frozenset[str]) -> Built | None:
         if isinstance(node, ast.Constant):
-            v = node.value
-            lits = (v,) if isinstance(v, (str, bytes)) else ()
-            return Built((), lits, v)
+            return _constant(node.value)
         if isinstance(node, ast.Name):
             if node.id in self.loop:
                 return self.loop[node.id]
             if node.id in bound:
-                return Built((), (), UNKNOWN)
+                return _BOUND
             if node.id in self.rebound:
                 return None  # which binding holds here can't be told without running it
             return self.names.get(node.id)
@@ -406,7 +473,7 @@ class Tracker:
             ps = [p for p in parts if p is not None]
             values = [p.value for p in ps]
             folded: Value = UNKNOWN if any(v is UNKNOWN for v in values) else _capped(list(values))
-            return Built(_join(p.steps for p in ps), _join(p.literals for p in ps), folded)
+            return _made("sequence", ps, _join(p.steps for p in ps), folded)
         if isinstance(node, ast.BinOp):
             return self._binop(node, bound)
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd, ast.Invert)):
@@ -423,11 +490,11 @@ class Tracker:
                     if isinstance(node.op, ast.Invert)
                     else n
                 )
-            return Built(operand.steps, operand.literals, signed)
+            return _made("unary", (operand,), operand.steps, signed, type(node.op).__name__)
         if isinstance(node, ast.JoinedStr):
             if all(isinstance(v, ast.Constant) for v in node.values):
                 text = "".join(str(v.value) for v in node.values if isinstance(v, ast.Constant))
-                return Built((), (text,), text)
+                return _constant(text)
             fparts = [
                 self.build(v.value if isinstance(v, ast.FormattedValue) else v, bound)
                 for v in node.values
@@ -435,8 +502,14 @@ class Tracker:
             if any(p is None for p in fparts):
                 return None
             fs = [p for p in fparts if p is not None]
-            return Built(
-                ("an f-string", *_join(p.steps for p in fs)), _join(p.literals for p in fs)
+            forms = tuple(
+                (v.conversion, ast.dump(v.format_spec) if v.format_spec else None)
+                if isinstance(v, ast.FormattedValue)
+                else None
+                for v in node.values
+            )
+            return _made(
+                "f-string", fs, ("an f-string", *_join(p.steps for p in fs)), UNKNOWN, forms
             )
         if isinstance(node, ast.Subscript):
             return self._subscript(node, bound)
@@ -467,7 +540,7 @@ class Tracker:
         elif isinstance(node.op, ast.Mult) and isinstance(lv, (str, bytes)) and isinstance(rv, int):
             value = lv * rv if 0 <= rv * len(lv) <= _FOLD_CAP else UNKNOWN
         steps = (*left.steps, *right.steps, step)
-        return Built(steps, left.literals + right.literals, value)
+        return _made("binop", (left, right), steps, value, type(node.op).__name__)
 
     def _subscript(self, node: ast.Subscript, bound: frozenset[str]) -> Built | None:
         inner = self.build(node.value, bound)
@@ -477,18 +550,21 @@ class Tracker:
         value: Value = UNKNOWN
         if isinstance(sl, ast.Slice):
             ends = [
-                self.build(e, bound) if e is not None else Built((), (), None)
+                self.build(e, bound) if e is not None else _constant(None)
                 for e in (sl.lower, sl.upper, sl.step)
             ]
             if any(e is None for e in ends):
                 return None
-            bounds = [e.value for e in ends if e is not None]
+            es = [e for e in ends if e is not None]
+            bounds = [e.value for e in es]
             if all(b is None or isinstance(b, int) for b in bounds) and isinstance(
                 inner.value, (str, bytes, list, tuple)
             ):
                 lo, hi, st = (b if isinstance(b, int) else None for b in bounds)
-                value = inner.value[lo:hi:st]
-            return Built((*inner.steps, "slicing"), inner.literals, value)
+                if st != 0:  # a zero step raises ValueError when run
+                    value = _capped(inner.value[lo:hi:st])
+            steps = (*inner.steps, *_join(e.steps for e in es), "slicing")
+            return _made("slice", (inner, *es), steps, value)
         index = self.build(sl, bound)
         if index is None:
             return None
@@ -499,9 +575,7 @@ class Tracker:
             and -len(v) <= iv < len(v)
         ):
             value = v[iv]
-        return Built(
-            (*inner.steps, *index.steps, "indexing"), inner.literals + index.literals, value
-        )
+        return _made("index", (inner, index), (*inner.steps, *index.steps, "indexing"), value)
 
     def _comprehension(
         self, node: ast.ListComp | ast.GeneratorExp, bound: frozenset[str]
@@ -524,16 +598,14 @@ class Tracker:
         if not gen.ifs and isinstance(items, (str, bytes, list, tuple)) and len(items) <= _FOLD_CAP:
             out = [self._fold_with(node.elt, gen.target.id, x) for x in items]
             if all(o is not UNKNOWN for o in out):
-                value = out
+                value = _capped(out)
         steps = (*source.steps, *_join(p.steps for p in ps))
-        return Built(
-            steps or ("a comprehension",), source.literals + _join(p.literals for p in ps), value
-        )
+        return _made("comprehension", (source, *ps), steps or ("a comprehension",), value)
 
     def _fold_with(self, elt: ast.expr, name: str, item: Value) -> Value:
         """The comprehension's element with its variable holding ``item``."""
         saved = self.loop.get(name)
-        self.loop[name] = Built((), (), item)
+        self.loop[name] = Built((), (), item, _BOUND.shape)
         try:
             b = self.build(elt)
         finally:
@@ -569,7 +641,7 @@ class Tracker:
             mapped: Value = UNKNOWN
             if isinstance(src.value, (str, bytes, list, tuple)) and fn in ("chr", "ord"):
                 mapped = _fold_each(fn, src.value)
-            return Built((*src.steps, f"map({fn})"), src.literals, mapped)
+            return _made("map", (src,), (*src.steps, f"map({fn})"), mapped, fn)
         elif name in _BUILDERS:
             step = f"{name}()"
         else:
@@ -588,39 +660,77 @@ class Tracker:
                 receiver.value if receiver is not None else None,
                 [a.value for a in built],
             )
-        return Built(
-            (*_join(p.steps for p in parts), step), _join(p.literals for p in parts), value
+        kws = [k for k in kwargs if k is not None]
+        names = tuple(k.arg for k in node.keywords)
+        steps = (*_join(p.steps for p in parts), *_join(k.steps for k in kws), step)
+        return _made(
+            "call", (*parts, *kws), steps, value, step, receiver is not None, len(built), names
         )
 
     # --- sites ---------------------------------------------------------------
-
-    def note_assign(self, node: ast.Assign | ast.AnnAssign) -> None:
-        """``BLOB = "..."`` or ``n = "".join(...)``: the name holds that value."""
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        if len(targets) != 1 or not isinstance(targets[0], ast.Name) or node.value is None:
-            return
-        built = self.build(node.value)
-        if built is None:
-            self.names.pop(targets[0].id, None)
-        else:
-            self.names[targets[0].id] = built
-
-    def forget(self, target: ast.expr) -> None:
-        """A loop or ``with`` target, or an augmented assignment, rebinds names."""
-        for sub in ast.walk(target):
-            if isinstance(sub, ast.Name):
-                self.names.pop(sub.id, None)
+    #
+    # The three entry points below never raise. Past an expression Garnet
+    # can't read, or the module's allowance, they record one site saying so
+    # and track nothing more in the module, so GRN-C003's scan of it goes on
+    # and what wasn't read is reported, not passed.
 
     def sites(self, node: ast.AST) -> list[tuple[str, int, str]]:
         """(what it is, line, key) for each GRN-C005 site at this node. The key
         is what the trusted version must have had for the site not to be new:
         ``blob:`` and ``built:`` keys anywhere in it, ``lookup:`` keys in the
-        same module."""
+        same module. An ``unread:`` key is always reported."""
+        return self._guarded(node, lambda: self._sites(node))
+
+    def note_assign(self, node: ast.Assign | ast.AnnAssign) -> list[tuple[str, int, str]]:
+        """``BLOB = "..."`` or ``n = "".join(...)``: the name holds that value.
+        Returns the site for a value Garnet stopped at, if any."""
+        return self._guarded(node, lambda: self._note_assign(node))
+
+    def forget(self, target: ast.expr) -> list[tuple[str, int, str]]:
+        """A loop or ``with`` target, or an augmented assignment, rebinds names."""
+        return self._guarded(target, lambda: self._forget(target))
+
+    def _guarded(
+        self, node: ast.AST, read: Callable[[], list[tuple[str, int, str]]]
+    ) -> list[tuple[str, int, str]]:
+        if self.stopped:
+            return []
+        try:
+            return read()
+        except _Spent:
+            why = "the module builds more values than Garnet reads in one module"
+        except RecursionError:
+            why = "an expression nested too deeply to read"
+        except Exception as e:  # noqa: BLE001 - any failure is reported, never passed
+            why = f"an expression Garnet couldn't read ({type(e).__name__})"
+        self.stopped = True
+        self.names.clear()
+        what = f"stops reading values built from literals here: {why}; the rest of the module isn't checked for GRN-C005"
+        return [(what, getattr(node, "lineno", 0), f"unread:{why}")]
+
+    def _note_assign(self, node: ast.Assign | ast.AnnAssign) -> list[tuple[str, int, str]]:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name) or node.value is None:
+            return []
+        built = self.build(node.value)
+        if built is None:
+            self.names.pop(targets[0].id, None)
+        else:
+            self.names[targets[0].id] = built
+        return []
+
+    def _forget(self, target: ast.expr) -> list[tuple[str, int, str]]:
+        for sub in ast.walk(target):
+            if isinstance(sub, ast.Name):
+                self.names.pop(sub.id, None)
+        return []
+
+    def _sites(self, node: ast.AST) -> list[tuple[str, int, str]]:
         if id(node) in self.consumed:
             return []
         line = getattr(node, "lineno", 0)
         if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
-            b = blob(node.value, BLOB_CHARS + 1)
+            b = self._blob(node.value, BLOB_CHARS + 1)
             return [(f"has {b.describe()}", line, literal_key(node.value))] if b else []
         if isinstance(node, ast.Call):
             return [(s, line, k) for s, k in self._call_sites(node)]
@@ -655,8 +765,15 @@ class Tracker:
         """A module name a §6.3 entry starts with (``os``, ``subprocess``, ``http.client``)."""
         return text is not None and text.split(".")[0] in self.heads
 
+    def _blob(self, value: str | bytes, min_chars: int) -> Blob | None:
+        """``blob()``, read once per literal."""
+        key = (min_chars, value)
+        if key not in self.blobs:
+            self.blobs[key] = blob(value, min_chars)
+        return self.blobs[key]
+
     def _blob_in(self, built: Built, min_chars: int) -> Blob | None:
-        found = [b for v in built.literals if (b := blob(v, min_chars)) is not None]
+        found = [b for v in built.literals if (b := self._blob(v, min_chars)) is not None]
         return max(found, key=lambda b: b.chars) if found else None
 
     def _run(self, runner: str, arg: ast.expr) -> list[tuple[str, str]]:
@@ -687,7 +804,7 @@ class Tracker:
         if built is None or not built.plain or len(built.literals) != 1:
             return []
         value = built.literals[0]
-        b = blob(value, DECODED_CHARS)
+        b = self._blob(value, DECODED_CHARS)
         if b is None:
             return []
         self._consume([arg])
@@ -735,7 +852,7 @@ class Tracker:
             what = f"passes getattr a name built with {built.how()}{named}"
             return [(what, f"built:getattr:{built.key()}")]
         mod, written = ns
-        if mod == "sys.modules" and _self_name(key):
+        if mod == "sys.modules" and _self_name(key) and _source(key, 80) not in self.stored:
             return []
         if built is not None and built.plain and isinstance(key, ast.Constant):
             # A literal key: GRN-C003 follows getattr(os, "system"); a subscript
@@ -769,7 +886,7 @@ class Tracker:
             what = f"looks up{named or ' ' + target} by a name built with {built.how()}: {written_call}"
             return [(what, f"built:{how}:{mod}:{built.key()}")]
         what = f"looks up {target} by a name not written in the source: {written_call}"
-        return [(what, f"lookup:{mod}{how}{_source(key, 200)}")]
+        return [(what, f"lookup:{mod}{how}{_written_key(key)}")]
 
 
 def _rebound(tree: ast.AST) -> frozenset[str]:
@@ -791,6 +908,35 @@ def _rebound(tree: ast.AST) -> frozenset[str]:
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
             other.update({n: 2 for n in node.names})
     return frozenset(n for n, k in other.items() if k > 1 or n in imported)
+
+
+def _written_key(key: ast.expr) -> str:
+    """A lookup's key as the source writes it when that is short, or else a
+    digest of all of it (``#`` and hex), so an edit past any cut-off counts."""
+    if _small(key):
+        text = ast.unparse(key)
+        if len(text) <= 200:
+            return text
+    h = hashlib.sha256()
+    for n in ast.walk(key):  # breadth first, with each node's child count: one reading
+        kids = sum(1 for _ in ast.iter_child_nodes(n))
+        atoms = [type(n).__name__, kids]
+        atoms += [getattr(n, f) for f in ("id", "attr", "arg", "name") if hasattr(n, f)]
+        if isinstance(n, ast.Constant):
+            atoms.append(repr(n.value))
+        h.update(repr(atoms).encode("utf-8", "surrogatepass") + b"\0")
+    return "#" + h.hexdigest()
+
+
+def _stored(tree: ast.AST) -> frozenset[str]:
+    """``__name__``-like names and attributes the module assigns to, as source
+    (``__name__``, ``K.__module__``): one of them may hold anything."""
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Store):
+            if _self_name(node):
+                out.add(_source(node, 80))
+    return frozenset(out)
 
 
 def _self_name(key: ast.expr) -> bool:
