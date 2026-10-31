@@ -1,0 +1,28 @@
+{
+ "environment": {
+  "python_full_version": "3.13.17"
+ },
+ "install": [
+  {
+   "download_info": {
+    "archive_info": {
+     "hash": "sha256=529017394eef84daf63bb57e837fe2fb81363d1b06f6114e86608dae7ceb11ee",
+     "hashes": {
+      "sha256": "529017394eef84daf63bb57e837fe2fb81363d1b06f6114e86608dae7ceb11ee"
+     }
+    },
+    "url": "https://files.pythonhosted.org/packages/aa/6e/6d026d15d1b0fd37a9dd42ecf559f36871cee67158aff5ba652d3130e8b9/num2words-0.5.6-py2.py3-none-any.whl"
+   },
+   "is_direct": false,
+   "is_yanked": false,
+   "metadata": {
+    "metadata_version": "2.0",
+    "name": "num2words",
+    "version": "0.5.6"
+   },
+   "requested": true
+  }
+ ],
+ "pip_version": "26.2.2",
+ "version": "1"
+}

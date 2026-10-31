@@ -14,4 +14,4 @@ def test_both_commands_are_the_same_entry_point() -> None:
     # `uvx garnet-guard` runs the script named after the package (ADR-0007).
     pyproject = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text())
     scripts = pyproject["project"]["scripts"]
-    assert scripts["garnet-guard"] == scripts["garnet"] == "garnet_guard.cli:main"
+    assert scripts["garnet-guard"] == scripts["garnet"] == "garnet_guard.console:main"

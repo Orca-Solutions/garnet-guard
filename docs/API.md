@@ -16,9 +16,9 @@
 ## 2. Layers and import rules
 
 ```text
- surfaces     cli.py   action/   wrapper.py   hooks/
-                 │        │          │           │
-                 └────────┴────┬─────┴───────────┘
+ surfaces     cli.py   action/   install/ (wrapper, hooks)
+                 │        │          │
+                 └────────┴────┬─────┘
  orchestration           engine.py  (evaluate, compare)
                      ┌────────┼──────────┬──────────────┐
  judgment        checks/   policy.py   report/        baseline.py
@@ -38,6 +38,8 @@ Import rules, enforced by an `import-linter` contract in CI:
 - Only `net.py` imports the HTTP client. Only `safe_archive.py` imports `zipfile` and `tarfile`.
 - Only `lockfiles/yamldoc.py` imports PyYAML, and it uses only the parser's events, never a loader (ADR-0016).
 - Surfaces import only `garnet_guard` public names and `engine`.
+- `install/` (the wrapper and the agent hooks, SPEC §10.3 and §10.4) reaches the network and release data only through `engine` (`evaluate`, `pypi_releases`): it doesn't import `net`, `safe_archive`, `facts`, `ecosystems`, `checks` or `httpx` directly. It also reads lockfiles (`lockfiles`, `workspace`), the policy and the text report. Nothing below the surfaces imports `install/` or `console`.
+- `install/gate.py`, the hooks' first step, imports only the standard library, and `garnet_guard/__init__.py` loads its public names on first use, so `garnet hook <agent> run` starts in tens of milliseconds for a command that isn't a package install. A test checks which modules the fast path loads; `console.py` is the entry point of both commands and sends everything else to `cli.main`.
 
 ## 3. Public Python API
 
@@ -343,8 +345,8 @@ src/garnet_guard/
   checks/      trust.py wheel_tags.py content.py known_bad.py errors.py __init__.py
   report/      text.py json.py sarif.py markdown.py schema/report-v1.json
   rules/       *.md               # explain text, one file per rule
-  cli.py  wrapper.py
-  hooks/       claude_code.py codex.py
+  cli.py  console.py      # console.py: the entry point; `hook <agent> run` skips cli.py
+  install/     gate.py shellwords.py pip.py uv.py check.py wrapper.py hooks.py runner.py
 action/          action.yml  examples/
 backtest/        incidents/  corpus.py  __main__.py
 tests/           fixtures/  builders.py  ...

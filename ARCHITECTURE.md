@@ -28,7 +28,7 @@ This describes the engine Garnet is built around and the surfaces that use it. I
               ┌───────────────────────┬───────┴──────────────┐
               ▼                       ▼                      ▼
         GitHub Action           CLI (garnet check)     Agent / install hooks
-        (preview, 0.1)              (0.1)            (planned, month 3)
+        (preview, 0.1)              (0.1)            (preview: pip, uv)
 ```
 
 Every surface is a thin shell over one library call: `garnet_guard.evaluate(diff, policy) -> Report`.
@@ -152,7 +152,7 @@ Planned: artifacts and facts cached by content hash under the user cache dir (an
 - Dependabot-triggered runs get a restricted token. If commenting directly isn't possible, use the two-workflow pattern: the analysis job uploads the report as an artifact, and a `workflow_run` job with write permission posts it without checking out PR code. Both patterns ship in `action/examples/` ([docs/action.md](docs/action.md)). Both have been run on a pull request from a fork, and the single workflow has commented on a Dependabot-opened pull request (2026-10-30).
 - The Action is pinned by commit SHA in all docs, and its own dependencies are hash-locked.
 
-**Install wrapper and agent hooks (month 3).** `garnet pip install …` / `garnet uv sync` resolve first, run `evaluate` on the resulting change, then hand off to the real tool. Claude Code and Codex hooks call the same entry point before a dependency is added.
+**Install wrapper and agent hooks (preview).** `garnet pip install …` and `garnet uv add|remove|lock|sync …` resolve the change with builds turned off (pip's dry run with `--only-binary :all:` last; uv with `--no-build` in a private copy of the project), run `evaluate` on the difference from what is installed or committed, then install exactly what was checked: pip with hash-pinned constraints, uv with `uv sync --frozen` from the checked lockfile. A change that can't be resolved without building is reported as not checked, and nothing is installed. The Claude Code and Codex PreToolUse hooks parse the agent's shell command without running it and run the same resolve-and-check step, answering with context, a deny, or (when they can't check) an ask on Claude Code and a deny on Codex; they never install. The code is in `src/garnet_guard/install/`; [docs/install-wrapper.md](docs/install-wrapper.md) has the details.
 
 ## Package layout
 

@@ -57,7 +57,10 @@ Removed packages produce no findings. Added packages (no base version) get only 
 
 ### 3.3 Invocation without two lockfiles
 
-`garnet diff <package> <old> <new>` compares two releases directly. The install wrapper and hooks compute the head lockfile by resolving without installing (§10).
+`garnet diff <package> <old> <new>` compares two releases directly. The install wrapper and hooks (§10.3, §10.4) compare a base with a head they compute by resolving with builds off, without installing:
+
+- **pip:** the base is the target environment, read with `pip inspect` (distributions installed from an index, as `name==version`; ones installed from a URL, a path or in editable mode are left out). The head is the base with the dry run's `install` entries applied; each must be a wheel, and one from an index other than PyPI is GRN-E005.
+- **uv:** the base is `uv.lock` as committed at git `HEAD`, or the working-tree copy taken before the run when it isn't tracked, so a sync also checks uncommitted lockfile edits. The head is the `uv.lock` the resolve step wrote in its private copy, or the working-tree lockfile when `uv lock --check` says it is current.
 
 ## 4. Fetching and facts
 
@@ -207,7 +210,7 @@ A change's verdict is the highest unsuppressed severity among its findings (`inf
 | 0 | Verdict below `fail_on`. |
 | 1 | Verdict is `warn` and `fail_on = "warn"`. |
 | 2 | Verdict is `block` and `fail_on` is `warn` or `block`. |
-| 3 | Garnet itself failed (bad arguments, invalid policy, internal error). |
+| 3 | Garnet itself failed (bad arguments, invalid policy, internal error), or the install wrapper couldn't check the command, or the package manager failed after the check (§10.3). The wrapper installs nothing when it can't check. |
 
 ## 9. Outputs
 
@@ -264,8 +267,9 @@ garnet diff   <ecosystem>:<package> <old> <new> [same output flags]
 garnet explain <RULE-ID>
 garnet policy check [PATH]
 garnet cache  info|clear
-garnet pip install …   |  garnet uv add|sync|lock …   |  garnet npm install …
-garnet hook   claude-code|codex
+garnet pip install …   [--garnet-force]
+garnet uv     add|remove|lock|sync …   [--garnet-force]
+garnet hook   claude-code|codex  [run]
 garnet version
 ```
 
@@ -292,11 +296,44 @@ The Action MUST run on `pull_request`, MUST NOT check out or execute PR code und
 
 ### 10.3 Install wrapper
 
-`garnet pip install …`, `garnet uv add|sync|lock …` and `garnet npm install …` MUST resolve the change without installing (`pip install --dry-run --report`, `uv lock` into a temp copy, `npm install --package-lock-only` in a temp copy), run `check` on the result, then, if the verdict is below `fail_on`, run the real command with the same arguments. On block it exits 2 and doesn't install. `--garnet-force` skips the block after printing the findings.
+`garnet pip install …` and `garnet uv add|remove|lock|sync …` MUST check the change before anything is installed, and MUST install only what was checked. They MUST NOT run build code of any package while checking: pip and uv both run a package's build backend to resolve a source distribution (pip during `--dry-run`, uv when an sdist's metadata is dynamic).
+
+1. **Read the command.** Every requirements and constraints file it names is read, recursively, before anything runs. These are refused as can't-check: `--no-binary` (on the command line, in a file, or `--only-binary` other than `:all:` in a file), editable installs, local paths and archives (a word is an archive as pip reads it: after `;` markers and `[extras]` are taken off, with pip's extension list), URLs and VCS requirements (on the command line, in uv's `-r` and `-c` files as in pip's, and as direct references in `pyproject.toml`'s dependency tables), pip's `--target`, `--prefix`, `--root`, `--user`, `--platform`, `--python-version`, `--implementation`, `--abi`, `--group` and `--requirements-from-script`, pip settings from the environment or configuration that add requirement files or move the install (`PIP_REQUIREMENT`, `PIP_CONSTRAINT`, `requirement` in `pip.conf`, …), and uv's `--build`, `--no-binary`, `--no-binary-package`, `--editable`, git options, `--script`, `--package`, `--all-packages`, `--workspace`, `--no-project`, `--isolated` and `--frozen` on add or remove, unknown options, workspaces, and path, git, URL, editable or workspace sources. Values from pip's configuration MUST NOT be printed.
+2. **Resolve with builds off,** as argument lists, never through a shell:
+   - pip: `<python> -I -m pip install --dry-run --quiet --report <tmp> <args> --only-binary :all:`, with `--only-binary :all:` after every user argument;
+   - uv: in a private temp folder (mode 0700) holding copies of `pyproject.toml`, `uv.lock`, `uv.toml` and `.python-version` (never `.venv`): `uv add|remove --no-sync --no-build <args>` or `uv lock --no-build <args>`, with `UV_NO_BUILD=1`; for `uv sync`, `uv lock --check --no-build` first and `uv lock --no-build` only if the lockfile is out of date. Every uv call passes `--no-python-downloads` with `UV_PYTHON_DOWNLOADS=never`: a project's `[tool.uv]` can name where Python downloads come from, and uv runs the interpreter it downloads. After the resolve, a package in the head `uv.lock` whose source isn't a package index (git, path, directory, editable, URL), other than the project itself, makes the command can't-check.
+3. **Check** the change between base and head (§3.3) with the policy `check` would read (§7.1).
+4. **Newest release.** For each requested package, the resolved version is compared with the newest PyPI release that matches its specifier, Requires-Python (the environment's Python for pip, the project's lowest supported Python for uv) and the pre-release setting. If it is lower, Garnet resolves that release on its own, builds still off; if that fails for want of a wheel, the command is can't-check (below). The comparison is skipped when the command limits releases by date or type.
+5. **Verdict and hand-off.** At or above `fail_on` (the policy's, else `block`), print the findings, install nothing and exit 1 (warn) or 2 (block) as §8. Below it, install exactly the resolution that was checked: pip runs the user's arguments with `--only-binary :all: -c <pins>`, where the pins file holds every checked version with its wheel's sha256 and every other installed version; uv writes the checked `pyproject.toml` and `uv.lock` back only if neither original changed since the copy (else exit 3 and say which changed), then runs `uv sync --frozen` (`--inexact` after add) with `--no-build-package` for each changed package and the user's install options, unless the command was lock-only (`uv lock`, `--no-sync`). The wrapper then exits 0 if the package manager succeeds, and 3 if it fails, saying with uv that the checked files were already written; 1 and 2 always mean "findings, nothing installed". `uv lock --check`, `--check-exists` and `--dry-run` run in the copy, write nothing and return uv's exit code.
+6. **Can't check.** When the command can't be checked (step 1, a failed no-build resolve, or step 4), print the findings for what could be checked, then for each package what needs a build and why (published only as source, or no wheel for this platform or Python), and what resolved without building, and the options: pin the version that resolves without building, run the package manager directly (unchecked, and it may run build code), or `--garnet-force`. Install nothing and exit 3. This MUST NOT be folded into a GRN-E00x finding: at the default `fail_on = block` a warning would let the install, and the build, run.
+7. **`--garnet-force`** installs after block findings (what was checked), and for can't-check runs the original command unchanged after printing a "not checked" line per package. When there is nothing to run (no interpreter or no uv found), it says so and exits 3.
+
+Below `fail_on`, a warn or block verdict is still reported as one (`fail_on = "never"` included): the summary names the verdict and `fail_on`, and never says "nothing at warn or above".
+
+npm, pnpm, yarn, poetry, `uv pip`, `uv tool`, `uv run` and `uvx` aren't wrapped yet; the npm wrappers wait on the npm lockfile parsers (§3.1).
 
 ### 10.4 Agent hooks
 
-`garnet hook claude-code` prints a Claude Code hook configuration that runs a `PreToolUse` hook on shell commands. The hook detects package-adding commands (`pip install`, `uv add`, `uv pip install`, `poetry add`, `npm install <pkg>`, `pnpm add`, `yarn add`), runs the wrapper's resolve-and-check step, and denies the tool call with the findings as the reason when the verdict is `block`. For `warn` it allows the call and returns the findings as context. `garnet hook codex` does the same with whatever hook or command-approval mechanism Codex offers at 1.0. *Confirm both mechanisms against current Claude Code and Codex docs when building.*
+`garnet hook claude-code` and `garnet hook codex` print a hook configuration (JSON on stdout, notes on stderr) that runs `garnet hook <agent> run` as a `PreToolUse` hook on shell commands, using the absolute path of the running `garnet`:
+
+- Claude Code: matcher `Bash|PowerShell`, exec form (`command` plus `args`), `timeout: 300`, and `onFailure: "block"` (Claude Code 2.1.295 or later), so a crash or timeout blocks the call. Without it, a failed or timed-out PreToolUse hook doesn't block.
+- Codex: `hooks.json`, matcher `^Bash$`, `command` with the path quoted for the shell Codex runs it with (`$SHELL -lc`), `timeout: 300`. Codex runs a non-managed hook only after the user trusts it, and lets the call through when a hook crashes, times out or prints invalid output.
+
+`garnet hook <agent> run` reads one JSON event (at most 1 MB; larger or unreadable input with a package-manager word anywhere in it is can't-tell) on stdin, prints at most one JSON object on stdout and always exits 0; diagnostics go to stderr. It MUST return without importing more than the standard library when the event isn't a PreToolUse shell call or the command has no package-manager word where a shell reads a program name. Otherwise it parses the command (below), runs the wrapper's steps 1 to 4 for each pip and uv command (it never installs, writes back or hands off) and answers by its own deadline of 240 seconds:
+
+| Outcome | Answer (`hookSpecificOutput` unless noted) |
+|---|---|
+| Not a package command | nothing |
+| Checked, nothing at or above `fail_on` (`info` counts as pass; a warn or block finding below `fail_on` adds a top-level `systemMessage`) | `additionalContext` with the changes and any findings, and no `permissionDecision` |
+| At or above `fail_on` | `permissionDecision: "deny"`, with each finding's rule ID, package, versions, first evidence line and `garnet explain RULE` |
+| Can't check, or can't tell | Claude Code `"ask"`, Codex `"deny"`, with the reason and the form Garnet can check; on Claude Code the same text also in `additionalContext`, since an `ask` reason is shown only to the user |
+| A tool that installs packages Garnet can't see (`uvx`, `uv tool install`, `uv run --with` in any spelling, `uv run` of a script with inline dependencies, read relative to `--directory` too, or of a script from a URL or stdin, poetry) | can't check, as above |
+| A tool Garnet doesn't check yet (npm, pnpm, yarn, `uv pip`) | `additionalContext` and a top-level `systemMessage` saying the install wasn't checked and why, and no decision |
+| `uv run` in a project, unless `--no-sync` or `--no-project` | checked as `uv sync` with the same options; nothing when it would install nothing new against `HEAD`'s `uv.lock`; a not-checked note when the project itself can't be resolved (step 1) |
+
+Pass and warn MUST NOT send `allow`: on Claude Code it skips the user's permission prompt, and on Codex `allow` without `updatedInput` fails the hook and drops the context. Codex has no `ask`, so can't-check is a deny there. Every text field MUST stay under 8,000 bytes (Claude Code keeps 10,000 characters of a field, Codex 2,500 tokens of `additionalContext` at 4 bytes a token). When the answer leaves something out (findings, whose evidence it gives one line of, or text past that cap), the full report goes to a file only the user can read, in Claude Code's `scratchpad_dir` or else the system temp folder, and the answer names it; a pass, a can't-tell or a not-checked note writes no file. Package-supplied text MUST be escaped (hard rule 5) and introduced as data; finding titles and evidence are in double quotes. The hook MUST NOT start a pip, uv or Python that git tracks in the repository (including an interpreter named by pip's `--python`, uv's `-p`/`--python`, `UV_PYTHON` or `.python-version`), since it runs before the user approves the command. Its temp folder is removed before it answers, the deadline answer included.
+
+**Recognizing commands.** The command text is untrusted: it is parsed with the standard library's `shlex` and never run; only the recognized pip or uv command, rebuilt as an argument list, runs, for the resolve step. The parser splits on `&&`, `||`, `;`, `|`, `&` and newlines, drops redirections, reads the commands after shell reserved words (`if`, `then`, `do`, `!`, …) and in function bodies, applies leading assignments and literal `export`, `cd`, `pushd` and `source <venv>/bin/activate`, unwraps `sudo`, `env`, `command`, `time`, `nice`, `nohup`, `exec` and `timeout`, follows one level of `bash|sh|zsh [options] -c '<literal>'`, reads pip's general options as pip does (aliases and unique prefixes), and accepts Codex's argument-list form. The fast path's package-manager word is matched with backslashes and quotes taken out, with `${NAME:-` taken out, and after python's `-m`, so it is never narrower than the parser. Substitutions, variables in a package command, a program name the shell expands in a line with a package-manager word, a `uv run` target the shell expands, `eval`, `xargs`, here-documents, unbalanced quotes, nested shells, text piped into a shell, `python -m uv`, an unknown pip or uv option before the subcommand, a program the parser doesn't follow with `pip install` or `uv add` among its arguments, and PowerShell are can't-tell when a package-manager word is present. Scripts, aliases and functions defined by an earlier command are not visible to the hook.
 
 ### 10.5 VS Code extension
 
