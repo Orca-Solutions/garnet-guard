@@ -2,6 +2,16 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-31: GRN-C003 names the function a def just bound
+
+**State.** In the final top-1,000 PyPI corpus, mpmath 0.17 → 0.18 warned for a new copy of `six`, with two evidence lines: `six.py:330 calls exec (in exec_(), reached at import)` and `six.py:333 calls builtins.exec`. Line 333 is in six's Python 2 branch, right after the `def exec_` at line 320, so it calls that function, which reaches the `exec` at line 330; `builtins.exec` is what `exec_` holds in the Python 3 branch (line 307). The resolver applied alias assignments in walk order across both branches. It now treats an undecorated `def` as rebinding its name for the rest of its own block: the walk marks where each block opens and closes, a def unbinds an alias for the rest of that block, and the alias comes back when the block closes, since the branch, loop or `try` with the def may not have run. An import met later in the block binds the name again. A decorated def (which binds what the decorator returns) and default arguments (which run before the def binds) unbind nothing. The mpmath finding still warns, with one line: the `exec` at line 330. awscli 1.46.0's `six` gives the same call sites as before. Scanning every module of the standard library and of this repository's virtual environment gives identical call sites on main and on this branch. The call sites are facts, so CACHE_FORMAT is 43.
+
+**Open tasks.** The backtest delta is pending: replays and corpus to be run. A related gap the branch leaves as it is, for the maintainer: a module-level `def exec` (or any def or assignment of a builtin's name) anywhere in a module makes every bare call to that name in the module count as the module's own, also a call before the def, which runs the builtin. `exec(payload)` followed later by `def exec(c): ...` reports nothing, on main and here. Making that shadowing start at the def would change which findings fire, so it needs its own change and backtest.
+
+**Verification.** New tests in `tests/test_pyindex.py` (the six shape, straight-line and builtin-name rebinding, and shapes that must still report: after the branch, the other branch, a function run before the def, a decorator, a default argument, a later import, a later assignment, a loop and a `try`) and `tests/test_checks.py` (the mpmath-shaped finding); the rebinding test, the mpmath-shaped test and the after-the-branch test (through its six lines) fail on main; the other shapes that must still report pass on both. `uv run pytest`, ruff, mypy (strict) and `lint-imports` pass.
+
+**Review dispositions.** None yet.
+
 ## 2026-10-31: Final clean-corpus numbers for 0.2.0
 
 **State.** The top-1,000 clean corpora were run again with every rule 0.2.0 ships: main at `17b8cd1` plus PR #96, which changes which wheel is read for a release with no wheel for this Python. Two passes each, with the same result:
