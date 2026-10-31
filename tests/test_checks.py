@@ -15,6 +15,7 @@ from garnet_guard.models import (
     WheelDifference,
 )
 from tests.builders import prov, release
+from tests.test_pyindex import SIX
 
 CHANGE = Change("pypi", "demo", "1.0", "1.1")
 INIT = "def hello():\n    return 1\n"
@@ -393,6 +394,20 @@ def test_base64_into_existing_exec_fires() -> None:
     assert f.rule_id == "GRN-C003"
     assert "base64.b64decode → exec" in f.evidence[0].summary
     assert "GRN-C003" not in rules(base, release("1.1", {"demo/__init__.py": old + "Y = 2\n"}))
+
+
+def test_a_vendored_six_names_the_exec_its_python_2_branch_runs() -> None:
+    # mpmath 0.18 added six, whose Python 2 branch defines exec_ and calls it
+    # at once. The finding is true (exec runs at import under Python 2) and
+    # still warns; its second line used to say the call to exec_ called
+    # builtins.exec, the value exec_ gets in the Python 3 branch.
+    base = release("1.0", {"demo/__init__.py": INIT})
+    cand = release("1.1", {"demo/__init__.py": INIT, "demo/six.py": SIX})
+    (f,) = c003(base, cand)
+    assert f.severity == Severity.WARN
+    assert [e.summary for e in f.evidence] == [
+        "new module demo/six.py:9 calls exec (in exec_(), reached at import)"
+    ]
 
 
 # GRN-C002: setup.py anywhere, and releases without a trusted sdist
