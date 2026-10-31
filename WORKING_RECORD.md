@@ -2,6 +2,14 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-10-31: GRN-T002 matches a repository id only on the same host
+
+**State.** `checks/trust.py` `publisher_changed` treated a candidate's attestation as coming from the trusted repository when its repository id was among the baseline's, without looking at the host. Fulcio's source-repository-id extension carries GitLab project ids as well as GitHub repository ids, and the two are numbered separately, so `gitlab.com/evil/r` with id 1 matched `github.com/o/r` with id 1 and GRN-T002 stayed quiet. The id match is now on (host, id), with the host taken from the repository's first path part and lowercased; a repository with no host (PyPI's `<kind>:unknown` for an unknown publisher kind) never matches by id. The rule page and `garnet explain` text say an id counts only on the same host. Severity and rule ID unchanged; nothing stored in backtest facts changed, so CACHE_FORMAT is unchanged.
+
+**Open tasks.** Backtest delta pending. The change can only make GRN-T002 fire more often, never less.
+
+**Verification.** New tests in `tests/test_checks.py` (a GitLab project with the trusted GitHub repository's number fires; a host in another case with the same id stays quiet; an id with no host fires) and a matrix case in `tests/test_rule_matrix.py` for PyPI and npm. Four of them fail on main. `uv run pytest`, ruff, mypy (strict), `lint-imports` and `cmp AGENTS.md CLAUDE.md` pass.
+
 ## 2026-10-31: GRN-C008 warns for a name declared again to install something else
 
 **State.** `facts/npmmeta.py` `declared_dependencies` and `facts/inventory.py` `declared_requirements` kept the first declaration of each name and dropped the rest. npm lets `optionalDependencies` override `dependencies`, so `"h2": "npm:young@^1"` there, beside `"h2": "npm:established@^1"` in `dependencies`, installs `young`, which GRN-C008 never looked up, and the finding was `info` because `established` is old; the same went for a `github:`, URL, path or `file:` source in the second table, and for a second `Requires-Dist` line with a direct URL under another marker. `Requirement` now carries `also` (the other declarations that install something else, as written) and `also_installs` (what they install: another registry package, or the source), built by `Requirement.with_others` (the minimal part of #106's idea; none of its same-owner logic). GRN-C008 keeps its severity for a new dependency with such a target, and for a kept one when the target is new, with a title line `<name> is declared again to install <target>` and evidence that names the other declaration and says Garnet didn't look that up. A second declaration of the same package with another range adds nothing. Only the first declaration is looked up, as before. The rule page, SPEC §4 and §6.2, and `garnet explain GRN-C008` say so. `Requirement` is stored in backtest facts, so CACHE_FORMAT is now 49.

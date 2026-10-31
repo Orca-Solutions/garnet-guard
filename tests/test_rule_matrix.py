@@ -267,6 +267,12 @@ def _rows() -> list[Row]:
         attested,
         release("1.1", provenance=prov(WHEEL, repo="github.com/evil/r", repo_id="2")),
     )
+    fires(
+        "GRN-T002",
+        "GitLab project with the trusted GitHub repository's id",
+        attested,
+        release("1.1", provenance=prov(WHEEL, repo="gitlab.com/o/r", repo_id="1")),
+    )
     quiet(
         "GRN-T002",
         "repository renamed, same id",

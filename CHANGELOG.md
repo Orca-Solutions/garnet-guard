@@ -22,6 +22,7 @@ All notable changes to Garnet Guard. The format follows [Keep a Changelog](https
 ### Fixed
 
 - GRN-C008 read only the first declaration of a dependency's name. A second one, such as `"h2": "npm:young@^1"` in `optionalDependencies` (which npm lets override `dependencies`) beside `"h2": "npm:established@^1"`, a `github:`, URL, path or `file:` source there, or a second `Requires-Dist` line with a direct URL, installs a target Garnet never looked up, and the finding could be `info`. The rule now keeps its `warn` severity for it, names that target and says Garnet didn't look it up; for a dependency the trusted version already had, when the target is new. The backtest cache format is now 49.
+- GRN-T002 treated a repository as the trusted one when its repository id matched, whatever the host. Fulcio puts GitLab project ids in the same certificate extension as GitHub repository ids, so a GitLab project with the same number as the trusted GitHub repository stayed quiet. An id now counts as a rename only on the same host (compared case-insensitively).
 - The text report wrote a line break inside a lockfile version, or any other field, as a new line, so the rest could pass for a line of the report. It is shown as `\x0a` now, like other control characters.
 - `--policy-change` compared ignore names PEP 503 normalized whatever the ecosystem, so an ignore moved from `foo_bar` to `foo-bar`, two different npm packages, wasn't listed. Only an ignore with `ecosystem = "pypi"` is compared normalized now; matching already compared npm names exactly.
 
