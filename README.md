@@ -12,7 +12,7 @@
   <a href="https://scorecard.dev/viewer/?uri=github.com/Orca-Solutions/garnet-guard"><img src="https://api.scorecard.dev/projects/github.com/Orca-Solutions/garnet-guard/badge" alt="OpenSSF Scorecard" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-8E1B2C" alt="License: Apache-2.0" height="20"></a>
   <a href="https://pypi.org/project/garnet-guard/"><img src="https://img.shields.io/pypi/v/garnet-guard?color=8E1B2C" alt="PyPI version" height="20"></a>
-  <img src="https://img.shields.io/badge/status-pre--alpha-5C636B" alt="Status: pre-alpha" height="20">
+  <img src="https://img.shields.io/badge/status-alpha-5C636B" alt="Status: alpha" height="20">
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20releases-52%2F52%20warn-8E1B2C" alt="Replayed malicious releases: 52 of 52 warn" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard#replays-of-real-malicious-releases"><img src="https://img.shields.io/badge/clean%20updates-3.3%25%20flagged%20(606%2F18%2C181)-1B1F24" alt="Clean updates: 606 of 18,181 flagged for a look (3.3%), none a false claim" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/actions/workflows/garnet-guard.yml"><img src="https://raw.githubusercontent.com/orca-solutions/garnet-guard/main/docs/brand/badge/checked-by-garnet-guard.svg" alt="Dependencies checked by Garnet Guard" height="20"></a>
@@ -22,7 +22,7 @@
 
 *Trust the last release. Check the next.*
 
-> Status: pre-alpha. 0.2.0 is on PyPI: `pip install garnet-guard`. The GitHub Action is a preview. Website, rule pages and replays: [garnetguard.dev](https://garnetguard.dev/).
+> Status: alpha. 0.2.0 is on PyPI: `pip install garnet-guard`. The GitHub Action is a preview. Website, rule pages and replays: [garnetguard.dev](https://garnetguard.dev/).
 
 ## Why
 
