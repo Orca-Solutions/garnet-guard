@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from garnet_guard.install import check, gate, hooks, npm, preload, shellwords, wrapper
+from garnet_guard.install import check, gate, hooks, npm, runner, shellwords, wrapper
 from garnet_guard.install.check import Outcome
 from garnet_guard.install.runner import Ran
 from garnet_guard.models import Severity
@@ -70,7 +71,8 @@ def npm_answers(  # type: ignore[no-untyped-def]
         assert argv[0] == NPM
         if argv[1] not in ("ci", "rebuild"):  # every npm the check runs: no node preloads
             assert not {k for k in env if k.upper() in npm.NODE_PRELOAD}
-            assert not {k for k in env if preload.is_loader_preload(k)}  # nor the loader's
+            # nor a loader setting Garnet's own process didn't start with
+            assert all(v == os.environ.get(k) for k, v in env.items() if runner.loader_preload(k))
         if argv[1:] == ["--version"]:
             return Ran(0, f"{version}\n".encode())
         if argv[1:3] == ["config", "get"]:
@@ -888,23 +890,30 @@ def test_quiet_command_tests_every_word_for_spec_commands() -> None:
     assert npm.fetched_spec({"run"}, [GIT]) is None
 
 
+@pytest.fixture
+def no_own_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Garnet's own process started with no loader setting."""
+    for name in [k for k in os.environ if runner.loader_preload(k)]:
+        monkeypatch.delenv(name)
+
+
 @pytest.mark.parametrize(
     "name",
     [
         "LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
         "DYLD_FRAMEWORK_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_PRINT_LIBRARIES",
-        "LD_PRELOAD_64", "LD_32_PRELOAD", "ld_preload",
     ],
 )  # fmt: skip
 def test_loader_preload_names(name: str) -> None:
-    assert preload.is_loader_preload(name)
+    assert runner.loader_preload(name)
 
 
 @pytest.mark.parametrize("name", ["PATH", "LDFLAGS", "LD_DEBUG", "LD_BIND_NOW", "NODE_OPTIONS"])
 def test_other_names_are_not_loader_preloads(name: str) -> None:
-    assert not preload.is_loader_preload(name)
+    assert not runner.loader_preload(name)
 
 
+@pytest.mark.usefixtures("no_own_loader")
 def test_loader_preloads_never_reach_the_check(tmp_path: Path) -> None:
     root = project(tmp_path / "demo")
     run = FakeRunner(npm_answers())  # asserts no loader preload on every check run
@@ -922,6 +931,20 @@ def test_loader_preloads_never_reach_the_check(tmp_path: Path) -> None:
     assert npm.check_env(env) == {"PATH": "/bin", "npm_config_update_notifier": "false"}
     assert not set(loader) & set(npm.resolve_env(env, tmp_path))
     assert out.handoff is not None and out.handoff.env == env  # the hand-off keeps them
+
+
+def test_the_check_keeps_the_loader_settings_garnet_started_with(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Already loaded into Garnet, so they still apply (runner.loader_env); a
+    # value the command changes is replaced by Garnet's own.
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/lib")
+    env = {"PATH": "/bin", "LD_LIBRARY_PATH": "./lib", "LD_PRELOAD": "./pre.so"}
+    assert npm.check_env(env) == {
+        "PATH": "/bin",
+        "LD_LIBRARY_PATH": "/opt/lib",
+        "npm_config_update_notifier": "false",
+    }
 
 
 @pytest.mark.parametrize("agent", AGENTS)
@@ -961,11 +984,13 @@ def test_hook_asks_when_a_loader_preload_value_expands(
     assert "LD_PRELOAD" in inner["permissionDecisionReason"] and not run.calls
 
 
+@pytest.mark.usefixtures("no_own_loader")
 def test_hook_checks_without_a_loader_preload_the_command_doesnt_set(
     where: dict[str, str],  # noqa: F811
 ) -> None:
     # Already in the agent's environment, not set by the command: checked as
-    # usual, and npm runs without it (npm_answers asserts that on each run).
+    # usual, and npm runs with the loader settings of Garnet's own process
+    # only (npm_answers asserts that on each run).
     root = project(Path(where["cwd"]) / "demo")
     npm_exe = str(Path(where["PATH"]) / "npm")
 
@@ -989,17 +1014,6 @@ def test_hook_checks_without_a_loader_preload_the_command_doesnt_set(
     assert "permissionDecision" not in inner
     assert "left-pad 1.2.0 -> 1.3.0" in inner["additionalContext"]
     assert [c[0][1] for c in run.calls] == ["--version", "config", "install"]
-
-
-def test_set_by_command_names_only_what_the_line_changed() -> None:
-    outer = {"PATH": "/bin", "LD_LIBRARY_PATH": "/opt/lib"}
-    assert preload.set_by_command({**outer, "X": "1"}, outer) == []
-    assert preload.set_by_command({**outer, "LD_LIBRARY_PATH": "./lib"}, outer) == [
-        "LD_LIBRARY_PATH"
-    ]
-    assert preload.set_by_command(
-        {**outer, "DYLD_INSERT_LIBRARIES": "x", "LD_PRELOAD": "y"}, outer
-    ) == ["DYLD_INSERT_LIBRARIES", "LD_PRELOAD"]
 
 
 def _link(path: Path, target: Path) -> str:

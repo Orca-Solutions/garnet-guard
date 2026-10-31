@@ -36,7 +36,7 @@ from typing import Literal
 
 from . import npm as npm_commands
 from .gate import PM_WORD, fold, has_pm_word
-from .preload import is_loader_preload
+from .runner import loader_preload
 
 # What the pre-scan writes in place of characters the shell would expand,
 # so a word that held one is still known after shlex has removed the quotes.
@@ -53,15 +53,15 @@ _PIP = re.compile(r"^pip(?:3(?:\.\d+)?)?(?:\.exe)?$")
 _PYTHON = re.compile(r"^(?:(?:python|pypy)(?:\d+(?:\.\d+)?)?[tdm]?|py)(?:\.exe)?$")
 # Environment variables that change which package manager runs or where it
 # installs. An unknown value for one of these makes later commands unclear.
-# The loader's preload settings (LD_PRELOAD, DYLD_INSERT_LIBRARIES, …) count
-# too: :func:`_relevant`.
 _RELEVANT_ENV = re.compile(
     r"^(?:PIP_|UV_|PYTHON|VIRTUAL_ENV$|PATH$|CONDA_PREFIX$|npm_config_|NPM_CONFIG_)"
 )
 
 
 def _relevant(name: str) -> bool:
-    return _RELEVANT_ENV.match(name) is not None or is_loader_preload(name)
+    """Whether a variable's value matters to the check: pip's, uv's and
+    Python's settings, and the loader settings the hooks ask about."""
+    return bool(_RELEVANT_ENV.match(name)) or loader_preload(name)
 
 
 # pip's general options, before the subcommand, and whether each takes a

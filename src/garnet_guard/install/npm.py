@@ -35,7 +35,7 @@ from typing import Any
 from ..lockfiles import LockfileError, parse
 from ..lockfiles.npm import looks_like_git, split_spec, valid_name
 from .pip import Refusal
-from .preload import without_loader_preloads
+from .runner import loader_env
 
 LOCKFILES = ("npm-shrinkwrap.json", "package-lock.json")  # npm prefers the first
 COPIED = ("package.json", *LOCKFILES, ".npmrc")
@@ -516,16 +516,17 @@ def config_refusals(text: str) -> tuple[list[Refusal], bool]:
 
 # Environment variables that make node load code before npm runs: a
 # --require or --import in NODE_OPTIONS, a fallback module folder, the REPL's
-# module. They are taken out of every npm run during the check, and so are
-# the loader's (preload.LOADER_PRELOAD: LD_PRELOAD, DYLD_INSERT_LIBRARIES, …).
+# module. They are taken out of every npm run during the check. The loader's
+# settings (runner.LOADER_PRELOAD: LD_PRELOAD, DYLD_INSERT_LIBRARIES, …) are
+# passed only as Garnet itself started with them (runner.loader_env).
 NODE_PRELOAD = frozenset({"NODE_OPTIONS", "NODE_PATH", "NODE_REPL_EXTERNAL_MODULE"})
 TESTED_MAJORS = (10, 11)
 
 
 def check_env(env: Mapping[str, str]) -> dict[str, str]:
-    """The user's environment for npm during the check, without node's or the
-    loader's preloads."""
-    out = {k: v for k, v in without_loader_preloads(env).items() if k.upper() not in NODE_PRELOAD}
+    """The user's environment for npm during the check: no node preloads, and
+    no loader preload from the command (runner.loader_env)."""
+    out = {k: v for k, v in loader_env(env).items() if k.upper() not in NODE_PRELOAD}
     out["npm_config_update_notifier"] = "false"
     return out
 

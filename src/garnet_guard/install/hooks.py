@@ -50,8 +50,9 @@ from typing import Any, TextIO
 
 from ..policy import PolicyError
 from ..report import escape
-from . import check, gate, pip, preload, shellwords, uv
+from . import check, gate, pip, shellwords, uv
 from .check import Deps, Outcome
+from .runner import loader_preload
 
 DEADLINE_SECONDS = 240.0
 CONFIG_TIMEOUT_SECONDS = 300
@@ -192,7 +193,7 @@ def _one(
             answer.details.append(escape(note))
         if skip:
             return
-    preloads = _loader_preloads(item, env)
+    preloads = _preload_why(item, env) if isinstance(item, shellwords.NpmCommand) else None
     if preloads:
         answer.cant.append(escape(preloads))
         answer.details.append(escape(preloads))
@@ -288,24 +289,33 @@ def _uv_run_scope(item: shellwords.UvCommand) -> tuple[bool, str | None]:
     return False, None
 
 
-def _loader_preloads(
+def _preload_why(
     item: shellwords.PipCommand | shellwords.UvCommand | shellwords.NpmCommand,
     env: Mapping[str, str],
 ) -> str | None:
-    """Why an npm command that sets a loader preload (``LD_PRELOAD=./x.so npm
-    i …``) isn't checked: the library it names loads into npm, node and every
-    program they start once the command runs. The check itself runs npm
-    without it."""
-    if not isinstance(item, shellwords.NpmCommand):
-        return None
-    names = preload.set_by_command(item.env, env)
+    """Why the hook asks when the command sets a loader preload (runner.LOADER_PRELOAD).
+
+    The library it names loads into the package manager when the command
+    runs (for npm, into node and every program they start), and can change
+    what it installs, so a check without it wouldn't describe the command;
+    the check never starts the package manager with it either. A setting
+    already in the hook's own environment is loaded into Garnet too, so only
+    one the command sets or changes counts.
+    """
+    names = sorted(n for n, v in item.env.items() if loader_preload(n) and env.get(n) != v)
     if not names:
         return None
+    if isinstance(item, shellwords.NpmCommand):
+        tool, into = "npm", "npm, node and every program they start"
+    else:
+        tool = "pip" if isinstance(item, shellwords.PipCommand) else "uv"
+        into = f"{tool} when it starts"
+    which = ", ".join(names)
     return (
-        f"{item.text}: not checked. The command sets {', '.join(names)}, which makes the "
-        "system's loader load a library into npm, node and every program they start, and "
-        "Garnet Guard can't tell what that library does. Run the command without it to have "
-        "it checked."
+        f"{item.text}: not checked. The command sets {which}, which makes the system's loader "
+        f"load a library of its choosing into {into}. That library can change what {tool} "
+        f"installs, so a check without it wouldn't describe this command, and Garnet Guard "
+        f"doesn't start {tool} with it before you approve the command."
     )
 
 
