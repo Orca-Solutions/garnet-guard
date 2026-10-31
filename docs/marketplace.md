@@ -25,14 +25,16 @@ From [Publishing actions in GitHub Marketplace](https://docs.github.com/en/actio
 ## Before the first listing
 
 1. Merge `garnet check` (lockfile diffing). Done: it is on `main` and in 0.1.0a1.
-2. Try the Action on real pull requests: a Dependabot pull request, a Renovate pull request and a fork pull request with the two-workflow pattern. The dogfood workflow has run on this repository's own pull requests since 2026-10-29. On 2026-10-30 the `v0.1.0a1` commit ran on two Renovate pull requests and a fork pull request in a test repository (WORKING_RECORD.md). A Dependabot-opened run is still to be seen. Put a link to a real comment in the README, ideally the lightning 2.6.2 replay (brand kit, The PR comment).
+2. Try the Action on real pull requests: a Dependabot pull request, a Renovate pull request and a fork pull request with the two-workflow pattern. The dogfood workflow has run on this repository's own pull requests since 2026-10-29. On 2026-10-30 the `v0.1.0a1` commit ran on two Renovate pull requests and a fork pull request in a test repository (WORKING_RECORD.md). A Dependabot-opened run was seen on 2026-10-30, by this repository's own workflow (#87, docs/action.md). Put a link to a real comment in the README, ideally the lightning 2.6.2 replay (brand kit, The PR comment).
 3. Turn on immutable releases in the repository settings, so a published tag can't be moved.
 
 ## Publishing (maintainer)
 
-1. Create a signed tag for the release on `main`, for example `v0.1.0`.
+The listing is published from the GitHub release for a version tag. Tag and publish to PyPI first (docs/RELEASING.md), so the listed version is installable.
+
+1. Wait until the release workflow for the tag (for example `v0.2.0`) has passed, including Verify.
 2. Open `action.yml` on GitHub and click **Draft a release** in the banner. Alternatively, go to **Releases → Draft a new release**.
 3. Tick **Publish this Action to the GitHub Marketplace**. Accept the Developer Agreement if GitHub asks, then wait for "Everything looks good!".
 4. Choose **Security** as the primary category and **Dependency management** as the secondary category.
-5. Select the tag, set the title (for example "Garnet Guard 0.1.0"), paste the release notes from CHANGELOG.md, and click **Publish release**. GitHub asks for two-factor authentication.
+5. Select the tag, set the title (for example "Garnet Guard 0.2.0"), paste the release notes from CHANGELOG.md, and click **Publish release**. GitHub asks for two-factor authentication.
 6. In `action/examples/`, `docs/action.md` and the README, move the pinned commit to the release's full commit SHA, in a follow-up pull request.
