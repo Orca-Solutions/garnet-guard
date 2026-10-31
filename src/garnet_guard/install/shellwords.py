@@ -5,16 +5,21 @@ an agent that read hostile content, so it is only ever parsed, here, with the
 standard library's ``shlex``. Nothing in it is run, expanded or sourced.
 
 What is followed: ``&&``, ``||``, ``;``, ``|``, ``&`` and newlines; redirections
-(dropped); leading ``NAME=value`` assignments and literal ``export``; the
-wrappers ``sudo``, ``env``, ``command``, ``time``, ``nice``, ``nohup``,
-``exec`` and ``timeout``; literal ``cd`` and ``pushd``; ``source <venv>/bin/activate``;
-and one level of ``bash -c '<literal script>'``.
+(dropped); the commands after shell reserved words (``if``, ``then``, ``do``,
+``!``, ``{``) and in function bodies; leading ``NAME=value`` assignments and
+literal ``export``; the wrappers ``sudo``, ``env``, ``command``, ``time``,
+``nice``, ``nohup``, ``exec`` and ``timeout``; literal ``cd`` and ``pushd``;
+``source <venv>/bin/activate``; one level of ``bash [options] -c '<literal
+script>'``; and ``uv run``, read as the ``uv sync`` it starts with.
 
 What makes a command "can't tell" when a package-manager word is in it:
 command or process substitution, a shell variable in a package-manager
-command, ``eval``, ``xargs``, here-documents, unbalanced quotes, and
-anything else the shell would expand before the package manager sees it.
-Scripts, aliases and shell functions aren't visible here at all.
+command, ``eval``, ``xargs``, here-documents, unbalanced quotes, text piped
+into a shell, ``python -m uv``, a pip or uv option before the subcommand
+that isn't in the tables below, a program not followed here with ``pip
+install`` or ``uv add`` among its arguments, and anything else the shell
+would expand before the package manager sees it. Scripts, aliases and
+functions defined by an earlier command aren't visible here at all.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from .gate import PM_WORD
+from .gate import PM_WORD, fold
 
 # What the pre-scan writes in place of characters the shell would expand,
 # so a word that held one is still known after shlex has removed the quotes.
@@ -40,42 +45,54 @@ _SEPARATORS = frozenset({"&&", "||", ";", "|", "&", "|&", ";;", ";&", ";;&", "("
 _ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.DOTALL)
 _SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
 _PIP = re.compile(r"^pip(?:3(?:\.\d+)?)?(?:\.exe)?$")
-_PYTHON = re.compile(r"^(?:python(?:3(?:\.\d+)?)?|py)(?:\.exe)?$")
+_PYTHON = re.compile(r"^(?:(?:python|pypy)(?:\d+(?:\.\d+)?)?[tdm]?|py)(?:\.exe)?$")
 # Environment variables that change which package manager runs or where it
 # installs. An unknown value for one of these makes later commands unclear.
 _RELEVANT_ENV = re.compile(r"^(?:PIP_|UV_|PYTHON|VIRTUAL_ENV$|PATH$|CONDA_PREFIX$)")
 
-# pip's general options that take a value, before the subcommand.
-PIP_GENERAL_VALUE_OPTIONS = frozenset(
+# pip's general options, before the subcommand, and whether each takes a
+# value (pip 26.2.2, main_parser's general group, aliases included). pip
+# accepts any unique prefix of one of these.
+PIP_GENERAL_OPTIONS: dict[str, bool] = {
+    "--help": False, "--debug": False, "--isolated": False, "--require-virtualenv": False,
+    "--require-venv": False, "--python": True, "--verbose": False, "--version": False,
+    "--quiet": False, "--log": True, "--log-file": True, "--local-log": True,
+    "--no-input": False, "--keyring-provider": True, "--proxy": True, "--no-proxy-env": False,
+    "--retries": True, "--timeout": True, "--default-timeout": True, "--exists-action": True,
+    "--trusted-host": True, "--cert": True, "--client-cert": True, "--cache-dir": True,
+    "--no-cache-dir": False, "--disable-pip-version-check": False, "--no-color": False,
+    "--no-python-version-warning": False, "--use-feature": True, "--use-deprecated": True,
+    "--resume-retries": True,
+}  # fmt: skip
+PIP_GENERAL_VALUE_OPTIONS = frozenset(k for k, v in PIP_GENERAL_OPTIONS.items() if v)
+_PIP_SHORT = frozenset("hvVq")
+# uv's global options before the subcommand, and whether each takes a value
+# (uv 0.11.32, hidden ones included). uv takes no abbreviations.
+UV_GLOBAL_OPTIONS: dict[str, bool] = {
+    "--cache-dir": True, "--color": True, "--config-file": True, "--directory": True,
+    "--project": True, "--allow-insecure-host": True, "--trusted-host": True,
+    "--python-preference": True, "--preview-features": True, "--python-fetch": True,
+    "--quiet": False, "--verbose": False, "--no-cache": False, "--no-config": False,
+    "--offline": False, "--native-tls": False, "--system-certs": False,
+    "--managed-python": False, "--no-managed-python": False, "--no-python-downloads": False,
+    "--allow-python-downloads": False, "--no-progress": False, "--preview": False,
+    "--no-preview": False, "--help": False, "--version": False, "--no-color": False,
+    "--show-settings": False, "--isolated": False, "--no-installer-metadata": False,
+}  # fmt: skip
+UV_GLOBAL_VALUE_OPTIONS = frozenset(k for k, v in UV_GLOBAL_OPTIONS.items() if v)
+_UV_SHORT = frozenset("qvnhV")
+# Shell words that start a compound command: the command after them runs.
+_RESERVED = frozenset({"if", "then", "elif", "else", "do", "while", "until", "!", "{", "}"})
+# Programs that only print, search or look up their arguments, so a
+# package-manager word among them runs nothing.
+_PRINTS = frozenset(
     {
-        "--python",
-        "--log",
-        "--keyring-provider",
-        "--proxy",
-        "--retries",
-        "--timeout",
-        "--exists-action",
-        "--trusted-host",
-        "--cert",
-        "--client-cert",
-        "--cache-dir",
-        "--use-feature",
-        "--use-deprecated",
-        "--resume-retries",
+        "echo", "printf", "man", "help", "which", "type", "whatis", "apropos", "info", "tldr",
+        "grep", "egrep", "fgrep", "rg", "ag", "ack", "cat", "less", "more", "head", "tail",
     }
-)
-# uv's global options that take a value, before the subcommand.
-UV_GLOBAL_VALUE_OPTIONS = frozenset(
-    {
-        "--cache-dir",
-        "--color",
-        "--config-file",
-        "--directory",
-        "--project",
-        "--allow-insecure-host",
-        "--python-preference",
-    }
-)
+)  # fmt: skip
+# Shell options that take a value (bash, sh, zsh, dash, ksh).
+_SHELL_VALUE_OPTIONS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
 
 # Install-like subcommands of the tools Garnet doesn't wrap yet.
 _NPM_INSTALLS = frozenset(
@@ -117,15 +134,21 @@ class UvCommand:
     cwd: str
     env: Mapping[str, str]
     text: str
+    via_run: bool = False  # ``uv run``, checked as the ``uv sync`` it starts with
 
 
 @dataclass(frozen=True)
 class Unsupported:
-    """An install with a tool Garnet doesn't check yet. Reported, never passed."""
+    """An install with a tool Garnet doesn't check yet. Reported, never passed.
+
+    ``ask``: the command installs packages Garnet can't see (uvx, uv tool,
+    uv run --with, poetry), so it is "can't check", not a note.
+    """
 
     tool: str
     why: str
     text: str
+    ask: bool = False
 
 
 @dataclass(frozen=True)
@@ -248,7 +271,13 @@ def _split(text: str) -> _Line:
                 why = why or "it uses a here-document"
             skip_next = True  # the redirection's target
             continue
-        if tok in ("{", "}", "!") and not current:
+        if tok == "()":  # "name() { …; }": a function definition; its body follows
+            current = []
+            continue
+        if not current and tok == "function":
+            skip_next = True  # the function's name
+            continue
+        if not current and tok in _RESERVED:
             continue
         current.append(tok)
     if current:
@@ -266,7 +295,7 @@ def _expands(word: str) -> bool:
 
 
 def _has_pm_word(words: Sequence[str]) -> bool:
-    return PM_WORD.search(" ".join(_plain(w) for w in words)) is not None
+    return PM_WORD.search(fold(" ".join(_plain(w) for w in words))) is not None
 
 
 def _home(env: Mapping[str, str]) -> str:
@@ -290,6 +319,7 @@ class _State:
     cwd: str | None  # None once a ``cd`` Garnet can't follow has run
     env: dict[str, str]
     env_unknown: str | None = None  # why later commands' environment is unknown
+    line: str = ""  # the whole command line, as given
 
 
 def find_commands(
@@ -307,10 +337,12 @@ def find_commands(
     """
     if not isinstance(command, str):
         argv = list(command)
-        if len(argv) == 3 and os.path.basename(argv[0]) in _SHELLS and _is_c_flag(argv[1]):
-            return find_commands(argv[2], cwd=cwd, env=env, depth=depth)
+        if argv and os.path.basename(argv[0]) in _SHELLS:
+            script, _ = _shell_script(argv[1:])
+            if script is not None:
+                return find_commands(script, cwd=cwd, env=env, depth=depth)
         # An argv list reaches the program as is: no shell expands anything in it.
-        state = _State(cwd, dict(env))
+        state = _State(cwd, dict(env), line=shlex.join(argv))
         found = _simple(tuple(argv), shlex.join(argv), state, depth=1)
         if isinstance(found, list):
             return found
@@ -318,7 +350,7 @@ def find_commands(
     line = _split(command)
     if line.unclear:
         return [Unclear(f"Garnet Guard can't tell what this runs: {line.unclear}.", command)]
-    state = _State(cwd, dict(env))
+    state = _State(cwd, dict(env), line=command)
     out: list[Found] = []
     for words in line.simple:
         text = " ".join(_plain(w) for w in words)
@@ -376,34 +408,89 @@ def _simple(
         if _has_pm_word(rest[1:]):
             return Unclear(f"Garnet Guard can't tell what {base} runs here.", text)
         return None
-    if base in _SHELLS and len(rest) >= 3:
-        if _is_c_flag(rest[1]):
-            script = rest[2]
-            if not _has_pm_word([script]):
-                return None
-            if depth >= 1 or _expands(script):
-                return Unclear(f"Garnet Guard can't tell what this {base} -c script runs.", text)
-            if state.cwd is None or state.env_unknown:
-                return Unclear(_unknown_why(state), text)
-            return find_commands(_plain(script), cwd=state.cwd, env=env, depth=depth + 1)
-        return None
+    if base in _SHELLS:
+        script, reads_stdin = _shell_script(rest[1:])
+        if script is None:
+            if reads_stdin and PM_WORD.search(fold(state.line)):
+                return Unclear(
+                    f"Garnet Guard can't tell what this {base} runs: it reads its commands from "
+                    "a pipe or a redirection.",
+                    text,
+                )
+            return None
+        if not _has_pm_word([script]):
+            return None
+        if depth >= 1 or _expands(script):
+            return Unclear(f"Garnet Guard can't tell what this {base} -c script runs.", text)
+        if state.cwd is None or state.env_unknown:
+            return Unclear(_unknown_why(state), text)
+        return find_commands(_plain(script), cwd=state.cwd, env=env, depth=depth + 1)
     found = _recognize(rest, text)
-    if found is None or isinstance(found, (Unclear, Unsupported)):
+    if found is None:
+        return _later_word(rest, text)
+    if isinstance(found, (Unclear, Unsupported)):
         return found
-    if any(_expands(w) for w in rest):
-        return Unclear(
-            "Garnet Guard can't tell what this installs: it uses a shell variable or a "
-            "command substitution, which the shell expands before the package manager runs.",
-            text,
-        )
+    if found != "uv-run" and any(_expands(w) for w in rest):  # uv run: its options only
+        return Unclear(_EXPANDS_WHY, text)
     if state.cwd is None or state.env_unknown:
         return Unclear(_unknown_why(state), text)
     return _locate(found, rest, state.cwd, env)
 
 
-def _is_c_flag(word: str) -> bool:
-    """``-c``, or a cluster such as ``-lc`` or ``-ec``."""
-    return word.startswith("-") and not word.startswith("--") and "c" in word
+_EXPANDS_WHY = (
+    "Garnet Guard can't tell what this installs: it uses a shell variable or a "
+    "command substitution, which the shell expands before the package manager runs."
+)
+
+
+def _shell_script(args: Sequence[str]) -> tuple[str | None, bool]:
+    """For ``bash [options] -c SCRIPT``: the script. Otherwise None, and whether
+    the shell reads its commands from stdin (no script file named)."""
+    j = 0
+    saw_c = saw_s = False
+    while j < len(args):
+        a = args[j]
+        if a in ("--", "-"):
+            j += 1
+            break
+        if a in _SHELL_VALUE_OPTIONS:
+            j += 2
+            continue
+        if a.startswith("--"):
+            j += 1
+            continue
+        if len(a) > 1 and a[0] in "-+":
+            if a[0] == "-":
+                saw_c = saw_c or "c" in a[1:]
+                saw_s = saw_s or "s" in a[1:]
+            j += 2 if a[-1] in "oO" else 1  # "-eo pipefail"
+            continue
+        break
+    operands = args[j:]
+    if saw_c:
+        return (operands[0] if operands else None), False
+    return None, saw_s or not operands
+
+
+# Words after a program name that make a following pip or uv word an install.
+_INSTALLISH = frozenset(
+    {"install", "add", "remove", "lock", "sync", "run", "tool", "pip", "i", "ci", "update"}
+)
+
+
+def _later_word(words: tuple[str, ...], text: str) -> Unclear | None:
+    """A program Garnet doesn't follow (``stdbuf``, ``ssh``, ``docker run``…) with
+    ``pip install`` or ``uv add`` among its arguments: it may run them."""
+    base = os.path.basename(_plain(words[0]))
+    if base in _PRINTS or _PIP.match(base) or _PYTHON.match(base) or base in ("uv", "uv.exe"):
+        return None
+    plain = [os.path.basename(_plain(w)) for w in words[1:]]
+    for k, w in enumerate(plain[:-1]):
+        nxt = plain[k + 1]
+        pm = _PIP.match(w) or w in ("uv", "uv.exe", "uvx", "poetry", "npm", "pnpm", "yarn")
+        if (pm and nxt in _INSTALLISH) or (_PYTHON.match(w) and nxt.startswith("-m")):
+            return Unclear(f"Garnet Guard can't tell what {_plain(words[0])} runs here.", text)
+    return None
 
 
 def _unknown_why(state: _State) -> str:
@@ -529,19 +616,30 @@ def _source(words: tuple[str, ...], state: _State) -> None:
 
 def _recognize(
     words: tuple[str, ...], text: str
-) -> Literal["pip", "uv"] | Unsupported | Unclear | None:
+) -> Literal["pip", "uv", "uv-run"] | Unsupported | Unclear | None:
     """What a command (wrappers removed) is, if it names a package manager."""
     base = os.path.basename(_plain(words[0]))
     args = tuple(_plain(w) for w in words[1:])
     if _PIP.match(base):
-        return "pip" if _subcommand(args, PIP_GENERAL_VALUE_OPTIONS)[0] == "install" else None
+        return _pip_kind(args, text)
     if _PYTHON.match(base):
         module, rest = _python_module(args)
-        if module == "pip" and _subcommand(rest, PIP_GENERAL_VALUE_OPTIONS)[0] == "install":
-            return "pip"
+        if module == "pip":
+            return _pip_kind(rest, text)
+        if module == "uv":
+            found = _recognize(("uv", *rest), text)
+            if found in ("uv", "uv-run"):
+                return Unclear(
+                    "Garnet Guard can't tell which uv python -m uv runs; it checks uv commands "
+                    "that start with uv.",
+                    text,
+                )
+            return found
         return None
     if base in ("uv", "uv.exe"):
-        sub, at = _subcommand(args, UV_GLOBAL_VALUE_OPTIONS)
+        sub, at, unknown = _uv_subcommand(args)
+        if unknown:
+            return Unclear(f"Garnet Guard can't tell what uv {unknown} means here.", text)
         after = args[at + 1 :]
         if sub in ("add", "remove", "lock", "sync"):
             return "uv"
@@ -554,15 +652,16 @@ def _recognize(
             "run",
             "upgrade",
         ):
-            return Unsupported("uv tool", _TOOL_WHY, text)
+            return Unsupported("uv tool", _TOOL_WHY, text, ask=True)
         if sub == "run":
             if any(a.split("=", 1)[0] in _UV_RUN_WITH for a in after):
-                return Unsupported("uv run --with", _TOOL_WHY, text)
+                return Unsupported("uv run --with", _TOOL_WHY, text, ask=True)
             if _has_pm_word(after):
                 return Unclear("Garnet Guard can't tell what uv run starts here.", text)
+            return "uv-run"
         return None
     if base in ("uvx", "uvx.exe"):
-        return Unsupported("uvx", _TOOL_WHY, text)
+        return Unsupported("uvx", _TOOL_WHY, text, ask=True)
     tool = base.split(".")[0]
     if tool == "npx":
         return Unsupported("npx", _NPM_WHY, text)
@@ -576,12 +675,13 @@ def _recognize(
     if base == "poetry":
         sub = _subcommand(args, frozenset())[0]
         if sub in _POETRY_INSTALLS:
-            return Unsupported(f"poetry {sub}", "Garnet Guard doesn't wrap Poetry yet.", text)
+            why = "Garnet Guard doesn't read Poetry projects yet."
+            return Unsupported(f"poetry {sub}", why, text, ask=True)
     return None
 
 
 _TOOL_WHY = (
-    "it installs a tool into an environment of its own, which Garnet Guard doesn't check yet."
+    "It installs a tool into an environment of its own, which Garnet Guard doesn't check yet."
 )
 _UV_RUN_WITH = frozenset({"--with", "-w", "--with-requirements", "--with-editable"})
 _JS_INSTALLS = {"npm": _NPM_INSTALLS, "pnpm": _PNPM_INSTALLS, "yarn": _YARN_INSTALLS}
@@ -590,6 +690,56 @@ _JS_INSTALLS = {"npm": _NPM_INSTALLS, "pnpm": _PNPM_INSTALLS, "yarn": _YARN_INST
 def subcommand(args: Sequence[str], value_options: frozenset[str]) -> tuple[str | None, int]:
     """The first word that isn't an option (or an option's value), and its index."""
     return _subcommand(args, value_options)
+
+
+def _pip_kind(args: Sequence[str], text: str) -> Literal["pip"] | Unclear | None:
+    sub, _, unknown = pip_subcommand(args)
+    if unknown:
+        return Unclear(f"Garnet Guard can't tell what pip {unknown} means here.", text)
+    return "pip" if sub == "install" else None
+
+
+def pip_subcommand(args: Sequence[str]) -> tuple[str | None, int, str | None]:
+    """pip's subcommand and its index, with general options read as pip reads
+    them (a unique prefix counts). The third value is an option Garnet doesn't
+    know, when one comes first: then the subcommand can't be told."""
+    j = 0
+    while j < len(args):
+        a = args[j]
+        if a == "--" or not a.startswith("-") or a == "-":
+            break
+        if a.startswith("--"):
+            name, eq, _ = a.partition("=")
+            hits = [k for k in PIP_GENERAL_OPTIONS if k == name] or [
+                k for k in PIP_GENERAL_OPTIONS if k.startswith(name)
+            ]
+            if len(hits) != 1:
+                return None, j, name
+            j += 2 if PIP_GENERAL_OPTIONS[hits[0]] and not eq else 1
+            continue
+        if not set(a[1:]) <= _PIP_SHORT:
+            return None, j, a
+        j += 1
+    return (args[j], j, None) if j < len(args) and args[j] != "--" else (None, j, None)
+
+
+def _uv_subcommand(args: Sequence[str]) -> tuple[str | None, int, str | None]:
+    """uv's subcommand and its index, like :func:`pip_subcommand`."""
+    j = 0
+    while j < len(args):
+        a = args[j]
+        if not a.startswith("-") or a in ("-", "--"):
+            break
+        if a.startswith("--"):
+            name, eq, _ = a.partition("=")
+            if name not in UV_GLOBAL_OPTIONS:
+                return None, j, name
+            j += 2 if UV_GLOBAL_OPTIONS[name] and not eq else 1
+            continue
+        if not set(a[1:]) <= _UV_SHORT:
+            return None, j, a
+        j += 1
+    return (args[j], j, None) if j < len(args) and args[j] != "--" else (None, j, None)
 
 
 def _subcommand(args: Sequence[str], value_options: frozenset[str]) -> tuple[str | None, int]:
@@ -634,14 +784,20 @@ def _python_module(args: Sequence[str]) -> tuple[str | None, tuple[str, ...]]:
 
 
 def _locate(
-    kind: Literal["pip", "uv"], words: tuple[str, ...], cwd: str, env: Mapping[str, str]
-) -> Found:
+    kind: Literal["pip", "uv", "uv-run"], words: tuple[str, ...], cwd: str, env: Mapping[str, str]
+) -> Found | None:
     """Fill in where the package manager is: its path, and pip's interpreter."""
     text = " ".join(_plain(w) for w in words)
     prog = _literal(words[0], env)
     path = env.get("PATH", "")
     exe = _which(prog, cwd, path)
     args = tuple(_literal(w, env) for w in words[1:])
+    if kind == "uv-run":
+        _, at, _ = _uv_subcommand(args)
+        raw = words[1:]
+        if any(_expands(w) for w in raw[: at + 1]):
+            return Unclear(_EXPANDS_WHY, text)
+        return _uv_run(exe, args[:at], raw[at + 1 :], cwd, env, text)
     if kind == "uv":
         sub, at = _subcommand(args, UV_GLOBAL_VALUE_OPTIONS)
         return UvCommand(exe, sub or "", args[:at] + args[at + 1 :], cwd, dict(env), text)
@@ -650,6 +806,93 @@ def _locate(
         return PipCommand(exe, prog, pip_args, cwd, dict(env), text)
     python = interpreter_for_pip(exe, path) if exe else None
     return PipCommand(python, prog, args, cwd, dict(env), text)
+
+
+# uv run's options that take a value (uv 0.11.32), besides the global ones.
+_UV_RUN_VALUE = frozenset(
+    {
+        "--extra", "--no-extra", "--group", "--no-group", "--only-group",
+        "--no-editable-package", "--env-file", "--with", "--with-editable",
+        "--with-requirements", "--package", "--python-platform", "--index", "--default-index",
+        "--index-url", "--extra-index-url", "--find-links", "--index-strategy",
+        "--keyring-provider", "--upgrade-package", "--upgrade-group", "--resolution",
+        "--prerelease", "--fork-strategy", "--exclude-newer", "--exclude-newer-package",
+        "--no-sources-package", "--reinstall-package", "--link-mode", "--config-setting",
+        "--config-settings-package", "--no-build-isolation-package", "--no-build-package",
+        "--no-binary-package", "--refresh-package", "--python",
+    }
+) | UV_GLOBAL_VALUE_OPTIONS  # fmt: skip
+_UV_RUN_FLAGS = frozenset(
+    {
+        "--all-extras", "--dev", "--no-dev", "--no-default-groups", "--all-groups", "--module",
+        "--only-dev", "--no-editable", "--exact", "--no-env-file", "--isolated", "--active",
+        "--no-active", "--no-sync", "--locked", "--frozen", "--script", "--gui-script",
+        "--all-packages", "--no-project", "--no-index", "--upgrade", "--no-sources",
+        "--reinstall", "--compile-bytecode", "--no-build-isolation", "--no-build",
+        "--no-binary", "--refresh",
+    }
+) | {k for k, v in UV_GLOBAL_OPTIONS.items() if not v}  # fmt: skip
+_UV_RUN_SHORT = {
+    "-m": "--module", "-s": "--script", "-w": "--with", "-i": "--index-url",
+    "-f": "--find-links", "-U": "--upgrade", "-P": "--upgrade-package",
+    "-C": "--config-setting", "-p": "--python", "-n": "--no-cache", "-q": "--quiet",
+    "-v": "--verbose",
+}  # fmt: skip
+# uv run options that ``uv sync`` doesn't take, and that don't change what it installs.
+_UV_RUN_ONLY = frozenset({"--module", "--env-file", "--no-env-file"})
+
+
+def _uv_run(
+    exe: str | None,
+    before: tuple[str, ...],
+    raw: tuple[str, ...],
+    cwd: str,
+    env: Mapping[str, str],
+    text: str,
+) -> Found | None:
+    """``uv run [options] COMMAND``: unless told not to, uv locks and syncs the
+    project first, with builds on. That is checked as ``uv sync`` with the
+    same options; the command it then starts isn't Garnet's to read."""
+    kept: list[str] = []
+    args = tuple(_literal(w, env) for w in raw)
+    j = 0
+    while j < len(args):
+        a = args[j]
+        if a == "--" or not a.startswith("-") or a == "-":
+            break
+        name, eq, _ = a.partition("=")
+        name = _UV_RUN_SHORT.get(name[:2], name) if not name.startswith("--") else name
+        if a[:1] == "-" and a[1:2] != "-" and len(a) > 2 and name in _UV_RUN_VALUE:
+            eq = "="  # "-p3.12"
+        if name not in _UV_RUN_VALUE and name not in _UV_RUN_FLAGS:
+            return Unclear(f"Garnet Guard can't tell what uv run {name} means here.", text)
+        width = 2 if name in _UV_RUN_VALUE and not eq else 1
+        if any(_expands(w) for w in raw[j : j + width]):
+            return Unclear(_EXPANDS_WHY, text)
+        given = list(args[j : j + width])
+        j += width
+        if name in ("--no-sync", "--no-project"):
+            return None  # nothing is synced
+        if name in ("--script", "--gui-script"):
+            why = "It installs a script's own dependencies, which Garnet Guard doesn't check yet."
+            return Unsupported("uv run --script", why, text, ask=True)
+        if name not in _UV_RUN_ONLY:
+            kept += given
+    rest = args[j + 1 :] if j < len(args) and args[j] == "--" else args[j:]
+    if rest and rest[0].endswith((".py", ".pyw")) and _inline_metadata(os.path.join(cwd, rest[0])):
+        why = "It installs a script's own dependencies, which Garnet Guard doesn't check yet."
+        return Unsupported("uv run <script>", why, text, ask=True)
+    return UvCommand(exe, "sync", (*before, *kept), cwd, dict(env), text, via_run=True)
+
+
+def _inline_metadata(path: str) -> bool:
+    """Whether a script has a ``# /// script`` block (PEP 723). Read, never run."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(256 * 1024)
+    except OSError:
+        return False
+    return re.search(rb"(?m)^# /// script\s*$", head) is not None
 
 
 def _which(prog: str, cwd: str, path: str) -> str | None:

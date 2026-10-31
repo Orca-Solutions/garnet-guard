@@ -28,7 +28,17 @@ from garnet_guard.models import (
     Severity,
     Verdict,
 )
-from tests.test_install_check import FIXTURES, FakeRunner, deps, evaluator, pip_answers, releases
+from tests.test_install_check import (
+    BASE_LOCK,
+    FIXTURES,
+    HEAD_LOCK,
+    FakeRunner,
+    deps,
+    evaluator,
+    pip_answers,
+    releases,
+    uv_project,
+)
 
 AGENTS = ("claude-code", "codex")
 
@@ -157,8 +167,9 @@ def test_findings_name_each_rule_once_and_skip_repeated_evidence(where: dict[str
         "claude-code", event("pip install requests==2.32.3", where["cwd"]), where, evaluate=evaluate
     )
     context = spec(out)["additionalContext"]
-    assert "OSV lookup failed (OSV lookup failed)" not in context
-    assert "A new uploader (uploaded by mallory)" in context
+    assert '"OSV lookup failed" ("OSV lookup failed")' not in context
+    # Package-supplied titles and evidence are in double quotes.
+    assert '"A new uploader" ("uploaded by mallory")' in context
     assert "Rule details: garnet explain GRN-E001, garnet explain GRN-T004." in context
 
 
@@ -219,6 +230,10 @@ def test_cant_check_asks_or_denies(agent: str, decision: str, where: dict[str, s
     assert "What it could check without building: Changes: num2words (new) -> 0.5.6." in reason
     assert "pip install num2words==0.5.6 can be checked." in reason
     assert all(c[2] for c in run.calls)  # the hook never installs
+    if agent == "claude-code":  # the "ask" reason goes to the user; the agent reads this
+        context = inner["additionalContext"]
+        assert "num2words 0.5.14 needs docopt>=0.6.2" in context
+        assert "pip install num2words==0.5.6 can be checked." in context
 
 
 @pytest.mark.parametrize(("agent", "decision"), [("claude-code", "ask"), ("codex", "deny")])
@@ -232,7 +247,64 @@ def test_cant_tell_asks_or_denies(
     inner = spec(answer(agent, event(command, where["cwd"]), where, deps=deps(run)))
     assert inner["permissionDecision"] == decision
     assert "as its own command with literal arguments" in inner["permissionDecisionReason"]
+    if agent == "claude-code":
+        assert "as its own command with literal arguments" in inner["additionalContext"]
     assert run.calls == []
+
+
+@pytest.mark.parametrize(("agent", "decision"), [("claude-code", "ask"), ("codex", "deny")])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "if [ -f requirements.txt ]; then pip install $(cat r); fi",
+        'for p in requests six; do pip install "$p"; done',
+        "python -m uv sync",
+        'echo "pip install requests" | sh',
+        "stdbuf -oL pip install requests",
+        "pip --bogus 1 install requests",
+    ],
+)
+def test_forms_the_parser_cant_follow_are_never_silent(
+    agent: str, decision: str, command: str, where: dict[str, str]
+) -> None:
+    run = FakeRunner(lambda argv, cwd, env: pytest.fail("nothing runs"))
+    inner = spec(answer(agent, event(command, where["cwd"]), where, deps=deps(run)))
+    assert inner["permissionDecision"] == decision
+
+
+@pytest.mark.parametrize(("agent", "decision"), [("claude-code", "ask"), ("codex", "deny")])
+@pytest.mark.parametrize(
+    "command",
+    ["uvx ruff", "uv tool install ruff", "uv run --with requests python", "poetry add x"],
+)
+def test_tools_that_install_unseen_packages_are_cant_check(
+    agent: str, decision: str, command: str, where: dict[str, str]
+) -> None:
+    run = FakeRunner(lambda argv, cwd, env: pytest.fail("nothing runs"))
+    inner = spec(answer(agent, event(command, where["cwd"]), where, deps=deps(run)))
+    assert inner["permissionDecision"] == decision
+    assert f"{command}: not checked." in inner["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+@pytest.mark.parametrize("severity", [Severity.BLOCK, Severity.WARN])
+def test_fail_on_never_still_shows_the_findings(
+    agent: str, severity: Severity, where: dict[str, str]
+) -> None:
+    Path(where["cwd"], "garnet.toml").write_text('[garnet]\nversion = 1\nfail_on = "never"\n')
+    out = answer(
+        agent,
+        event("pip install requests==2.32.3", where["cwd"]),
+        where,
+        evaluate=evaluator({"requests": ("GRN-T001", severity)}),
+    )
+    inner = spec(out)
+    assert "permissionDecision" not in inner
+    context = inner["additionalContext"]
+    assert f"the verdict is {severity.label}, below fail_on = never" in context
+    assert f"{severity.label} GRN-T001 requests 2.32.2 -> 2.32.3" in context
+    assert "nothing at warn or above" not in context
+    assert out is not None and "GRN-T001" in out["systemMessage"]
 
 
 @pytest.mark.parametrize("agent", AGENTS)
@@ -307,6 +379,107 @@ def test_deadline_answers_before_the_agent_gives_up(where: dict[str, str]) -> No
         for worker in threading.enumerate():
             if worker.name == hooks.WORKER:
                 worker.join(10)  # it would write after the test's temp folder is gone
+
+
+def test_deadline_leaves_no_temp_folder(where: dict[str, str]) -> None:
+    release = threading.Event()
+
+    def slow(argv: list[str], cwd: Path, env: dict[str, str]) -> Ran:
+        release.wait(10)
+        return Ran(1)
+
+    try:
+        answer(
+            "codex",
+            event("pip install x", where["cwd"]),
+            where,
+            deps=deps(FakeRunner(slow)),
+            deadline=1.0,
+        )
+        # Removed before the process exits, though the worker still runs.
+        assert not list(Path(tempfile.gettempdir()).glob("garnet-hook-*"))
+    finally:
+        release.set()
+        for worker in threading.enumerate():
+            if worker.name == hooks.WORKER:
+                worker.join(10)
+    assert not list(Path(tempfile.gettempdir()).glob("garnet-hook-*"))
+
+
+def _uv_where(where: dict[str, str]) -> dict[str, str]:
+    uv = Path(where["PATH"]) / "uv"
+    uv.write_text("#!/bin/sh\n")
+    uv.chmod(0o755)
+    return where
+
+
+def _uv_runner(check_ok: bool = True) -> FakeRunner:
+    def run(argv: list[str], cwd: Path, env: dict[str, str]) -> Ran:
+        assert argv[1:3] == ["lock", "--no-python-downloads"] and "--no-build" in argv
+        if "--check" in argv:
+            return Ran(0 if check_ok else 1)
+        (cwd / "uv.lock").write_text(HEAD_LOCK)
+        return Ran(0)
+
+    return FakeRunner(run)
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_uv_run_with_nothing_new_to_sync_gets_no_answer(agent: str, where: dict[str, str]) -> None:
+    uv_project(Path(where["cwd"]), lock=HEAD_LOCK)
+    run = _uv_runner()
+    payload = event("uv run pytest -k x", where["cwd"])
+    out = answer(
+        agent,
+        payload,
+        _uv_where(where),
+        deps=deps(run, committed_lock=lambda p: HEAD_LOCK.encode()),
+    )
+    assert out is None
+    assert run.calls and run.calls[0][0][1] == "lock"  # it was checked, as uv sync
+
+
+@pytest.mark.parametrize("agent", AGENTS)
+def test_uv_run_reports_what_its_sync_would_install(agent: str, where: dict[str, str]) -> None:
+    uv_project(Path(where["cwd"]), lock=HEAD_LOCK)  # the working tree moved past HEAD
+    run = _uv_runner()
+    out = answer(
+        agent,
+        event("uv run pytest", where["cwd"]),
+        _uv_where(where),
+        deps=deps(
+            run,
+            committed_lock=lambda p: BASE_LOCK.encode(),
+            evaluate=evaluator({"requests": ("GRN-T001", Severity.BLOCK)}),
+        ),
+    )
+    inner = spec(out)
+    assert inner["permissionDecision"] == "deny"
+    assert "uv run pytest:" in inner["permissionDecisionReason"]
+    assert "GRN-T001 requests 2.34.1 -> 2.34.2" in inner["permissionDecisionReason"]
+
+
+def test_uv_run_outside_a_project_or_without_a_sync_gets_no_answer(where: dict[str, str]) -> None:
+    run = FakeRunner(lambda argv, cwd, env: pytest.fail("nothing runs"))
+    _uv_where(where)
+    assert answer("codex", event("uv run python -c 1", where["cwd"]), where, deps=deps(run)) is None
+    uv_project(Path(where["cwd"]))
+    for command in ("uv run --no-sync pytest", "UV_NO_SYNC=1 uv run pytest"):
+        assert answer("codex", event(command, where["cwd"]), where, deps=deps(run)) is None
+
+
+def test_uv_run_in_a_project_garnet_cant_resolve_gets_a_note(where: dict[str, str]) -> None:
+    Path(where["cwd"], "pyproject.toml").write_text(
+        '[project]\nname = "demo"\ndynamic = ["version"]\n'
+        '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+    )
+    run = FakeRunner(lambda argv, cwd, env: pytest.fail("nothing runs"))
+    out = answer("codex", event("uv run pytest", where["cwd"]), _uv_where(where), deps=deps(run))
+    inner = spec(out)
+    assert "permissionDecision" not in inner
+    assert (
+        "uv run pytest: not checked. uv run syncs the project first" in inner["additionalContext"]
+    )
 
 
 def test_long_reports_are_cut_and_saved(where: dict[str, str], tmp_path: Path) -> None:
@@ -429,6 +602,26 @@ def test_gate_lets_other_events_through_silently(payload: dict[str, Any]) -> Non
     assert _gate(agent, json.dumps(payload)) == ""
 
 
+@pytest.mark.parametrize(
+    "command", ["python -mpip install x", "\\pip install x", "p\\ip install x", "p'i'p install x"]
+)
+def test_gate_is_as_wide_as_the_parser(command: str) -> None:
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+    }
+    assert gate.needs_a_look("claude-code", payload)
+
+
+def test_gate_finds_a_package_word_past_the_first_megabyte() -> None:
+    command = "true " + " " * gate.MAX_INPUT_BYTES + "; pip install requests"
+    raw = json.dumps({"hook_event_name": "PreToolUse", "tool_input": {"command": command}})
+    assert json.loads(_gate("codex", raw))["hookSpecificOutput"]["permissionDecision"] == "deny"
+    quiet = json.dumps({"x": "true " + " " * (2 * gate.MAX_INPUT_BYTES) + "; ls"})
+    assert _gate("codex", quiet) == ""
+
+
 def test_gate_input_problems() -> None:
     assert _gate("claude-code", "not json") == ""
     cut = '{"hook_event_name": "PreToolUse", "tool_input": {"command": "pip install x"'
@@ -519,4 +712,42 @@ def test_a_committed_environment_is_not_run(tmp_path: Path) -> None:
     )
     assert inner["permissionDecision"] == "ask"
     assert "committed to the repository" in inner["permissionDecisionReason"]
+    assert run.calls == []
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git isn't installed")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pip install --python tools/python requests",
+        "pip install --python=tools/python requests",
+        "uv lock -p {root}/tools/python",
+        "uv sync --python ./tools/python",
+        "UV_PYTHON={root}/tools/python uv sync",
+        "uv sync",  # .python-version names the committed interpreter
+    ],
+)
+def test_a_committed_interpreter_is_not_run(command: str, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    tools = repo / "tools"
+    tools.mkdir(parents=True)
+    (tools / "python").write_text("#!/bin/sh\n")
+    (tools / "python").chmod(0o755)
+    (repo / "pyproject.toml").write_text('[project]\nname = "demo"\nversion = "0.1.0"\n')
+    if command == "uv sync":
+        (repo / ".python-version").write_text("./tools/python\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("pip", "uv", "python"):
+        (bin_dir / name).write_text(f"#!{bin_dir / 'python'}\n")
+        (bin_dir / name).chmod(0o755)
+    git = ["git", "-C", str(repo)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "add", "tools", "pyproject.toml"], check=True)
+    run = FakeRunner(lambda argv, cwd, env: pytest.fail("nothing runs"))
+    where = {"PATH": str(bin_dir), "HOME": str(tmp_path), "cwd": str(repo)}
+    payload = event(command.format(root=repo), str(repo))
+    inner = spec(answer("codex", payload, where, deps=deps(run)))
+    assert inner["permissionDecision"] == "deny"
+    assert f"committed to the repository ({tools / 'python'})" in inner["permissionDecisionReason"]
     assert run.calls == []

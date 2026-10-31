@@ -20,14 +20,28 @@ from typing import Any, TextIO
 MAX_INPUT_BYTES = 1024 * 1024
 
 # A package-manager word where a shell would read a program name: at the
-# start, after an operator, a quote, a slash (a path) or "=". The command
-# parser decides whether it really is one; ``echo "pip install x"`` gets
-# this far and no further.
+# start, after an operator, a quote, a slash (a path), "=" or python's "-m"
+# (``python -mpip``). The command parser decides whether it really is one;
+# ``echo "pip install x"`` gets this far and no further. It is matched
+# against the text with backslashes and quotes taken out too (``fold``), as
+# the shell takes them out of ``\pip`` and ``p'i'p``.
 PM_WORD = re.compile(
-    r"(?:^|[\s;&|()`'\"/=<>{}])"
+    r"(?:^|[\s;&|()`'\"/=<>{}\\]|-m)"
     r"(?:pip(?:3(?:\.\d+)?)?|uvx?|poetry|npm|npx|pnpm|yarn)(?:\.exe)?"
-    r"(?=$|[\s;&|()`'\"<>{}])"
+    r"(?=$|[\s;&|()`'\"<>{}\\])"
 )
+_CHUNK = 1024 * 1024
+
+
+def fold(text: str) -> str:
+    """``text`` with backslashes and quote characters removed, as the shell
+    removes them from a word."""
+    return text.replace("\\", "").replace("'", "").replace('"', "")
+
+
+def has_pm_word(text: str) -> bool:
+    return PM_WORD.search(text) is not None or PM_WORD.search(fold(text)) is not None
+
 
 # The tools each agent runs shell commands with (SPEC §10.4).
 SHELL_TOOLS = {"claude-code": frozenset({"Bash", "PowerShell"}), "codex": frozenset({"Bash"})}
@@ -52,7 +66,7 @@ def needs_a_look(agent: str, payload: dict[str, Any]) -> bool:
     if payload.get("tool_name") not in SHELL_TOOLS.get(agent, frozenset()):
         return False
     text = command_text(payload.get("tool_input"))
-    return text is not None and PM_WORD.search(text) is not None
+    return text is not None and has_pm_word(text)
 
 
 def decision(agent: str, reason: str, context: str | None = None) -> str:
@@ -66,9 +80,26 @@ def decision(agent: str, reason: str, context: str | None = None) -> str:
         "permissionDecision": "ask" if agent == "claude-code" else "deny",
         "permissionDecisionReason": reason,
     }
+    # Claude Code shows an "ask" reason to the user only; the agent reads it
+    # in additionalContext. Codex gives a "deny" reason to the agent.
+    context = context or (reason if agent == "claude-code" else None)
     if context:
         out["additionalContext"] = context
     return json.dumps({"hookSpecificOutput": out}, ensure_ascii=True)
+
+
+def _pm_word_in_rest(first: str, stdin: TextIO) -> bool:
+    """Whether a package-manager word is anywhere in input too large to parse:
+    the part read, then the rest of stdin a chunk at a time, never all held."""
+    tail = ""
+    chunk = first
+    while chunk:
+        text = tail + chunk
+        if has_pm_word(text):
+            return True
+        tail = text[-256:]  # a word split across two chunks
+        chunk = stdin.read(_CHUNK)
+    return False
 
 
 def run(
@@ -84,7 +115,7 @@ def run(
     raw = stdin.read(MAX_INPUT_BYTES + 1)
     if len(raw) > MAX_INPUT_BYTES:
         print("garnet: hook input over 1 MB; not read", file=stderr)
-        if PM_WORD.search(raw):
+        if _pm_word_in_rest(raw, stdin):
             print(
                 decision(
                     agent, "Garnet Guard didn't check this command: its hook input is over 1 MB."
@@ -96,7 +127,7 @@ def run(
         payload = json.loads(raw)
     except ValueError as err:
         print(f"garnet: hook input isn't JSON ({err})", file=stderr)
-        if PM_WORD.search(raw):
+        if has_pm_word(raw):
             reason = "Garnet Guard didn't check this command: it couldn't read the hook input."
             print(decision(agent, reason), file=stdout)
         return 0

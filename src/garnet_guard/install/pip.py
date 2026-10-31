@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 import shlex
 from collections.abc import Mapping, Sequence
@@ -192,7 +193,12 @@ _REFUSED_SETTINGS = (
     "abi",
 )
 _FALSE = frozenset({"", "0", "false", "no", "off"})
-_ARCHIVE = re.compile(r"\.(whl|zip|tar|tar\.gz|tgz|tar\.bz2|tbz|tar\.xz|txz|tar\.lz|tlz)$", re.I)
+# pip's ARCHIVE_EXTENSIONS (pip/_internal/utils/filetypes.py, pip 26.2.2).
+_ARCHIVE_EXTENSIONS = frozenset(
+    {".zip", ".whl", ".tar.bz2", ".tbz", ".tar.xz", ".txz", ".tlz", ".tar.lz", ".tar.lzma"}
+    | {".tar.gz", ".tgz", ".tar"}
+)
+_EXTRAS = re.compile(r"^(.+)(\[[^\]]+\])$")
 _VCS = ("git+", "hg+", "svn+", "bzr+")
 
 
@@ -269,11 +275,29 @@ def _options(args: Sequence[str]) -> list[tuple[str | None, str | None, int]]:
     return out
 
 
+def _is_archive(name: str) -> bool:
+    """pip's is_archive_file: the extension, with ``.tar`` kept in front of the last one."""
+    base, ext = posixpath.splitext(name)
+    if base.lower().endswith(".tar"):
+        ext = base[-4:] + ext
+    return ext.lower() in _ARCHIVE_EXTENSIONS
+
+
 def spec_refusal(spec: str) -> str | None:
-    """Why a requirement Garnet can't resolve without building, or compare, is refused."""
+    """Why a requirement Garnet can't resolve without building, or compare, is refused.
+
+    pip (constructors.parse_req_from_line) takes ``;`` markers and then
+    ``[extras]`` off before it asks whether what is left is an archive file,
+    so ``x.tar.gz[a]`` and ``x.tar.lzma; python_version>"3"`` are local files
+    to pip, built during its dry run. They are read the same way here.
+    """
     if spec.startswith(_VCS) or "://" in spec:
         return "it installs from a URL or a version control system, not from PyPI"
-    if "/" in spec or "\\" in spec or spec.startswith((".", "~")) or _ARCHIVE.search(spec):
+    name = spec.split(";", 1)[0].strip()
+    if m := _EXTRAS.match(name):
+        name = m[1].rstrip()
+    local = "/" in spec or "\\" in spec or name.startswith((".", "~"))
+    if local or _is_archive(name) or _is_archive(spec.strip()):
         return "it installs a local file or folder, not a release from PyPI"
     try:
         req = Requirement(spec)
@@ -330,6 +354,13 @@ def _requirement(spec: str, shown: str, out: Plan, target: dict[str, SpecifierSe
     req = Requirement(spec)
     name = normalize(req.name)
     target[name] = target.get(name, SpecifierSet()) & req.specifier
+
+
+def read_requirements_file(
+    name: str, base: Path, out: Plan, target: dict[str, SpecifierSet]
+) -> None:
+    """Read one requirements or constraints file into ``out``, and the files it names."""
+    _read_file(name, base, out, target, 0, set())
 
 
 def _read_file(

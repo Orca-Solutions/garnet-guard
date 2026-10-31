@@ -43,10 +43,12 @@ Each finding links to its rule's page; `garnet explain RULE` prints a summary.
 
 _WRAPPER_EXIT_CODES = """\
 exit codes:
-  the package manager's own exit code, after a check that passed
+  0  the check passed and the package manager succeeded
   1  warn findings, with fail_on = "warn"; nothing installed
   2  block findings; nothing installed
-  3  Garnet couldn't check the command, or couldn't finish; nothing installed
+  3  Garnet couldn't check the command, or couldn't finish (nothing installed);
+     or the package manager failed after the check (uv: the checked files were
+     already written, and Garnet says so)
 """
 
 _FAIL_ON_HELP = "exit non-zero at this verdict or worse (default: the policy's fail_on, else block)"

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from ..lockfiles.base import normalize
+from . import pip
 from .pip import Refusal, spec_refusal
 
 COPIED = ("pyproject.toml", "uv.lock", "uv.toml", ".python-version")
@@ -141,7 +143,7 @@ _REFUSED = {
 # them as flags itself, so the copy, not the user's folder, is what uv reads.
 _ENV_FLAGS = {"UV_FROZEN": "--frozen", "UV_LOCKED": "--locked", "UV_NO_SYNC": "--no-sync"}
 _ENV_DROPPED = ("UV_PROJECT", "UV_WORKING_DIR", "UV_WORKING_DIRECTORY", *_ENV_FLAGS)
-_TRUE = frozenset({"1", "true", "yes", "on", "y", "t"})
+TRUE = frozenset({"1", "true", "yes", "on", "y", "t"})
 
 
 class UvError(Exception):
@@ -233,7 +235,7 @@ def plan(subcommand: str, args: Sequence[str], *, cwd: Path, env: Mapping[str, s
     directory: Path | None = None
     project: Path | None = None
     for var, flag in _ENV_FLAGS.items():
-        if env.get(var, "").strip().lower() in _TRUE:
+        if env.get(var, "").strip().lower() in TRUE:
             _mode(flag, out)
     working = env.get("UV_WORKING_DIR") or env.get("UV_WORKING_DIRECTORY")
     if working:
@@ -285,8 +287,10 @@ def plan(subcommand: str, args: Sequence[str], *, cwd: Path, env: Mapping[str, s
             out.compare_newest = False
         here = directory or cwd
         word = [opt, str(here / value)] if opt in _PATH_VALUES and value else list(given)
-        if opt in ("--directory", "--project"):
-            pass  # the resolve step runs in the copy instead
+        if opt in ("--requirements", "--constraints") and value:
+            _read_requirements(opt, value, here, out)
+        if opt in ("--directory", "--project", "--allow-python-downloads"):
+            pass  # the copy replaces the folder; the resolve step never downloads a Python
         elif opt in _LOCK_MODES or opt == "--no-sync":
             # The resolve step adds its own --no-sync; a sync's --locked and
             # --frozen decide whether it re-locks at all.
@@ -294,7 +298,7 @@ def plan(subcommand: str, args: Sequence[str], *, cwd: Path, env: Mapping[str, s
                 out.resolve.extend(given)
         else:
             out.resolve.extend(word)
-        if opt not in ("--directory", "--project"):
+        if opt not in ("--directory", "--project", "--allow-python-downloads"):
             if opt in _GLOBAL or opt in _INDEX:
                 out.index_args.extend(word)
             if subcommand == "sync" and (opt in _GLOBAL or opt in _INDEX or opt in _LOCK_ONLY):
@@ -313,6 +317,28 @@ def _mode(flag: str, out: Plan) -> None:
         out.no_sync = True
     elif flag in ("--check", "--check-exists", "--dry-run") and out.subcommand == "lock":
         out.check_only = True
+
+
+# File names uv reads as something other than a requirements.txt file.
+_NOT_REQUIREMENTS_TXT = (".toml", ".py", ".cfg", ".yml", ".yaml")
+
+
+def _read_requirements(opt: str, value: str, here: Path, out: Plan) -> None:
+    """Read a ``-r`` or ``-c`` file as pip's plan does, so that a path, URL,
+    VCS or editable line in it is refused before uv runs, as on the command line."""
+    shown = f"{opt} {value}"
+    if os.path.basename(value).lower().endswith(_NOT_REQUIREMENTS_TXT):
+        why = "uv reads it as project metadata or a script, which Garnet Guard doesn't read yet"
+        out.refusals.append(Refusal(shown, why))
+        return
+    read = pip.Plan([])
+    target = read.requested if opt == "--requirements" else read.constraints
+    pip.read_requirements_file(value, here, read, target)
+    out.refusals.extend(read.refusals)
+    if opt == "--requirements" and out.subcommand == "add":
+        for name, spec in read.requested.items():
+            out.requested[name] = out.requested.get(name, SpecifierSet()) & spec
+    out.pre = out.pre or read.pre
 
 
 def _requested(spec: str, out: Plan) -> None:
@@ -343,13 +369,47 @@ def _handoff(subcommand: str, opt: str, value: str, given: list[str], out: Plan)
         out.handoff.extend(given)
 
 
+def interpreters(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> list[str]:
+    """The interpreters a uv command names as paths or program names: ``-p`` and
+    ``--python``, ``UV_PYTHON`` and the project's ``.python-version``. uv starts
+    the one it picks to query it, so the hook looks at each before uv runs."""
+    words = [(value, cwd) for opt, value, _ in _words(args) if opt == "--python" and value]
+    if env.get("UV_PYTHON"):
+        words.append((env["UV_PYTHON"], cwd))
+    project = find_project(plan("lock", args, cwd=cwd, env=env).start)
+    pinned = project / ".python-version" if project else None
+    if project and pinned and pinned.is_file() and not pinned.is_symlink():
+        try:
+            text = pinned.read_text("utf-8", errors="replace")[:4096]
+        except OSError:
+            text = ""
+        for line in text.splitlines():
+            if line.strip() and not line.strip().startswith("#"):
+                words.append((line.strip(), project))
+    out = []
+    for word, base in words:
+        if os.sep in word or (os.altsep and os.altsep in word) or word.startswith((".", "~")):
+            out.append(os.path.normpath(base / os.path.expanduser(word)))
+        elif found := shutil.which(word, path=env.get("PATH", "")):
+            out.append(found)
+    return out
+
+
 def resolve_env(env: Mapping[str, str]) -> dict[str, str]:
     """The environment for the resolve step: builds off, and the user's folder
     settings dropped (the plan carries them as flags)."""
     out = {k: v for k, v in env.items() if k not in _ENV_DROPPED}
     out["UV_NO_BUILD"] = "1"
     out.pop("UV_NO_BUILD_ISOLATION", None)
+    # A project's [tool.uv] can name where Python downloads come from
+    # (python-downloads-json-url, python-install-mirror); uv runs what it
+    # downloads to query it. The resolve step never downloads a Python.
+    out["UV_PYTHON_DOWNLOADS"] = "never"
     return out
+
+
+# Passed on every resolve and probe call, with UV_PYTHON_DOWNLOADS=never.
+NO_PYTHON_DOWNLOADS = "--no-python-downloads"
 
 
 # --- The project ------------------------------------------------------------
@@ -430,6 +490,7 @@ def project_refusals(project: Path) -> list[Refusal]:
                         )
                     )
     meta = doc.get("project")
+    out.extend(_direct_references(doc, uv))
     dynamic = meta.get("dynamic") if isinstance(meta, dict) else None
     packaged = uv.get("package", "build-system" in doc) is not False
     if isinstance(dynamic, list) and dynamic and packaged:
@@ -441,6 +502,63 @@ def project_refusals(project: Path) -> list[Refusal]:
             )
         )
     return out
+
+
+def _direct_references(doc: Mapping[str, Any], uv: Mapping[str, Any]) -> list[Refusal]:
+    """Requirements in the project's dependency tables that name a URL, a path
+    or git (``name @ git+…``) instead of a release."""
+    tables: list[tuple[str, object]] = []
+    meta = doc.get("project")
+    if isinstance(meta, dict):
+        tables.append(("[project] dependencies", meta.get("dependencies")))
+        optional = meta.get("optional-dependencies")
+        if isinstance(optional, dict):
+            for extra in sorted(optional):
+                tables.append((f"[project.optional-dependencies] {extra}", optional[extra]))
+    groups = doc.get("dependency-groups")
+    if isinstance(groups, dict):
+        for group in sorted(groups):
+            tables.append((f"[dependency-groups] {group}", groups[group]))
+    for key in ("dev-dependencies", "constraint-dependencies", "override-dependencies"):
+        tables.append((f"[tool.uv] {key}", uv.get(key)))
+    out = []
+    for where, entries in tables:
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, str):
+                continue  # an include-group table
+            why = spec_refusal(entry)
+            if why:
+                out.append(Refusal(f"{where}: {entry}", why))
+    return out
+
+
+def lock_sources(lock: bytes) -> list[tuple[str, str]]:
+    """Packages in uv.lock that don't come from a package index: (name, source kind).
+
+    The project itself (``editable = "."`` or ``virtual = "."``) isn't listed.
+    """
+    try:
+        doc = tomllib.loads(lock.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return [("uv.lock", "unreadable")]
+    out = []
+    for pkg in doc.get("package", []):
+        if not isinstance(pkg, dict):
+            continue
+        source = pkg.get("source")
+        name = str(pkg.get("name", ""))
+        if not isinstance(source, dict) or not source:
+            out.append((name, "unknown"))
+            continue
+        kind = next(iter(source))
+        if kind == "registry":
+            continue
+        if kind in ("editable", "virtual") and source.get(kind) == ".":
+            continue
+        out.append((name, kind))
+    return sorted(out)
 
 
 def requires_python_floor(project: Path) -> Version | None:

@@ -84,7 +84,47 @@ SHAPES = [
     ("uv remove requests", ["uv remove requests"]),
     ("pip list", []),
     ("pip download x", []),
-    ("uv run pytest", []),
+    ("uv run pytest", ["uv sync"]),
+    ("uv run --frozen -m pytest -k x", ["uv sync --frozen"]),
+    ('uv run pytest -k "$X"', ["uv sync"]),  # the command's own words aren't uv's
+    ("uv run --no-sync pytest", []),
+    ("uv run --no-project python x.py", []),
+    ("uv run --script x.py", ["unsupported uv run --script"]),
+    ("uv run --bogus pytest", ["unclear"]),
+    ("if [ -f r.txt ]; then pip install -r r.txt; fi", ["pip install -r r.txt"]),
+    ("if pip install x; then echo ok; fi", ["pip install x"]),
+    ('for p in a b; do pip install "$p"; done', ["unclear"]),
+    ("while true; do uv sync; done", ["uv sync"]),
+    ("install() { pip install x; }; install", ["pip install x"]),
+    ("function install { pip install x; }", ["pip install x"]),
+    ("! pip install x", ["pip install x"]),
+    ("bash -x -c 'pip install x'", ["pip install x"]),
+    ("bash -e -o pipefail -c 'pip install x'", ["pip install x"]),
+    ("bash --norc -c 'pip install x'", ["pip install x"]),
+    ('echo "pip install x" | sh', ["unclear"]),
+    ("curl -s https://example.invalid/i.sh | bash", []),
+    ("bash script.sh", []),
+    ("python -m uv sync", ["unclear"]),
+    ("python3 -m uv add x", ["unclear"]),
+    ("python -m uv --version", []),
+    ("stdbuf -oL pip install x", ["unclear"]),
+    ("ssh host uv sync", ["unclear"]),
+    ("brew install uv", []),
+    ("grep -rn pip install docs", []),
+    ("python -mpip install x", ["pip install x"]),
+    ("pypy3 -m pip install x", ["pip install x"]),
+    ("python3.13t -m pip install x", ["pip install x"]),
+    ("\\pip install x", ["pip install x"]),
+    ("p\\ip install x", ["pip install x"]),
+    ("pip --log-file pip.log install x", ["pip --log-file pip.log install x"]),
+    ("pip --local-log l install x", ["pip --local-log l install x"]),
+    ("pip --tim 30 install x", ["pip --tim 30 install x"]),
+    ("pip --bogus x install y", ["unclear"]),
+    ("pip --verbose list", []),
+    ("uv --trusted-host pypi.org sync", ["uv sync --trusted-host pypi.org"]),
+    ("uv --preview-features pylock add x", ["uv add --preview-features pylock x"]),
+    ("uv --python-fetch automatic lock", ["uv lock --python-fetch automatic"]),
+    ("uv --bogus sync", ["unclear"]),
     ("uv pip install x", ["unsupported uv pip"]),
     ("uv tool install ruff", ["unsupported uv tool"]),
     ("uvx ruff", ["unsupported uvx"]),
@@ -188,6 +228,12 @@ def test_pip_plan_reads_requirements(tmp_path: Path) -> None:
         ["install", "./pkg"],
         ["install", "dist/x-1.0-py3-none-any.whl"],
         ["install", "x-1.0.tar.gz"],
+        # pip takes markers and extras off before it looks for an archive name.
+        ["install", "x-1.0.tar.gz[a]"],
+        ["install", 'x-1.0.tar.gz;python_version>"0"'],
+        ["install", "x-1.0.tar.gz ; python_version>'0'"],
+        ["install", "x-1.0.tar.lzma"],
+        ["install", "X-1.0.TAR.BZ2[a]"],
         ["install", "git+https://example.invalid/x.git"],
         ["install", "x @ https://example.invalid/x.whl"],
         ["install", "https://example.invalid/x.whl"],
@@ -310,13 +356,14 @@ def test_pins_text() -> None:
 
 
 def test_uv_plan(tmp_path: Path) -> None:
+    (tmp_path / "r.txt").write_text("six>=1\n")
     p = uv.plan(
         "add",
         ["requests", "-qU", "--optional", "web", "-r", "r.txt", "--index-url", "https://x"],
         cwd=tmp_path,
         env={},
     )
-    assert not p.refusals and p.upgrade and set(p.requested) == {"requests"}
+    assert not p.refusals and p.upgrade and set(p.requested) == {"requests", "six"}
     assert p.resolve == [
         "requests",
         "-q",
@@ -360,15 +407,67 @@ def test_uv_plan(tmp_path: Path) -> None:
         ("lock", ["--some-new-option"]),
         ("add", ["-qr", "f"]),
         ("lock", ["requests"]),
+        ("add", ["x-1.0.tar.gz[a]"]),
+        ("add", ["-r", "missing.txt"]),
+        ("add", ["-r", "git.txt"]),
+        ("add", ["-r", "editable.txt"]),
+        ("add", ["-c", "url.txt", "x"]),
+        ("add", ["-r", "pyproject.toml"]),
+        ("add", ["-r", "setup.py"]),
     ],
 )
 def test_uv_plan_refuses(sub: str, args: list[str], tmp_path: Path) -> None:
+    # uv's -r and -c files are read as pip's are: a VCS, URL, path or editable
+    # line is refused before uv runs, as it would be on the command line.
+    (tmp_path / "git.txt").write_text("x @ git+https://example.invalid/x\n")
+    (tmp_path / "editable.txt").write_text("-e ./local\n")
+    (tmp_path / "url.txt").write_text("x @ https://example.invalid/x-1.0.tar.gz\n")
+    for name in ("pyproject.toml", "setup.py"):
+        (tmp_path / name).write_text("")
     assert uv.plan(sub, args, cwd=tmp_path, env={}).refusals
 
 
+def test_uv_interpreters_named_by_a_command(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "python3.12").write_text("")
+    (bin_dir / "python3.12").chmod(0o755)
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
+    (tmp_path / ".python-version").write_text("# pinned\n.venv/bin/python\n")
+    env = {"PATH": str(bin_dir), "UV_PYTHON": "~/py"}
+    found = uv.interpreters(["-p", "tools/python", "--python=python3.12"], env, tmp_path)
+    home = os.path.expanduser("~")
+    assert found == [
+        str(tmp_path / "tools/python"),
+        str(bin_dir / "python3.12"),
+        os.path.normpath(os.path.join(home, "py")),
+        str(tmp_path / ".venv/bin/python"),
+    ]
+    (tmp_path / ".python-version").unlink()
+    assert uv.interpreters(["-p", "3.12"], {"PATH": str(bin_dir)}, tmp_path) == []  # a version
+
+
+def test_uv_lock_sources() -> None:
+    lock = (
+        'version = 1\n[[package]]\nname = "demo"\nversion = "0.1.0"\nsource = { editable = "." }\n'
+        '[[package]]\nname = "a"\nversion = "1"\nsource = { registry = "https://pypi.org/simple" }\n'
+        '[[package]]\nname = "b"\nversion = "1"\nsource = { git = "https://example.invalid/b" }\n'
+        '[[package]]\nname = "c"\nversion = "1"\nsource = { editable = "../c" }\n'
+    )
+    assert uv.lock_sources(lock.encode()) == [("b", "git"), ("c", "editable")]
+
+
 def test_uv_resolve_env_turns_builds_off() -> None:
-    env = uv.resolve_env({"UV_PROJECT": "p", "UV_FROZEN": "1", "UV_NO_SYNC": "1", "KEEP": "1"})
-    assert env == {"KEEP": "1", "UV_NO_BUILD": "1"}
+    env = uv.resolve_env(
+        {
+            "UV_PROJECT": "p",
+            "UV_FROZEN": "1",
+            "UV_NO_SYNC": "1",
+            "KEEP": "1",
+            "UV_PYTHON_DOWNLOADS": "automatic",
+        }
+    )
+    assert env == {"KEEP": "1", "UV_NO_BUILD": "1", "UV_PYTHON_DOWNLOADS": "never"}
 
 
 def _project(root: Path, extra: str = "") -> Path:
@@ -387,6 +486,9 @@ def _project(root: Path, extra: str = "") -> Path:
         '[tool.uv.sources]\nlib = { path = "../lib" }\n',
         '[tool.uv.sources]\nlib = { git = "https://example.invalid/lib" }\n',
         '[tool.uv.sources]\nlib = [{ index = "x" }, { url = "https://example.invalid/l.whl" }]\n',
+        '[dependency-groups]\ndev = ["lib @ git+https://example.invalid/lib"]\n',
+        '[project.optional-dependencies]\nweb = ["lib @ file:///srv/lib"]\n',
+        '[tool.uv]\ndev-dependencies = ["./lib"]\n',
         '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
         "[tool.garnet-test]\n",
     ],

@@ -261,14 +261,16 @@ def _verdict(out: Outcome, rep: Report, fail_on: Severity) -> Outcome:
     if code:
         out.status, out.exit_code = "stop", code
     else:
-        out.status = "warn" if rep.verdict == Verdict.WARN else "pass"
+        # Below fail_on (or fail_on = "never"), a warn or block verdict is
+        # still reported as one: only "pass" says nothing was found.
+        out.status = "pass" if rep.verdict == Verdict.PASS else "warn"
     return out
 
 
 # --- pip --------------------------------------------------------------------
 
 
-def _pip_python(given: str | None, cwd: Path) -> str | None:
+def pip_python(given: str | None, cwd: Path) -> str | None:
     """pip's ``--python``: an interpreter, or an environment folder."""
     if given is None:
         return None
@@ -305,7 +307,7 @@ def check_pip(
 ) -> Outcome:
     """Check ``pip install …`` (``args`` from ``install`` on) without installing."""
     plan = pip.plan(args, cwd=cwd, env=env)
-    target = _pip_python(plan.python, cwd) if plan.python else python
+    target = pip_python(plan.python, cwd) if plan.python else python
     if plan.python and target is None:
         return _cant(
             "pip", command, f"pip's --python {plan.python} isn't a Python Garnet can find."
@@ -379,7 +381,12 @@ def check_pip(
         return _cant("pip", command, "pip wrote no installation report.", original=original)
     resolved = pip.parse_report(report_path.read_bytes())
     if any(not r.wheel for r in resolved):
-        return _cant("pip", command, "pip's resolution includes a file that isn't a wheel.")
+        return _cant(
+            "pip",
+            command,
+            "pip's resolution includes a file that isn't a wheel.",
+            original=original,
+        )
 
     out = Outcome("pip", command, "pass", original=original)
     out.blockers += _pip_newest(plan, resolved, py_version, resolve, deps)
@@ -507,7 +514,9 @@ def check_uv(
     renv = uv.resolve_env(env)
 
     def run_uv(argv: Sequence[str], where: Path) -> Ran:
-        return deps.run([uv_exe, *argv], cwd=where, env=renv, timeout=deps.timeout())
+        """uv in the copy: builds off and never a Python download (uv.resolve_env)."""
+        full = [uv_exe, argv[0], uv.NO_PYTHON_DOWNLOADS, *argv[1:]]
+        return deps.run(full, cwd=where, env=renv, timeout=deps.timeout())
 
     relocked = True
     if subcommand in ("add", "remove"):
@@ -540,12 +549,23 @@ def check_uv(
         return _cant(
             "uv",
             command,
-            "uv couldn't resolve this with builds turned off:\n" + tool_message(ran),
+            "uv couldn't resolve this with builds and Python downloads turned off:\n"
+            + tool_message(ran),
             original=original,
         )
     head = copy.head("uv.lock")
     if head is None:
         return _cant("uv", command, "uv wrote no uv.lock.", original=original)
+    local = uv.lock_sources(head)
+    if local:
+        # A git, path, directory, editable or URL package is built by the
+        # sync, and has no release to compare with, whatever brought it in.
+        lines = [
+            f"uv.lock {name}: it comes from a {kind} source, which uv builds and Garnet Guard "
+            "can't compare with a release."
+            for name, kind in local
+        ]
+        return _cant("uv", command, *lines, original=original)
 
     out = Outcome("uv", command, "pass", original=original)
     if plan.compare_newest and plan.requested:
@@ -570,7 +590,7 @@ def check_uv(
         if subcommand == "add":
             argv += ("--inexact",)
         argv += tuple(plan.handoff)
-        for c in sorted({c.package for c in changes}):
+        for c in sorted({c.package for c in changes} | {u.change.package for u in unchecked}):
             argv += ("--no-build-package", c)
         shown = shlex.join(("uv", *argv[1:]))
     out.handoff = Handoff(argv, cwd, env, shown, writes, copy)
@@ -670,14 +690,12 @@ def summary(out: Outcome) -> str:
     if out.report is None or not n:
         return "Garnet Guard found no dependency changes to check."
     worst = out.report.verdict.value
+    fail_on = "never" if out.fail_on == Severity.OFF else out.fail_on.label
     if out.status == "stop":
         return (
             f"Garnet Guard checked {things}: the verdict is {worst}, at or above "
-            f"fail_on = {out.fail_on.label}."
+            f"fail_on = {fail_on}."
         )
     if out.status == "warn":
-        return (
-            f"Garnet Guard checked {things}: the verdict is warn, below "
-            f"fail_on = {out.fail_on.label}."
-        )
+        return f"Garnet Guard checked {things}: the verdict is {worst}, below fail_on = {fail_on}."
     return f"Garnet Guard checked {things}: nothing at warn or above."

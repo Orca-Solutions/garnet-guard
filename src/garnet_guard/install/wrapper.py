@@ -153,11 +153,14 @@ def act(outcome: Outcome, *, force: bool, deps: Deps, stdout: TextIO) -> int:
             say("    build code from the packages above.")
             say(f"  - Run it unchecked through Garnet Guard: garnet {plain} {FORCE}")
             return 3
+        if outcome.original is None:  # no program found to run
+            say(f"{FORCE}: nothing to run; Garnet Guard can't find the program (above).")
+            return 3
         for b in outcome.blockers:
             say(escape(f"{FORCE}: not checked: {b.package}"))
         if not outcome.blockers:
             say(escape(f"{FORCE}: not checked: {outcome.command}"))
-        return _run(outcome.original, stdout, deps)
+        return _run(outcome.original, stdout, deps, tool=outcome.tool)
     say(check.summary(outcome))
     if outcome.status == "stop":
         if not force:
@@ -167,6 +170,7 @@ def act(outcome: Outcome, *, force: bool, deps: Deps, stdout: TextIO) -> int:
     handoff = outcome.handoff
     if handoff is None:
         return 0
+    wrote = False
     if handoff.write_back and handoff.copy is not None:
         try:
             written = uv.write_back(handoff.copy, handoff.write_back)
@@ -178,18 +182,28 @@ def act(outcome: Outcome, *, force: bool, deps: Deps, stdout: TextIO) -> int:
             return 3
         if written:
             say(f"Wrote the checked {' and '.join(written)}.")
+            wrote = True
     if not handoff.argv:
         return 0
-    return _run(handoff, stdout, deps)
+    return _run(handoff, stdout, deps, tool=outcome.tool, written=wrote)
 
 
 def _verdict(outcome: Outcome) -> str:
     return outcome.report.verdict.value if outcome.report else "unknown"
 
 
-def _run(handoff: Handoff | None, stdout: TextIO, deps: Deps) -> int:
+def _run(
+    handoff: Handoff | None, stdout: TextIO, deps: Deps, *, tool: str, written: bool = False
+) -> int:
+    """Run the package manager. Its failure exits 3, never 1 or 2, which say
+    that Garnet Guard found warn or block findings and installed nothing."""
     if handoff is None or not handoff.argv:
         return 3
     print(f"Running: {escape(check.redact(handoff.shown))}", file=stdout)
     stdout.flush()
-    return deps.run(handoff.argv, cwd=handoff.cwd, env=handoff.env, capture=False).returncode
+    code = deps.run(handoff.argv, cwd=handoff.cwd, env=handoff.env, capture=False).returncode
+    if code == 0:
+        return 0
+    files = " Garnet Guard had already written the checked files (above)." if written else ""
+    print(f"{tool} exited with {code}.{files} Garnet Guard exits 3.", file=stdout)
+    return 3

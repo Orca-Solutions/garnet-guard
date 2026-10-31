@@ -318,19 +318,28 @@ def uv_project(root: Path, lock: str | None = BASE_LOCK) -> Path:
     return root
 
 
-def uv_answers(*, fail: str | None = None, probe_fail: str | None = None, check_ok: bool = False):  # type: ignore[no-untyped-def]
+def uv_answers(  # type: ignore[no-untyped-def]
+    *,
+    fail: str | None = None,
+    probe_fail: str | None = None,
+    check_ok: bool = False,
+    head: str = HEAD_LOCK,
+):
     def answer(argv: list[str], cwd: Path, env: dict[str, str]) -> Ran:
         if argv[1:3] == ["sync", "--frozen"]:  # the hand-off, after the check
             return Ran(0)
         assert argv[0] == UV and env["UV_NO_BUILD"] == "1"
         assert "--no-build" in argv and not (cwd / ".venv").exists()
+        # Never a Python download, whatever the project's [tool.uv] says.
+        assert argv[2] == "--no-python-downloads" and env["UV_PYTHON_DOWNLOADS"] == "never"
+        argv = [*argv[:2], *argv[3:]]
         if "probe-" in str(cwd):
             return Ran(1, b"", (probe_fail or "").encode()) if probe_fail else Ran(0)
         if argv[1:3] == ["lock", "--check"]:
             return Ran(0 if check_ok else 1, b"", b"" if check_ok else b"needs updating")
         if fail:
             return Ran(1, b"", fail.encode())
-        (cwd / "uv.lock").write_text(HEAD_LOCK)
+        (cwd / "uv.lock").write_text(head)
         if argv[1] == "add":
             text = (cwd / "pyproject.toml").read_text()
             (cwd / "pyproject.toml").write_text(text.replace(">=2.34.1", ">=2.34.2"))
@@ -362,6 +371,7 @@ def test_uv_add_pass_writes_back_and_syncs_frozen(tmp_path: Path) -> None:
     assert run.calls[0][0] == [
         UV,
         "add",
+        "--no-python-downloads",
         "--no-sync",
         "--no-build",
         "requests",
@@ -398,11 +408,50 @@ def test_uv_add_pass_writes_back_and_syncs_frozen(tmp_path: Path) -> None:
     assert run.calls[-1] == (list(out.handoff.argv), project, False)
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        '{ git = "https://example.invalid/r.git?rev=v1#abc" }',
+        '{ path = "../r" }',
+        '{ directory = "../r" }',
+        '{ editable = "../r" }',
+        '{ url = "https://example.invalid/r-1.0.tar.gz" }',
+    ],
+)
+def test_uv_non_registry_packages_in_the_lock_are_cant_check(source: str, tmp_path: Path) -> None:
+    # However it got into uv.lock (uv add -r, a direct reference, a source),
+    # a package uv builds and Garnet can't compare is never a pass.
+    head = HEAD_LOCK.replace(
+        'name = "requests"\nversion = "2.34.2"\nsource = { registry = "https://pypi.org/simple" }',
+        f'name = "requests"\nversion = "2.34.2"\nsource = {source}',
+    )
+    assert head != HEAD_LOCK
+    run = FakeRunner(uv_answers(head=head))
+    out = run_uv(uv_project(tmp_path / "p"), "lock", [], run)
+    assert out.status == "cant_check" and out.handoff is None
+    kind = source.split()[1]
+    assert f"uv.lock requests: it comes from a {kind} source" in " ".join(out.reasons)
+
+
+def test_uv_handoff_never_builds_an_unchecked_change(tmp_path: Path) -> None:
+    head = HEAD_LOCK.replace(
+        'name = "requests"\nversion = "2.34.2"\nsource = { registry = "https://pypi.org/simple" }',
+        'name = "requests"\nversion = "2.34.2"\nsource = { registry = "https://example.invalid/simple" }',
+    )
+    run = FakeRunner(uv_answers(head=head, check_ok=False))
+    out = run_uv(uv_project(tmp_path / "p"), "sync", [], run)
+    assert out.handoff is not None
+    argv = list(out.handoff.argv)
+    assert ["--no-build-package", "requests"] == argv[
+        argv.index("requests") - 1 : argv.index("requests") + 1
+    ]
+
+
 def test_uv_base_is_the_committed_lockfile(tmp_path: Path) -> None:
     project = uv_project(tmp_path / "p", lock=HEAD_LOCK)  # the working tree already moved
     run = FakeRunner(uv_answers(check_ok=True))
     out = run_uv(project, "sync", [], run, committed_lock=lambda p: BASE_LOCK.encode())
-    assert run.calls[0][0] == [UV, "lock", "--check", "--no-build"]
+    assert run.calls[0][0] == [UV, "lock", "--no-python-downloads", "--check", "--no-build"]
     assert out.report is not None and len(out.report.results) == 1
     assert out.handoff is not None and out.handoff.write_back == ()
     assert list(out.handoff.argv) == [UV, "sync", "--frozen", "--no-build-package", "requests"]
@@ -411,7 +460,10 @@ def test_uv_base_is_the_committed_lockfile(tmp_path: Path) -> None:
 def test_uv_sync_relocks_when_the_lockfile_is_stale(tmp_path: Path) -> None:
     run = FakeRunner(uv_answers(check_ok=False))
     out = run_uv(uv_project(tmp_path / "p"), "sync", ["--all-extras"], run)
-    assert [c[0][1:3] for c in run.calls] == [["lock", "--check"], ["lock", "--no-build"]]
+    assert [c[0][1:4] for c in run.calls] == [
+        ["lock", "--no-python-downloads", "--check"],
+        ["lock", "--no-python-downloads", "--no-build"],
+    ]
     assert out.handoff is not None and out.handoff.write_back == ("uv.lock",)
     assert "--all-extras" in out.handoff.argv
 
@@ -529,10 +581,65 @@ def test_wrapper_force_installs_after_a_block(tmp_path: Path) -> None:
     assert out.handoff is not None and run.calls[-1][0] == list(out.handoff.argv)
 
 
-def test_wrapper_returns_the_package_managers_exit_code(tmp_path: Path) -> None:
+def test_wrapper_package_manager_failure_exits_3(tmp_path: Path) -> None:
+    # 1 and 2 say "findings, nothing installed"; a failed hand-off never reads as that.
     out, run = _outcome(tmp_path, None)
-    run.answer = lambda argv, cwd, env: Ran(7)
-    assert wrapper.act(out, force=False, deps=deps(run), stdout=io.StringIO()) == 7
+    for code in (1, 2, 7):
+        run.answer = lambda argv, cwd, env, code=code: Ran(code)
+        stdout = io.StringIO()
+        assert wrapper.act(out, force=False, deps=deps(run), stdout=stdout) == 3
+        assert f"pip exited with {code}. Garnet Guard exits 3." in stdout.getvalue()
+    run.answer = lambda argv, cwd, env: Ran(0)
+    assert wrapper.act(out, force=False, deps=deps(run), stdout=io.StringIO()) == 0
+
+
+def test_wrapper_uv_sync_failure_says_the_files_were_written(tmp_path: Path) -> None:
+    project = uv_project(tmp_path / "p")
+    run = FakeRunner(uv_answers())
+    out = run_uv(project, "add", ["requests"], run)
+    assert out.status == "pass"
+    run.answer = lambda argv, cwd, env: Ran(2)
+    stdout = io.StringIO()
+    assert wrapper.act(out, force=False, deps=deps(run), stdout=stdout) == 3
+    text = stdout.getvalue()
+    assert "Wrote the checked pyproject.toml and uv.lock." in text
+    assert "uv exited with 2. Garnet Guard had already written the checked files" in text
+
+
+@pytest.mark.parametrize("severity", [Severity.BLOCK, Severity.WARN])
+def test_fail_on_never_still_reports_the_verdict(severity: Severity, tmp_path: Path) -> None:
+    (tmp_path / "garnet.toml").write_text('[garnet]\nversion = 1\nfail_on = "never"\n')
+    out, run = _outcome(tmp_path, {"requests": ("GRN-T001", severity)})
+    assert out.status == "warn" and out.exit_code == 0
+    worst = severity.label
+    assert check.summary(out) == (
+        f"Garnet Guard checked 1 dependency change: the verdict is {worst}, below fail_on = never."
+    )
+    run.answer = lambda argv, cwd, env: Ran(0)
+    stdout = io.StringIO()
+    assert wrapper.act(out, force=False, deps=deps(run), stdout=stdout) == 0
+    assert "nothing at warn or above" not in stdout.getvalue()
+
+
+def test_wrapper_force_with_nothing_to_run_says_so(tmp_path: Path) -> None:
+    run = FakeRunner(lambda argv, cwd, env: pytest.fail("nothing runs"))
+    out = check.check_uv(
+        None, "sync", [], cwd=tmp_path, env={}, command="uv sync", deps=deps(run), workdir=tmp_path
+    )
+    stdout = io.StringIO()
+    assert wrapper.act(out, force=True, deps=deps(run), stdout=stdout) == 3
+    assert "--garnet-force: nothing to run" in stdout.getvalue()
+    assert "not checked: uv sync" not in stdout.getvalue()
+
+
+def test_pip_non_wheel_resolution_keeps_the_original_for_force(tmp_path: Path) -> None:
+    report = json.loads((FIXTURES / "pip-report-requests-2.32.3.json").read_text())
+    for item in report["install"]:
+        item["download_info"]["url"] = item["download_info"]["url"].replace(".whl", ".tar.gz")
+    (tmp_path / "sdist-report.json").write_text(json.dumps(report))
+    run = FakeRunner(pip_answers(str(tmp_path / "sdist-report.json")))
+    out = run_pip(tmp_path, ["install", "requests==2.32.3"], run)
+    assert out.status == "cant_check" and out.original is not None
 
 
 def test_wrapper_cant_check_installs_nothing_and_force_runs_the_original(tmp_path: Path) -> None:
