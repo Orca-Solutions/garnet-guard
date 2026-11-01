@@ -15,6 +15,7 @@ from garnet_guard.models import (
     WheelDifference,
 )
 from tests.builders import prov, release
+from tests.test_pyindex import SIX
 
 CHANGE = Change("pypi", "demo", "1.0", "1.1")
 INIT = "def hello():\n    return 1\n"
@@ -67,6 +68,31 @@ def test_publisher_rename_with_same_repo_id_is_quiet() -> None:
         provenance=prov("demo-1.1-py3-none-any.whl", repo="github.com/o/renamed", repo_id="1"),
     )
     assert "GRN-T002" not in rules(release("1.0"), cand)
+
+
+def test_publisher_gitlab_project_with_github_repo_number_fires() -> None:
+    # Fulcio puts GitLab project ids in the same extension as GitHub repository
+    # ids; the same number on another host is a different repository.
+    cand = release(
+        "1.1",
+        provenance=prov("demo-1.1-py3-none-any.whl", repo="gitlab.com/evil/r", repo_id="1"),
+    )
+    assert "GRN-T002" in rules(release("1.0"), cand)
+
+
+def test_publisher_rename_with_same_repo_id_host_case_is_quiet() -> None:
+    cand = release(
+        "1.1",
+        provenance=prov("demo-1.1-py3-none-any.whl", repo="GitHub.com/o/renamed", repo_id="1"),
+    )
+    assert "GRN-T002" not in rules(release("1.0"), cand)
+
+
+def test_publisher_same_id_without_host_fires() -> None:
+    cand = release(
+        "1.1", provenance=prov("demo-1.1-py3-none-any.whl", repo="other:unknown", repo_id="1")
+    )
+    assert "GRN-T002" in rules(release("1.0"), cand)
 
 
 def test_workflow_changed_fires() -> None:
@@ -368,6 +394,20 @@ def test_base64_into_existing_exec_fires() -> None:
     assert f.rule_id == "GRN-C003"
     assert "base64.b64decode → exec" in f.evidence[0].summary
     assert "GRN-C003" not in rules(base, release("1.1", {"demo/__init__.py": old + "Y = 2\n"}))
+
+
+def test_a_vendored_six_names_the_exec_its_python_2_branch_runs() -> None:
+    # mpmath 0.18 added six, whose Python 2 branch defines exec_ and calls it
+    # at once. The finding is true (exec runs at import under Python 2) and
+    # still warns; its second line used to say the call to exec_ called
+    # builtins.exec, the value exec_ gets in the Python 3 branch.
+    base = release("1.0", {"demo/__init__.py": INIT})
+    cand = release("1.1", {"demo/__init__.py": INIT, "demo/six.py": SIX})
+    (f,) = c003(base, cand)
+    assert f.severity == Severity.WARN
+    assert [e.summary for e in f.evidence] == [
+        "new module demo/six.py:9 calls exec (in exec_(), reached at import)"
+    ]
 
 
 # GRN-C002: setup.py anywhere, and releases without a trusted sdist
@@ -707,6 +747,55 @@ def test_renamed_pth_with_the_same_lines_is_quiet() -> None:
             "1.1",
             {"demo/__init__.py": INIT, "demo-1.1-py3.9-nspkg.pth": line + "import demo._boot\n"},
         ),
+    )
+
+
+def _nspkg(*names: str) -> str:
+    """A setuptools namespace .pth, one line per namespace package."""
+    return "".join(
+        "import sys, types, os;p = os.path.join(sys._getframe(1).f_locals['sitedir'], "
+        f"*{tuple(n.split('.'))!r});m = sys.modules.setdefault({n!r}, types.ModuleType({n!r}))\n"
+        for n in names
+    )
+
+
+def test_renamed_pth_that_drops_a_repeated_line_still_fires() -> None:
+    """The grpc-google-iam-v1 0.12.6 -> 0.12.7 shape. The trusted wheel's
+    namespace .pth repeats its ``google`` line; the new one, renamed for the
+    version, has it once. The lines differ as a list, so GRN-C001 reports the
+    file as new, as it did before GRN-C006, and the GRN-C006 facts (the wheel
+    compared with an sdist that has no .pth, as setuptools builds it) don't
+    take that away."""
+    sdist = {"setup.py": "from setuptools import setup\nsetup()\n", "google/iam/v1/x.py": INIT}
+    whl = {"google/iam/v1/x.py": INIT}
+    old = _nspkg("google", "google", "google.iam")
+    new = _nspkg("google", "google.iam")
+    base = release("1.0", {**whl, "demo-1.0-py3.9-nspkg.pth": old}, sdist_files=sdist)
+    cand = release("1.1", {**whl, "demo-1.1-py3.9-nspkg.pth": new}, sdist_files=sdist)
+    assert base.sdist_match is not None and cand.sdist_match is not None
+    first = new.splitlines()[0]
+    assert len(first) <= 160  # shown whole
+    expected = f"new demo-1.1-py3.9-nspkg.pth ({len(new):,} bytes, 2 executable line(s)): {first}"
+    for c in (cand, replace(cand, sdist_match=None)):
+        found = [f for f in run_checks(CHANGE, base, c).findings if f.rule_id == "GRN-C001"]
+        assert [e.summary for f in found for e in f.evidence] == [expected]
+    # GRN-C006 only adds: every finding without its facts is there with them.
+    without = run_checks(CHANGE, replace(base, sdist_match=None), replace(cand, sdist_match=None))
+    with_c006 = run_checks(CHANGE, base, cand)
+    assert set(without.findings) <= set(with_c006.findings)
+
+
+def test_pth_lines_a_form_feed_or_a_bom_hid_are_read() -> None:
+    """Python 3.11 and 3.12 run a line past a form feed whole, and 3.13 drops
+    a leading BOM and runs the line behind it, so both count as executable."""
+    line = "import os; os.getcwd()"
+    base = release("1.0", {"demo/__init__.py": INIT, "demo.pth": f"{line}\n"})
+    hidden = f"{line}\x0c;os.system('id')\n"
+    assert "GRN-C001" in rules(base, release("1.1", {"demo/__init__.py": INIT, "demo.pth": hidden}))
+    path_only = release("1.0", {"demo/__init__.py": INIT, "demo.pth": "lib\n"})
+    bom = b"\xef\xbb\xbfimport os; os.system('id')\nlib\n"
+    assert "GRN-C001" in rules(
+        path_only, release("1.1", {"demo/__init__.py": INIT, "demo.pth": bom})
     )
 
 

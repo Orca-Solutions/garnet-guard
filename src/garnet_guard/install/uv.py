@@ -31,6 +31,7 @@ from packaging.version import InvalidVersion, Version
 from ..lockfiles.base import normalize
 from . import pip
 from .pip import Refusal, spec_refusal
+from .runner import loader_env
 
 COPIED = ("pyproject.toml", "uv.lock", "uv.toml", ".python-version")
 MAX_PROJECT_FILE_BYTES = 16 * 1024 * 1024
@@ -396,9 +397,10 @@ def interpreters(args: Sequence[str], env: Mapping[str, str], cwd: Path) -> list
 
 
 def resolve_env(env: Mapping[str, str]) -> dict[str, str]:
-    """The environment for the resolve step: builds off, and the user's folder
-    settings dropped (the plan carries them as flags)."""
-    out = {k: v for k, v in env.items() if k not in _ENV_DROPPED}
+    """The environment for the resolve step: builds off, the user's folder
+    settings dropped (the plan carries them as flags), and no loader preload
+    from the command (runner.loader_env)."""
+    out = {k: v for k, v in loader_env(env).items() if k not in _ENV_DROPPED}
     out["UV_NO_BUILD"] = "1"
     out.pop("UV_NO_BUILD_ISOLATION", None)
     # A project's [tool.uv] can name where Python downloads come from
@@ -606,12 +608,17 @@ class Copy:
         return path.read_bytes() if path.is_file() else None
 
 
-def copy_project(project: Path, into: Path) -> Copy:
+def copy_project(
+    project: Path,
+    into: Path,
+    names: Sequence[str] = COPIED,
+    max_bytes: int = MAX_PROJECT_FILE_BYTES,
+) -> Copy:
     """Copy the project's files into ``into``, an empty folder only this user can read."""
     if any(into.iterdir()):
         raise UvError("the folder for the copy isn't empty")
     originals: dict[str, bytes | None] = {}
-    for name in COPIED:
+    for name in names:
         path = project / name
         if path.is_symlink():
             raise UvError(f"{name} is a symlink; Garnet Guard reads regular files only")
@@ -621,8 +628,8 @@ def copy_project(project: Path, into: Path) -> Copy:
         if not path.is_file():
             raise UvError(f"{name} isn't a regular file")
         data = path.read_bytes()
-        if len(data) > MAX_PROJECT_FILE_BYTES:
-            raise UvError(f"{name} is larger than {MAX_PROJECT_FILE_BYTES} bytes")
+        if len(data) > max_bytes:
+            raise UvError(f"{name} is larger than {max_bytes} bytes")
         originals[name] = data
         target = into / name
         fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

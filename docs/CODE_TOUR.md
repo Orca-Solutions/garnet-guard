@@ -57,7 +57,9 @@ Every run goes through the same five stages, whichever command started it.
    `ecosystems/npm_provenance.py` for npm provenance). When a PyPI release has a matching tag,
    `ecosystems/gittree.py` reads the repository's file list at that commit over the same git
    endpoint as the tag lookup, and `ecosystems/source.py` compares the wheel's Python files
-   with it, reading back and indexing only the few files that aren't in the tree. When the
+   with it, reading back and indexing only the few files that aren't in the tree.
+   `ecosystems/sdist.py` compares the same wheel with the release's own sdist for GRN-C006,
+   from the two files already downloaded. When the
    new version declares a dependency the trusted one didn't, `engine.py` asks the registry
    about that package (`package_profile()` in each ecosystem module) and attaches the answer
    to the facts for GRN-C008, so the check itself stays free of I/O. A failure in any step is
@@ -100,7 +102,7 @@ results describe what users will see.
 | [`report.py`](../src/garnet_guard/report.py) | Text and JSON output. Escapes package-supplied text before it reaches a terminal. |
 | [`markdown.py`](../src/garnet_guard/markdown.py) | The pull request comment. Treats the whole report as untrusted and escapes every string so a package can't add links, mentions or HTML. |
 | [`sarif.py`](../src/garnet_guard/sarif.py) | The SARIF report for GitHub code scanning, rendered from the JSON report the same way. Rule metadata comes from Garnet's own rule docs, never from the report. |
-| [`install/`](../src/garnet_guard/install/) | `garnet pip install`, `garnet uv add|remove|lock|sync` and the agent hooks ([install-wrapper.md](install-wrapper.md)). `pip.py` and `uv.py` read a command and the files it names and refuse what would build; `check.py` resolves with builds off, compares with what's installed or committed and calls the engine; `wrapper.py` installs exactly what was checked; `shellwords.py` reads an agent's shell command with `shlex` without running it; `gate.py` and `hooks.py` answer the hook; `runner.py` starts the user's pip, uv or git from an argument list. |
+| [`install/`](../src/garnet_guard/install/) | `garnet pip install`, `garnet uv add|remove|lock|sync` and the agent hooks ([install-wrapper.md](install-wrapper.md)). `pip.py` and `uv.py` read a command and the files it names and refuse what would build; `check.py` resolves with builds off, compares with what's installed or committed and calls the engine; `wrapper.py` installs exactly what was checked; `shellwords.py` reads an agent's shell command with `shlex` without running it; `gate.py` and `hooks.py` answer the hook; `runner.py` starts the user's pip, uv or git from an argument list, and names the loader settings (`LOADER_PRELOAD`: `LD_PRELOAD`, `DYLD_*`) that the check's own runs get only as Garnet started with them. |
 | [`console.py`](../src/garnet_guard/console.py) | The entry point of `garnet` and `garnet-guard`. `garnet hook <agent> run` goes to `install/gate.py`, which imports only the standard library; everything else goes to `cli.py`. |
 
 Outside `src/`:

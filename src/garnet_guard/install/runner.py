@@ -77,3 +77,52 @@ def run(
 
 # PyPI's release list for a project. Raises an exception the caller reports.
 Registry = Callable[[str], ProjectReleases]
+
+
+# Environment variables that make the dynamic loader load a library into a
+# program it starts, or look for its libraries somewhere else: glibc's and
+# musl's ld.so, and macOS dyld. dyld reads other DYLD_ names too, and
+# loader_preload counts every one of them.
+LOADER_PRELOAD = frozenset(
+    {
+        "LD_PRELOAD",
+        "LD_AUDIT",
+        "LD_LIBRARY_PATH",
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FRAMEWORK_PATH",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "DYLD_FALLBACK_FRAMEWORK_PATH",
+        "DYLD_VERSIONED_LIBRARY_PATH",
+        "DYLD_VERSIONED_FRAMEWORK_PATH",
+        "DYLD_IMAGE_SUFFIX",
+    }
+)
+
+
+def loader_preload(name: str) -> bool:
+    """Whether ``name`` is a dynamic loader setting: in LOADER_PRELOAD, or any ``DYLD_`` name."""
+    return name in LOADER_PRELOAD or name.startswith("DYLD_")
+
+
+def loader_env(env: Mapping[str, str], own: Mapping[str, str] | None = None) -> dict[str, str]:
+    """``env`` with the loader settings replaced by Garnet's own (``own``, by
+    default this process's environment).
+
+    For the package manager Garnet starts to check a command: a library the
+    command line names never loads into it, and the settings Garnet itself
+    started with, which are already loaded into Garnet, still apply, so a
+    Python that needs ``LD_LIBRARY_PATH`` to start keeps it.
+    """
+    own = os.environ if own is None else own
+    out = {k: v for k, v in env.items() if not loader_preload(k)}
+    out.update({k: v for k, v in own.items() if loader_preload(k)})
+    return out
+
+
+# Where glibc loads character-set conversion modules (gconv, shared
+# libraries) and locale files from. A locale whose charset needs a module
+# makes the C library load one into a program as it starts. Kept apart from
+# LOADER_PRELOAD: the hooks ask when a command sets these, and the check
+# doesn't change them.
+LIBC_MODULE_PATHS = frozenset({"GCONV_PATH", "LOCPATH"})

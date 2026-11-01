@@ -29,7 +29,15 @@ module whose import started the chain. Calls are resolved through imports and si
 aliasing (`sp = subprocess`), `from os import *`, and `getattr(os, "system")`,
 `getattr(sys.modules[__name__], "ctypes")`, `__import__("os")` or
 `importlib.import_module("os")` with a literal name, by reading the source with `ast`;
-nothing is executed. A dotted name counts only when its first part is a module the file
+nothing is executed. A `def` without decorators rebinds its name for the rest of the block
+it is in, so a call there after it calls that function, even when the name held an alias
+before. six's Python 2 branch defines `exec_` and calls it at once; that call runs the
+`exec_` just defined, not the builtin `exec` that the Python 3 branch binds to the same name.
+In mpmath 0.18's copy the call used to be listed as calling `builtins.exec`; the `exec` inside
+`exec_` is still reported. After the `if`, loop or `try` that holds the def, which may not
+have run, a call to the name is still reported as a call to the alias. A decorated def binds
+what its decorator returns, and default arguments run before the def binds its name, so
+neither unbinds the alias. A dotted name counts only when its first part is a module the file
 imports (a local list called `requests` is not the `requests` library), and a function or
 class the module defines shadows a builtin of the same name. A `base64` decode whose result
 reaches a sensitive call counts as a call of its own, so `exec(base64.b64decode(...))` is
@@ -193,12 +201,13 @@ as the code writes it.
 GRN-C003 follows a call into one of the release's own top-level packages into that module. When
 the call's name is in the set it counts as a sensitive call as well, unless the release is the
 library of that name: the `requests` project, as its wheel or sdist filename names it, calling
-its own `requests.adapters` isn't reported, and GRN-C007 leaves it out. A module that any other
-release ships under a name in the set may not be what Python imports: the standard library's
-`os` comes before an `os.py` in site-packages, an installed `requests` package before a
-`requests.py` beside it, and `builtins` is built in. So with an empty `os.py`, `requests.py` or
-`builtins.py` beside the package, `os.system`, `requests.post` and `builtins.exec` still count,
-and the call is followed into the release's module too, in case that is the one Python imports.
+its own `requests.adapters` isn't reported, and GRN-C006 and GRN-C007 leave it out. A module
+that any other release ships under a name in the set may not be what Python imports: the
+standard library's `os` comes before an `os.py` in site-packages, an installed `requests`
+package before a `requests.py` beside it, and `builtins` is built in. So with an empty `os.py`,
+`requests.py` or `builtins.py` beside the package, `os.system`, `requests.post` and
+`builtins.exec` still count, and the call is followed into the release's module too, in case
+that is the one Python imports.
 
 Set `2026-10-c` (October 30, 2026) added the file loaders, the process calls outside
 `subprocess`, more network clients (`asyncio` streams, `urllib3`, mail, FTP, telnet, XML-RPC and

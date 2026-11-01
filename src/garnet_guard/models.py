@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from enum import IntEnum, StrEnum
 from typing import Literal
@@ -272,7 +272,16 @@ class PthFile:
     """A ``.pth`` file and the lines in it that Python runs at every startup."""
 
     path: str
+    # As ``str.splitlines()`` splits the file, each time a line appears
     exec_lines: tuple[str, ...]
+    # Lines Python 3.11 and 3.12 (a form feed inside a line) or 3.13 and later
+    # (a line behind a BOM) run that ``exec_lines`` lacks, each once
+    other_lines: tuple[str, ...] = ()
+
+    @property
+    def all_lines(self) -> tuple[str, ...]:
+        """Every line some Python runs, each once."""
+        return tuple(dict.fromkeys((*self.exec_lines, *self.other_lines)))
 
 
 @dataclass(frozen=True)
@@ -342,6 +351,38 @@ class SourceMatch:
 
 
 @dataclass(frozen=True)
+class WheelOnlyCode:
+    """Code in a file of the wheel the content rules read that the release's
+    sdist doesn't have (GRN-C006): for a ``.py`` file, the sensitive calls its
+    sdist copy doesn't make; for a ``.pth`` file, the executable lines its sdist
+    copy lacks, or all of them when the sdist has no copy. Recorded only when
+    there is such code, and for a ``.pth`` with no sdist copy at all."""
+
+    path: str  # where the file installs, relative to site-packages
+    at: str | None  # the sdist file it was compared with; None: the sdist has none
+    calls: tuple[CallSite, ...] = ()
+    lines: tuple[str, ...] = ()  # a .pth file's executable lines the sdist copy lacks
+    sdist_parsed: bool = True  # False: the sdist copy couldn't be parsed, so every call counts
+
+
+@dataclass(frozen=True)
+class SdistMatch:
+    """How the Python and ``.pth`` files of the wheel the content rules read
+    compare with the release's sdist (GRN-C006). Counted over the wheel's
+    parsed Python files that install in site-packages."""
+
+    wheel: str  # the wheel's filename
+    sdist: str  # the sdist's filename
+    matched: int  # same bytes somewhere in the sdist (CRLF line endings read as LF)
+    differ: int  # the sdist's copy at the same install path has other bytes
+    absent: int  # the sdist has no copy
+    code: tuple[WheelOnlyCode, ...] = ()
+    # Install paths of files counted in ``differ`` or ``absent`` that parse but
+    # are nested too deep for Garnet to list their calls (GRN-E002 names GRN-C006)
+    unwalked: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Requirement:
     """A package an artifact declares it needs, installed without asking for an extra.
 
@@ -356,11 +397,33 @@ class Requirement:
     spec: str
     alias_of: str | None = None
     source: str | None = None
+    # Other declarations of this name in the same artifact that install
+    # something else, as written (a second Requires-Dist line, or the name in
+    # another package.json table, such as optionalDependencies, which npm lets
+    # override dependencies). Only the first is compared and looked up.
+    also: tuple[str, ...] = ()
+    # What those declarations install instead of this one's registry
+    # package: another registry package (an npm alias target), a URL, a git
+    # repository or a path. GRN-C008 keeps its severity for them.
+    also_installs: tuple[str, ...] = ()
 
     @property
     def package(self) -> str:
         """The registry package that installs."""
         return self.alias_of or self.name
+
+    def with_others(self, others: Sequence[Requirement]) -> Requirement:
+        """This requirement with the other declarations of its name that
+        install something other than its registry package: their specs in
+        ``also``, and what they install in ``also_installs``."""
+        differ = [o for o in others if (o.source, o.package) != (self.source, self.package)]
+        if not differ:
+            return self
+        return replace(
+            self,
+            also=tuple(o.spec for o in differ),
+            also_installs=tuple(dict.fromkeys(o.source or o.package for o in differ)),
+        )
 
 
 @dataclass(frozen=True)
@@ -514,6 +577,10 @@ class ReleaseFacts:
     wheel_calls: tuple[WheelCalls, ...] = ()
     read_wheel_family: str | None = None
     wheel_unparsed: tuple[UnparsedWheelFile, ...] = ()
+    # GRN-C006: the wheel the content rules read compared with the release's
+    # sdist. None when the release lacks one of the two, or Garnet couldn't
+    # read one of them to the end (its GRN-E finding names GRN-C006).
+    sdist_match: SdistMatch | None = None
 
     @property
     def content(self) -> tuple[ArtifactFacts, ...]:

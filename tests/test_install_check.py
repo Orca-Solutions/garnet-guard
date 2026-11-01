@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -15,7 +16,7 @@ import pytest
 from garnet_guard.engine import Options
 from garnet_guard.install import check, wrapper
 from garnet_guard.install.check import Deps, Outcome
-from garnet_guard.install.runner import Ran
+from garnet_guard.install.runner import LOADER_PRELOAD, Ran, loader_env, loader_preload
 from garnet_guard.models import (
     Change,
     ChangeResult,
@@ -715,3 +716,102 @@ def test_package_text_is_escaped(tmp_path: Path) -> None:
     text = stdout.getvalue()
     assert "\x1b" not in text and "‮" not in text and "\x07" not in text
     assert json.dumps(text)  # still printable
+
+
+# --- the loader preload -------------------------------------------------------
+
+PRELOADS = {
+    "LD_PRELOAD": "./pre.so",
+    "LD_AUDIT": "./audit.so",
+    "LD_LIBRARY_PATH": "./lib",
+    "DYLD_INSERT_LIBRARIES": "./pre.dylib",
+    "DYLD_FRAMEWORK_PATH": "./fw",
+    "DYLD_SOME_LATER_NAME": "./x",  # dyld reads more DYLD_ names than the constant lists
+}
+
+
+def test_loader_preload_names() -> None:
+    assert {"LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH"} <= LOADER_PRELOAD
+    assert {"DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"} <= LOADER_PRELOAD
+    assert all(loader_preload(name) for name in PRELOADS)
+    for name in ("LD_BIND_NOW", "PATH", "PYTHONPATH", "ld_preload", "MY_LD_PRELOAD", "DYLD"):
+        assert not loader_preload(name)
+
+
+def test_loader_env_keeps_only_garnets_own_loader_settings() -> None:
+    env = {"PATH": "/usr/bin", "LD_BIND_NOW": "1", **PRELOADS}
+    assert loader_env(env, own={}) == {"PATH": "/usr/bin", "LD_BIND_NOW": "1"}
+    # What Garnet started with is already loaded into Garnet: it stays.
+    own = {"LD_LIBRARY_PATH": "/opt/python/lib", "HOME": "/home/me"}
+    assert loader_env(env, own=own) == {
+        "PATH": "/usr/bin",
+        "LD_BIND_NOW": "1",
+        "LD_LIBRARY_PATH": "/opt/python/lib",
+    }
+
+
+def _recording(answer, seen: list[dict[str, str]]):  # type: ignore[no-untyped-def]
+    def run(argv: list[str], cwd: Path, env: dict[str, str]) -> Ran:
+        seen.append(env)
+        return answer(argv, cwd, env)  # type: ignore[no-any-return]
+
+    return run
+
+
+def _no_own_loader_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in list(os.environ):
+        if loader_preload(name):
+            monkeypatch.delenv(name)
+
+
+def test_pip_check_runs_without_the_commands_loader_preload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _no_own_loader_settings(monkeypatch)
+    seen: list[dict[str, str]] = []
+    run = FakeRunner(_recording(pip_answers("pip-report-requests-2.32.3.json"), seen))
+    work = tmp_path / "work"
+    work.mkdir()
+    out = check.check_pip(
+        PY,
+        ["install", "requests==2.32.3"],
+        cwd=tmp_path,
+        env={"PATH": "/venv/bin", **PRELOADS},
+        command="pip install requests==2.32.3",
+        deps=deps(run),
+        workdir=work,
+    )
+    assert out.status == "pass"
+    # config list, inspect and the dry run: none of them gets a preload.
+    assert len(seen) == 3
+    assert all(not any(loader_preload(name) for name in env) for env in seen)
+    assert all(env["PATH"] == "/venv/bin" for env in seen)
+    # The install itself (the wrapper's hand-off) runs as the user wrote it.
+    assert out.handoff is not None and out.handoff.env["LD_PRELOAD"] == "./pre.so"
+
+
+def test_uv_check_runs_without_the_commands_loader_preload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _no_own_loader_settings(monkeypatch)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/python/lib")  # Garnet's own: kept
+    project = uv_project(tmp_path / "p")
+    seen: list[dict[str, str]] = []
+    run = FakeRunner(_recording(uv_answers(), seen))
+    work = tmp_path / "work"
+    work.mkdir()
+    out = check.check_uv(
+        UV,
+        "add",
+        ["requests"],
+        cwd=project,
+        env={"UV_FROZEN": "0", **PRELOADS},
+        command="uv add requests",
+        deps=deps(run),
+        workdir=work,
+    )
+    assert out.status == "pass" and seen
+    for env in seen:
+        assert {name for name in env if loader_preload(name)} == {"LD_LIBRARY_PATH"}
+        assert env["LD_LIBRARY_PATH"] == "/opt/python/lib"
+    assert out.handoff is not None and out.handoff.env["DYLD_INSERT_LIBRARIES"] == "./pre.dylib"

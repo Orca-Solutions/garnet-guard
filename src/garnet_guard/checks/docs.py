@@ -37,7 +37,7 @@ _DOCS: tuple[RuleDoc, ...] = (
         "The verified source repository differs between the trusted and new versions.",
         "Attestations name the repository whose CI built the release. A different repository means "
         "someone else's CI published this version: a fork, a new home, or an attacker's repository. "
-        "Renames are ignored when GitHub's repository id is unchanged.",
+        "Renames are ignored when the repository id on the same host is unchanged.",
         "Confirm the move from the old repository: an announcement or a commit there, or the "
         "project's page linking the new home. Don't rely on the release notes or on what the new "
         "repository says about itself; whoever published the release wrote them.",
@@ -153,7 +153,8 @@ _DOCS: tuple[RuleDoc, ...] = (
         W,
         "Code that runs at import time gained calls that run processes, load code, or use the network. "
         "In test files (tests/, test_*.py, conftest.py) it reports at info, unless a non-test module "
-        "imports the file or an entry point names it.",
+        "imports the file or an entry point names it. A call after a def in the same block calls "
+        "that function, not an alias the name held before (six's exec_ in its Python 2 branch).",
         "Module top-level code runs the moment anything imports the package, including your test suite "
         "and CI. lightning 2.6.2 started a credential stealer this way, from a thread launched in "
         "lightning/__init__.py.",
@@ -184,6 +185,36 @@ _DOCS: tuple[RuleDoc, ...] = (
         "beside it: ask the maintainers to drop it from the wheel.",
     ),
     RuleDoc(
+        "GRN-C006",
+        "sdist-wheel-mismatch",
+        "diff",
+        W,
+        "The wheel Garnet reads has code the release's own sdist doesn't: a Python file that "
+        "isn't byte for byte in the sdist and makes a call that runs processes, loads code or "
+        "uses the network which the sdist's copy of it doesn't (every such call, when the "
+        "sdist has no copy or its copy can't be parsed), or a .pth file the sdist has no copy "
+        "of, or whose executable lines its copy lacks. An sdist's top folder and its src/ "
+        "folder aren't part of a file's installed path. A call the trusted version's wheel "
+        "already carried outside its sdist in the same file isn't new, nor is a .pth line it "
+        "carried outside its sdist in any .pth file. Both files must be read to the end; when "
+        "one can't be, or a wheel file is nested too deep to list its calls, a GRN-E finding "
+        "names this rule. Calls only in test files, or in a top-level folder with no "
+        "__init__.py, are a separate finding at info unless something imports or names the "
+        "file; a .pth file never is.",
+        "A wheel is built from its sdist, or from the same tagged source, so its code should "
+        "be in the sdist byte for byte. Reviewers read the sdist or the repository; pip "
+        "installs the wheel. Code that is only in the wheel is the part nobody reviewed. "
+        "Files a build writes, such as a _version.py, differ too and make no such calls, so "
+        "they stay quiet. An uploader who controls both files can put the same code in each: "
+        "telnyx 4.87.1 and 4.87.2 carry their payload in both, byte for byte, so this rule "
+        "has nothing to say about them and GRN-C003 reports them.",
+        "Open the file the evidence names in the wheel and the same file in the sdist, then "
+        "in the project's repository at the release's tag. If the project's build scripts "
+        "write that code on purpose, add a time-limited ignore with the reason. If nothing "
+        "there explains it, don't merge, and tell the maintainers: the wheel wasn't built "
+        "from the sdist they published.",
+    ),
+    RuleDoc(
         "GRN-C007",
         "code-not-in-source",
         "diff",
@@ -206,9 +237,10 @@ _DOCS: tuple[RuleDoc, ...] = (
         W,
         "The new version depends on a package the trusted version didn't, or a dependency it "
         "had now installs from somewhere else. It is a warning when the registry has no such "
-        "package, when it installs from git, a URL or a path, or when its first release came "
-        "less than 90 days before this one (or after it), whoever owns it. An established "
-        "dependency is info.",
+        "package, when it installs from git, a URL or a path, when its name is declared again "
+        "(npm's optionalDependencies, a second Requires-Dist line) to install another package or "
+        "source, which Garnet doesn't look up, or when its first release came less than 90 days "
+        "before this one (or after it), whoever owns it. An established dependency is info.",
         "A dependency installs with the package, and a new one gets no comparison of its own: "
         "Garnet has no trusted version of it to diff against. Adding a package the attacker "
         "controls is a quiet way to carry a payload into a trusted one. event-stream 3.3.6 "
@@ -250,9 +282,10 @@ _DOCS: tuple[RuleDoc, ...] = (
         "diff",
         W,
         "The new version's wheel adds a file that runs or installs outside the package: a "
-        "sitecustomize.py or usercustomize.py in site-packages, a script under .data/scripts/, or "
-        "a file under .data/data/. It is a warning for the startup modules, for a script named "
-        "like a common command and for files under etc/; other scripts and data files are info.",
+        "sitecustomize or usercustomize module, package or extension in site-packages, a script "
+        "under .data/scripts/, or a file under .data/data/. It is a warning for "
+        "the startup modules, for a script named like a common command and for files under etc/; "
+        "other scripts and data files are info.",
         "Python imports sitecustomize and usercustomize at every start, like a .pth file, so their "
         "code runs in every Python process in the environment whether or not anything imports the "
         "package. Scripts become commands on PATH, and files under etc/ are read as "
@@ -358,7 +391,9 @@ _DOCS += (
         "absolute",
         Severity.INFO,
         "A dependency comes from a source Garnet doesn't check: git, a local path, a direct URL, a private "
-        "index or registry, or another npm package's tarball (a bundled dependency).",
+        "index or registry, or another npm package's tarball (a bundled dependency). In a requirements "
+        "file, an index, extra index or --find-links anywhere in the file, or in the files it is read "
+        "with through -r and -c, applies to every pin in them.",
         "Garnet compares releases published on PyPI and npm. Code from other sources wasn't checked, and "
         "it isn't passed either.",
         "Review the change to that dependency by hand. A bundled dependency changes only with the package "
@@ -371,4 +406,4 @@ DOCS: dict[str, RuleDoc] = {d.rule_id: d for d in _DOCS}
 
 # Rules in the SPEC §6.2 catalog that aren't built yet. A policy may already
 # name them; they produce no findings until they ship.
-PLANNED: frozenset[str] = frozenset({"GRN-C005", "GRN-C006"})
+PLANNED: frozenset[str] = frozenset({"GRN-C005"})

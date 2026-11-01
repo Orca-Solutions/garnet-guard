@@ -23,6 +23,16 @@ uv run lint-imports              # the layer rules in docs/API.md §2
 
 Unit tests never touch the network. They build tiny wheels, sdists and release facts in memory with `tests/builders.py`, so no real package (and no real malware) is stored in the repository. Tests that need the network are marked `@pytest.mark.network` and are skipped by default; run them with `uv run pytest -m network`.
 
+The parsers that read hostile input (`safe_archive.py`, the JavaScript scanner and the lockfile parsers) have fuzz targets in `tests/fuzz/`, run with [Atheris](https://github.com/google/atheris) by `.github/workflows/fuzz.yml`: a minute per target on each pull request, 15 minutes every night, and an hour per target before a release. Atheris has wheels only for Linux x86-64 on CPython 3.12 and later. To run a target there:
+
+```sh
+uv sync --group fuzz
+uv run python -m tests.fuzz.seeds safe_archive corpus/safe_archive
+uv run python -m tests.fuzz.fuzz_safe_archive corpus/safe_archive -max_total_time=60
+```
+
+`uv run pytest` runs each target's check on its seeds on every platform, without Atheris.
+
 New to the code? [docs/CODE_TOUR.md](docs/CODE_TOUR.md) walks through it module by module, in plain language.
 
 ## Adding or changing a rule

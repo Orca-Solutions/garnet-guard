@@ -17,7 +17,13 @@ from garnet_guard.ecosystems.github import TagLookup
 from garnet_guard.ecosystems.gittree import TreeLookup
 from garnet_guard.install import pip, shellwords, uv
 from garnet_guard.install.check import newest_release
-from garnet_guard.install.shellwords import PipCommand, Unclear, Unsupported, UvCommand
+from garnet_guard.install.shellwords import (
+    NpmCommand,
+    PipCommand,
+    Unclear,
+    Unsupported,
+    UvCommand,
+)
 from garnet_guard.models import Limits
 from garnet_guard.net import Http, NetError, Response
 
@@ -52,6 +58,8 @@ def _shape(found: list[shellwords.Found]) -> list[str]:
             out.append("pip " + " ".join(f.args))
         elif isinstance(f, UvCommand):
             out.append(f"uv {f.subcommand} " + " ".join(f.args))
+        elif isinstance(f, NpmCommand):
+            out.append(f"npm {f.subcommand} " + " ".join(f.args))
         elif isinstance(f, Unsupported):
             out.append(f"unsupported {f.tool}")
         else:
@@ -143,8 +151,9 @@ SHAPES = [
     ("uv run -- -", ["unsupported uv run <script>"]),
     ('uv run "$S"', ["unclear"]),
     ("uv run -m http.server", ["uv sync"]),
-    ("npm install left-pad", ["unsupported npm install"]),
-    ("npm i", ["unsupported npm i"]),
+    ("npm install left-pad", ["npm install left-pad"]),
+    ("npm i", ["npm install"]),
+    ("npm exec x", ["unsupported npm exec"]),
     ("npm test", []),
     ("pnpm add x", ["unsupported pnpm add"]),
     ("yarn", ["unsupported yarn"]),
