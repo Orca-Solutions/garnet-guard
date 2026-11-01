@@ -10,11 +10,9 @@ Current state, open tasks, verification and review dispositions. Newest first.
 
 The earlier read of the GRN-C002 warnings that replace a call (17 updates, 22 new calls) shows what the comparison can see: 5 of the 22 pass only literals, 4 pass a bare variable (`cmd`, `build_script`), the rest lists or f-strings built from variables. Those 17 change the callee's name (`Popen` to `run`), so this change neither adds nor removes them.
 
-**Open tasks.** Backtest delta pending: the replays and the clean corpora haven't been run with this change, and the README and rule-coverage numbers are unchanged until they are. Questions for the maintainer: whether to follow a variable to a literal assigned to it in the same function (`cmd = [...]` then `subprocess.call(cmd)`), which this change compares by name only; and whether GRN-C003 should compare arguments the same way (#65).
+**Open tasks.** Replays on 7619d8a, fresh cache: 52 of 52 warn, the same rules and evidence as main. The clean-corpus delta is pending (one top-1,000 run with #119), and the README and rule-coverage numbers are unchanged until it is in. Questions for the maintainer: whether to follow a variable to a literal assigned to it in the same function (`cmd = [...]` then `subprocess.call(cmd)`), which this change compares by name only; and whether GRN-C003 should compare arguments the same way (#65).
 
 **Verification.** `uv run pytest`, ruff, mypy (strict) and `lint-imports` pass; `AGENTS.md` and `CLAUDE.md` are identical.
-
-**Review dispositions.** None yet.
 
 ## 2026-10-31: GRN-C006 lists test files and files outside the packages at info
 
