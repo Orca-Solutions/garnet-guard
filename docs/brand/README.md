@@ -10,4 +10,4 @@ The Garnet Guard brand kit and website live in the private `orca-solutions/gg-la
 | `badge/checked-by-garnet-guard.svg` | The README badge, once Garnet Guard checks its own dependency PRs |
 | `favicon/favicon-16.svg` | The icon in the Action's PR comment (`action/run.sh`, `action/comment/render.sh`, `src/garnet_guard/markdown.py`) |
 
-Don't edit these files here. Change the kit in gg-landing, regenerate it there, and copy the changed files over the ones here. These copies match gg-landing at commit ec9ee3c.
+Don't edit these files here. Change the kit in gg-landing, regenerate it there, and copy the changed files over the ones here. These copies match gg-landing at commit 534c5a4.
