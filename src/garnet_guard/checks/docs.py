@@ -182,6 +182,32 @@ _DOCS: tuple[RuleDoc, ...] = (
         "beside it: ask the maintainers to drop it from the wheel.",
     ),
     RuleDoc(
+        "GRN-C005",
+        "obfuscated-blob",
+        "diff",
+        Severity.INFO,
+        "Code that runs at import gains encoded data or a lookup by a name the source "
+        "doesn't hold: a hex, base64 or base85 literal of more than 2,048 characters, or "
+        "binary bytes, over the entropy threshold (from 256 characters when passed to a "
+        "decoder; PEM blocks don't count on their own); exec, eval, compile, marshal.loads or "
+        "pickle.loads run on a value built from literals with a decoder, chr(), slicing or "
+        "xor; getattr, __import__, import_module or sys.modules given a name built that way, "
+        "or by concatenation, formatting or join into a sensitive name; or os, sys, builtins, "
+        "ctypes or importlib looked up by a name not written in "
+        "the source (getattr(os, name), vars(os)[name], sys.modules[name]). Test files and "
+        "sdist files outside the package are left out, as in GRN-C003. Python only.",
+        "Encoding a payload, or building the name of the call it makes, hides it from a "
+        'reviewer and from rules that match names: GRN-C003 reads getattr(os, "system") but '
+        'not getattr(os, "".join(map(chr, codes))). Packages also embed data (certificates, '
+        "fonts, compressed tables) and look names up in plugin loaders and compatibility "
+        "shims, so this rule reports at info, and only what the trusted version didn't have.",
+        "Open the line the evidence names. Find out what the literal decodes to and where it "
+        "goes, or which names the lookup can reach, with a separate tool: never by importing "
+        "the package. Data that is only read is usually fine. Code decoded and run at import, "
+        "or a sensitive call reached through a built name, that the repository at the "
+        "release's tag doesn't explain is a reason not to merge.",
+    ),
+    RuleDoc(
         "GRN-C006",
         "sdist-wheel-mismatch",
         "diff",
@@ -403,4 +429,4 @@ DOCS: dict[str, RuleDoc] = {d.rule_id: d for d in _DOCS}
 
 # Rules in the SPEC §6.2 catalog that aren't built yet. A policy may already
 # name them; they produce no findings until they ship.
-PLANNED: frozenset[str] = frozenset({"GRN-C005"})
+PLANNED: frozenset[str] = frozenset()

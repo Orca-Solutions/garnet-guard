@@ -243,6 +243,11 @@ class CallSite:
     from_module: str | None = None  # path of the module whose import started the chain
     handed_to: str | None = None  # the call the function went to, when it may not run it
     read: bool = False  # a read of a credential or CI setting, not a call (GRN-C003, info)
+    # GRN-C005: an encoded literal or a name built at run time, not a call. The
+    # key the trusted version must have had for it not to be new: ``blob:`` and
+    # ``built:`` keys anywhere in the trusted release, ``lookup:`` keys in the
+    # same module. ``name`` then says what it is, for the evidence.
+    obscured: str | None = None
 
 
 @dataclass(frozen=True)

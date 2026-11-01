@@ -69,7 +69,7 @@ An `until` more than 12 months after the day Garnet reads the policy is refused,
 
 The day after `until`, the ignore stops applying. The finding counts again, with a note that an ignore expired and the reason it gave, and the report lists every expired ignore so a lapsed review is visible even when nothing matched it. Review the package again, then renew the date or delete the entry.
 
-Policies may name rules that are in the spec but not built yet (GRN-C005). They produce no findings until they ship.
+Policies may name rules that are in the spec but not built yet. They produce no findings until they ship.
 
 ## Checking a policy
 

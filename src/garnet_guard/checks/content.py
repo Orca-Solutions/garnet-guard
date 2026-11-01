@@ -316,7 +316,13 @@ def _new_install_script(base: ReleaseFacts, cand: ReleaseFacts) -> Iterator[RawF
 
 
 def _moved_from(path: str, baseline: tuple[ModuleIndex, ...]) -> set[str]:
-    """Sensitive calls of the baseline module this new path was moved from.
+    """Sensitive calls of the baseline module this new path was moved from."""
+    best = _moved_module(path, baseline)
+    return {s.name for s in best.top_level_calls if s.obscured is None} if best else set()
+
+
+def _moved_module(path: str, baseline: tuple[ModuleIndex, ...]) -> ModuleIndex | None:
+    """The baseline module this new path was moved from, if any.
 
     Vendored code often moves between folders (scipy 1.18.0 moved
     ``_lib/array_api_compat`` to ``_external/array_api_compat``). A baseline
@@ -339,7 +345,7 @@ def _moved_from(path: str, baseline: tuple[ModuleIndex, ...]) -> set[str]:
             n = len(parts)  # html5lib 1.0 renamed inputstream.py to _inputstream.py
         if n > best_len or (n == best_len and best is not None and m.path < best.path):
             best, best_len = m, n
-    return {s.name for s in best.top_level_calls} if best is not None else set()
+    return best
 
 
 def _public_name(filename: str) -> str:
@@ -464,6 +470,44 @@ def _quiet_wheel_files(art: ArtifactFacts, package: str) -> set[str]:
     return {p for p in paths if site[p] not in live}
 
 
+class _Reach:
+    """How a call site in an artifact's module is reached at import (the
+    kinds GRN-C003 reports, docs/rules/GRN-C003.md): from package code
+    ("module"), only from test files nothing else imports ("test"), only from
+    sdist files outside the package ("outside"), or only in a function handed
+    to a call not known to run it ("handed")."""
+
+    def __init__(self, art: ArtifactFacts, package: str) -> None:
+        self.live_tests = _live_test_modules(art)
+        self.module_of = {m.path: m.module for m in art.modules}
+        self.outside = _outside_package(art, package)
+
+    def test_only(self, m: ModuleIndex) -> bool:
+        return is_test_path(m.path) and m.module not in self.live_tests
+
+    def kind(self, m: ModuleIndex, s: CallSite) -> tuple[str, str]:
+        """The site's kind, and the module counted for it in a title."""
+        origin = s.from_module
+        from_test = (
+            origin is not None
+            and is_test_path(origin)
+            and self.module_of.get(origin) not in self.live_tests
+        )
+        from_outside = origin is not None and origin in self.outside
+        counted = m.module
+        if _deferred(s):
+            kind = "handed"
+        elif self.test_only(m) or from_test:
+            kind = "test"
+        elif m.path in self.outside or from_outside:
+            kind = "outside"
+        else:
+            kind = "module"
+        if origin is not None and kind != "handed" and (from_test or from_outside):
+            counted = self.module_of.get(origin, origin)
+        return kind, counted
+
+
 def new_import_time_exec(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
@@ -483,13 +527,11 @@ def new_import_time_exec(
     b, c = _pair(base, cand)
     if b is None or c is None:
         return
-    old = {m.module: {s.name for s in m.top_level_calls} for m in b.modules}
+    old = {m.module: {s.name for s in m.top_level_calls if s.obscured is None} for m in b.modules}
     old_hashes = {f.sha256 for f in b.files}
     old_unparsed = set(b.unparsed)
     new_hash = {f.path: f.sha256 for f in c.files}
-    live_tests = _live_test_modules(c)
-    module_of = {m.path: m.module for m in c.modules}
-    outside = _outside_package(c, cand.package)
+    reach = _Reach(c, cand.package)
     kinds = ("module", "test", "outside", "handed", "read")
     # per kind: evidence, the files counted in the title, and the trusted
     # copies ast couldn't parse (a Python 2 wheel), module -> path
@@ -505,35 +547,17 @@ def new_import_time_exec(
             before = set()
         else:
             before = _moved_from(m.path, b.modules)
-        test_only = is_test_path(m.path) and m.module not in live_tests
+        calls = [s for s in m.top_level_calls if s.obscured is None]
         # A function handed to two calls is scanned once per call; a site that
         # some call is known to run is not also "handed".
-        ran = {(s.line, s.name) for s in m.top_level_calls if not _deferred(s)}
+        ran = {(s.line, s.name) for s in calls if not _deferred(s)}
         sites: list[tuple[CallSite, str, str]] = []  # site, kind, file counted in the title
-        for s in m.top_level_calls:
+        for s in calls:
             if s.name in before:
                 continue
-            deferred = _deferred(s)
-            if deferred and (s.line, s.name) in ran:
+            if _deferred(s) and (s.line, s.name) in ran:
                 continue
-            origin = s.from_module
-            from_test = (
-                origin is not None
-                and is_test_path(origin)
-                and module_of.get(origin) not in live_tests
-            )
-            from_outside = origin is not None and origin in outside
-            counted = m.module
-            if deferred:
-                kind = "handed"
-            elif test_only or from_test:
-                kind = "test"
-            elif m.path in outside or from_outside:
-                kind = "outside"
-            else:
-                kind = "module"
-            if origin is not None and kind != "handed" and (from_test or from_outside):
-                counted = module_of.get(origin, origin)
+            kind, counted = reach.kind(m, s)
             if s.read:
                 if kind != "module":
                     continue  # a read only a test, an sdist extra or a handed function makes
@@ -640,6 +664,104 @@ def new_import_time_exec(
             tuple(evidence[:MAX_EVIDENCE]) + tail + note + _compare_note(b, c),
             lowered_to=None if kind == "module" else Severity.INFO,
         )
+
+
+def obfuscated_blob(
+    change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
+) -> Iterator[RawFinding]:
+    """GRN-C005: new encoded literals and computed lookups in code that runs at import.
+
+    The sites come from ``facts.obfuscation`` through the module index, with
+    the reachability GRN-C003 uses. Only what a package module reaches at
+    import is reported: sites reached only from test files nothing imports,
+    from sdist files outside the package, or in a function only handed to a
+    call not known to run it are left out. A literal or a built value (keys
+    ``blob:`` and ``built:``) the trusted release had in any module isn't new;
+    a computed lookup (``lookup:``) is compared with the same function in the
+    same module, or the one it moved from. A site Garnet stopped reading at
+    (``unread:``) is always reported. A module byte-identical to a trusted file is skipped.
+    """
+    if base is None:
+        return
+    b, c = _pair(base, cand)
+    if b is None or c is None:
+        return
+    # A computed lookup is matched with the function it sits in too, so the
+    # same ``getattr(os, n)`` written in a new function counts as new.
+    trusted = [
+        (m, {(s.obscured, s.via) for s in m.top_level_calls if s.obscured}) for m in b.modules
+    ]
+    anywhere = {k for _, keys in trusted for k, _ in keys if not k.startswith("lookup:")}
+    by_module = {m.module: keys for m, keys in trusted}
+    old_hashes = {f.sha256 for f in b.files}
+    old_unparsed = set(b.unparsed)
+    new_hash = {f.path: f.sha256 for f in c.files}
+    reach = _Reach(c, cand.package)
+    evidence: list[Evidence] = []
+    files: set[str] = set()
+    unread: dict[str, str] = {}
+    for m in c.modules:
+        sites = [s for s in m.top_level_calls if s.obscured is not None]
+        if not sites:
+            continue
+        if m.module in by_module:
+            before = by_module[m.module]
+        elif new_hash.get(m.path) in old_hashes:
+            continue  # byte-identical to a trusted file: moved, not added
+        elif m.path in old_unparsed:
+            before = set()
+        else:
+            moved = _moved_module(m.path, b.modules)
+            before = by_module.get(moved.module, set()) if moved is not None else set()
+        listed: set[tuple[int, str, str | None]] = set()
+        for s in sites:
+            stopped = s.obscured is not None and s.obscured.startswith(
+                "unread:"
+            )  # couldn't be read: never passed
+            if not stopped and ((s.obscured, s.via) in before or s.obscured in anywhere):
+                continue
+            if reach.kind(m, s)[0] != "module" or (s.line, s.name, s.via) in listed:
+                continue
+            listed.add((s.line, s.name, s.via))
+            start = f" from {s.from_module}" if s.from_module else ""
+            via = f" (in {s.via}(), reached at import{start})" if s.via else ""
+            new = m.module not in by_module and m.path not in old_unparsed
+            if m.path in old_unparsed:
+                unread[m.module] = m.path
+            evidence.append(
+                Evidence(
+                    "file",
+                    f"{'new module ' if new else ''}{m.path}:{s.line} {s.name}{via}",
+                    path=m.path,
+                    line=s.line,
+                )
+            )
+            files.add(m.module)
+    if not evidence:
+        return
+    more = len(evidence) - MAX_EVIDENCE
+    tail = (Evidence("note", f"and {more} more"),) if more > 0 else ()
+    note: tuple[Evidence, ...] = (
+        Evidence(
+            "note",
+            "reported at info: packages also embed data and look names up for ordinary "
+            "reasons; read what the literal holds and where the value goes",
+        ),
+    )
+    if unread:
+        note += (
+            Evidence(
+                "note",
+                f"{base.version} has {', '.join(sorted(unread.values()))} too, but it "
+                "couldn't be parsed, so these may not be new",
+            ),
+        )
+    yield RawFinding(
+        "GRN-C005",
+        f"{cand.version} adds encoded literals or computed lookups at import in "
+        f"{len(files)} module(s)",
+        tuple(evidence[:MAX_EVIDENCE]) + tail + note + _compare_note(b, c),
+    )
 
 
 def _unparsed_new(

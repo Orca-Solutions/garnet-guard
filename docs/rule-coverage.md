@@ -3,7 +3,7 @@
 What stands behind each rule ID, as of 2026-10-31 on `main`. Three kinds of evidence:
 
 - **Crafted releases** (`tests/test_rule_matrix.py`): tiny wheels and sdists built in memory,
-  one that makes the rule fire and one that keeps it quiet (140 rows today), run for every
+  one that makes the rule fire and one that keeps it quiet (145 rows today), run for every
   ecosystem the rule is registered for. No real malware is stored in the
   repository. `test_every_built_rule_has_rows` fails when a rule is registered without both.
 - **Real attacks** (`python -m backtest`): 52 malicious releases. The 47 PyPI releases in
@@ -61,7 +61,7 @@ known to be malicious, so each is a false alarm a reviewer has to dismiss.
 | GRN-E003 budget-exceeded | yes / yes | ensmallen 0.8.101 (`datasets/` modules over the parse limit) | 18 PyPI updates hit a limit | 18 / 0 | the 120 s wall-clock budget is not enforced in 0.1 (documented on the rule page); the size, count and ratio limits are tested on crafted archive bombs in `tests/test_safe_archive.py` |
 | GRN-E004 unpinned-requirement | yes / yes (`tests/test_lockfiles.py`, `tests/test_cli_and_report.py`) | n/a | reported on real lockfiles in the Action's tests | n/a | — |
 | GRN-E005 unsupported-source | yes / yes (`tests/test_lockfiles.py`; `tests/test_npm_lockfiles.py` for npm: git, `file:`, private registries, tarball URLs, a registry URL for another tarball, bundled packages, invalid names) | n/a | n/a | n/a | — |
-| GRN-C005 | — | — | — | — | **not built** (planned; `checks/docs.py` lists it as such) |
+| GRN-C005 obfuscated-blob | yes / yes (a blob decoded and run, a `chr` lookup on `os`; quiet for a PEM bundle, a plugin loader and the same blob in both versions) | 7 of the 52 at `info`, each a payload already warned by GRN-C003: litellm 1.82.7 and 1.82.8 (a base64 literal of 34,460 characters in `litellm/proxy/proxy_server.py`, passed to `base64.b64decode`), telnyx 4.87.1 and 4.87.2 (4,428 characters in `telnyx/_client.py`) and xinference 2.6.0 to 2.6.2 (21,748 characters in `xinference/__init__.py`, which 2.6.1 runs with `exec`) | not run yet (the corpus run is pending); before choosing thresholds, Python's standard library, the venv and about 200 packages had 83 literals over 2,048 characters and 4.5 bits per character, all text and none reported, and 5,522 files gave about 10 sites, nearly all `sys.modules[var]` vendoring shims | not run yet | npm and JavaScript; code in functions not reached at import; encodings with non-ASCII alphabets |
 
 Before this page, four built rules had no test at all: T005, T008, E003 and C002. They have
 rows now.

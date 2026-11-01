@@ -223,7 +223,9 @@ would add: `pickle.load` and `pickle.Unpickler`, `multiprocessing.Pool`,
 passed to another call rather than called (`atexit.register(os.system, cmd)`,
 `threading.Thread(target=os.system)`) isn't seen, and neither is a listed name reached through
 what a call returns (`multiprocessing.get_context("spawn").Process`) or looked up by subscript
-(`__builtins__["exec"]`).
+(`__builtins__["exec"]`). [GRN-C005](GRN-C005.md) lists the subscript lookup at `info`, with
+lookups on `os`, `sys`, `builtins`, `ctypes` and `importlib` by a name the source doesn't hold
+and names built from literals (`getattr(os, "".join(map(chr, codes)))`).
 
 The set is versioned with the rule. `garnet explain GRN-C003` prints the set your version uses.
 

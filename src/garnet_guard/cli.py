@@ -14,6 +14,7 @@ from . import __version__
 from .checks import DOCS
 from .checks.docs import rule_url
 from .engine import ECOSYSTEMS, Options, Report, compare, evaluate, report, unchecked_result
+from .facts.obfuscation import OBFUSCATION_SET_VERSION, obfuscation_set
 from .facts.pyindex import SENSITIVE_SET_VERSION, sensitive_set
 from .lockfiles import LockfileError
 from .models import Change, Policy, Severity
@@ -484,6 +485,10 @@ def _explain(rule_id: str) -> int:
     if doc.rule_id in ("GRN-C002", "GRN-C003", "GRN-C006", "GRN-C007", "GRN-C012"):
         print(f"\nSensitive calls (set {SENSITIVE_SET_VERSION}):")
         for s in sensitive_set():
+            print(f"  {s}")
+    if doc.rule_id == "GRN-C005":
+        print(f"\nWhat it reads (set {OBFUSCATION_SET_VERSION}):")
+        for s in obfuscation_set():
             print(f"  {s}")
     return 0
 

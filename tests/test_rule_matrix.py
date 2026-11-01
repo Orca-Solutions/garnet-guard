@@ -10,7 +10,10 @@ fails when a rule is registered for an ecosystem without a firing and a quiet ro
 
 from __future__ import annotations
 
+import base64
 import json
+import random
+import zlib
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
@@ -70,6 +73,24 @@ SETUP_SPAWN = (
     "class PostInstall(install):\n    def run(self):\n        install.run(self)\n"
     "        spawn(['sh', 'demo/_post.sh'])\n\n"
     "setup(name='demo', cmdclass={'install': PostInstall})\n"
+)
+
+
+# A payload's shape: random bytes, compressed and base64-encoded, run at import.
+_PAYLOAD = base64.b64encode(zlib.compress(random.Random(5).randbytes(3000), 0)).decode()
+BLOB_EXEC = (
+    f"import base64, zlib\n\n_B = '{_PAYLOAD}'\nexec(zlib.decompress(base64.b64decode(_B)))\n"
+)
+CHR_LOOKUP = "import os\n\ngetattr(os, ''.join(map(chr, [115, 121, 115, 116, 101, 109])))('id')\n"
+PEM_BUNDLE = "".join(
+    "-----BEGIN CERTIFICATE-----\n"
+    + "\n".join(_PAYLOAD[i : i + 64] for i in range(n, n + 2560, 64))
+    + "\n-----END CERTIFICATE-----\n"
+    for n in (0, 1000)
+)
+PLUGIN_LOADER = (
+    "import importlib\nfrom importlib.metadata import entry_points\n\n"
+    "PLUGINS = {ep.name: importlib.import_module(ep.value) for ep in entry_points(group='demo')}\n"
 )
 
 
@@ -584,6 +605,40 @@ def _rows() -> list[Row]:
         ),
     )
 
+    # GRN-C005 obfuscated-blob (info): encoded literals and computed lookups at import.
+    fires(
+        "GRN-C005",
+        "a base64 blob decoded and run at import",
+        release("1.0", PKG),
+        release("1.1", {"demo/__init__.py": INIT + BLOB_EXEC}),
+        Verdict.WARN,  # GRN-C003 warns for the exec; GRN-C005 adds the blob at info
+    )
+    fires(
+        "GRN-C005",
+        "os.system looked up by a name built from character codes",
+        release("1.0", PKG),
+        release("1.1", {"demo/__init__.py": INIT + CHR_LOOKUP}),
+        Verdict.PASS,
+    )
+    quiet(
+        "GRN-C005",
+        "a PEM certificate bundle",
+        release("1.0", PKG),
+        release("1.1", {**PKG, "demo/_certs.py": f'CERTS = """{PEM_BUNDLE}"""\n'}),
+    )
+    quiet(
+        "GRN-C005",
+        "a plugin loader imports names read from entry points",
+        release("1.0", PKG),
+        release("1.1", {"demo/__init__.py": INIT + PLUGIN_LOADER}),
+        instead="GRN-C003",
+    )
+    quiet(
+        "GRN-C005",
+        "the same blob in both",
+        release("1.0", {"demo/__init__.py": INIT + BLOB_EXEC}),
+        release("1.1", {"demo/__init__.py": INIT + BLOB_EXEC + "X = 2\n"}),
+    )
     # GRN-C006 sdist-wheel-mismatch: the wheel has code its own sdist doesn't.
     # The shape issue #60 expected of telnyx 4.87.1: a call appended to the
     # wheel's copy of a file the sdist also carries, clean there.

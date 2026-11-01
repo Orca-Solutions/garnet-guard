@@ -25,7 +25,7 @@
                      │        │          │
  data            models.py  (shared, imports nothing internal)
                      ▲
- extraction      facts/  (inventory.py, pyindex.py, npmmeta.py, jsscan.py)
+ extraction      facts/  (inventory.py, pyindex.py, obfuscation.py, npmmeta.py, jsscan.py)
                      ▲
  edges           ecosystems/  lockfiles/   net.py   safe_archive.py   cache.py
 ```
@@ -190,9 +190,10 @@ class FileEntry:
 class ModuleIndex:
     module: str
     path: str
-    top_level_calls: tuple[CallSite, ...]     # resolved names + line
+    top_level_calls: tuple[CallSite, ...]     # resolved names + line; GRN-C005's encoded
+                                              # literals and computed lookups too, marked
+                                              # CallSite.obscured with the key it diffs by
     imports: tuple[str, ...]
-    large_literals: tuple[Literal_, ...]      # length, entropy, line, sink
 
 @dataclass(frozen=True)
 class ArtifactFacts:
@@ -342,7 +343,7 @@ src/garnet_guard/
   lockfiles/   base.py diff.py toml_locks.py pylock.py requirements.py npm.py
                package_lock.py yarn.py berry.py pnpm.py yamldoc.py registries.py
   ecosystems/  pypi.py npm.py github.py gittree.py source.py osv.py
-  facts/       inventory.py pyindex.py npmmeta.py jsscan.py
+  facts/       inventory.py pyindex.py obfuscation.py npmmeta.py jsscan.py
   checks/      trust.py wheel_tags.py content.py known_bad.py errors.py __init__.py
   report/      text.py json.py sarif.py markdown.py schema/report-v1.json
   rules/       *.md               # explain text, one file per rule

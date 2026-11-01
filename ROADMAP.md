@@ -78,7 +78,7 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 
 **After launch (0.3 to 1.0):**
 
-- [ ] GRN-C005 obfuscation and indirect lookups of sensitive APIs [#54](https://github.com/orca-solutions/garnet-guard/issues/54)
+- [x] GRN-C005 obfuscated-blob, at `info`: new encoded literals at import, values built from literals that reach `exec` or a name lookup, and `os`, `sys`, `builtins`, `ctypes` or `importlib` looked up by a name the source doesn't hold (PyPI; JavaScript not yet). Measure on the corpus before choosing `warn` [#54](https://github.com/orca-solutions/garnet-guard/issues/54)
 - [ ] A listed call reached by reference: passed to another call (`Thread(target=os.system)`) or assigned to another name (`json.dumps = subprocess.Popen`) [#91](https://github.com/orca-solutions/garnet-guard/issues/91)
 - [ ] Measure exception and value classes under the sensitive set's network prefixes (`httpx.TooManyRedirects`, `socket.error`) [#92](https://github.com/orca-solutions/garnet-guard/issues/92)
 - [ ] Import-time hook installation (`sys.meta_path`, `settrace`, `builtins`, metaclasses) [#55](https://github.com/orca-solutions/garnet-guard/issues/55)
@@ -105,7 +105,7 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 - [x] Install wrapper: `garnet pip install …`, `garnet uv add|remove|lock|sync` (preview; [docs/install-wrapper.md](docs/install-wrapper.md))
 - [ ] Install wrapper for npm, pnpm and yarn: waits on the npm lockfile parsers (package-lock, pnpm-lock, yarn.lock); the hooks report these installs as not checked until then
 - [x] Pre-install hooks for Claude Code and Codex (SPEC §10.4), pip and uv (preview), announced as the second beat
-- [ ] Rule GRN-C005 ([#54](https://github.com/orca-solutions/garnet-guard/issues/54)); GRN-T006 and C004 moved to the launch list in [Closing the evasion gaps](#closing-the-evasion-gaps)
+- [x] Rule GRN-C005, at `info` ([#54](https://github.com/orca-solutions/garnet-guard/issues/54)); GRN-T006 and C004 moved to the launch list in [Closing the evasion gaps](#closing-the-evasion-gaps)
 - [x] Rule GRN-C006 ([#60](https://github.com/orca-solutions/garnet-guard/issues/60))
 - [ ] npm adapter, if it didn't make the launch
 - [ ] Full backtest on the 1.0 clean corpus (SPEC §13.2: the last 11 releases of the top 1,000 PyPI and top 1,000 npm packages) with the 0.3 rules (January–February); publish warn rate per rule and set the 1.0 target. These numbers feed the PyCon talk.
