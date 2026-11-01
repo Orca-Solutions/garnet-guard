@@ -57,14 +57,20 @@ argument trees, counted with repeats:
   string, a different variable name or another expression.
 - A call that moved to another line or another function, with the same arguments, matches
   the trusted call. Each trusted call matches one new call, so a second copy of a trusted
-  call is reported ("once more than 1.0 did"), and a call that was removed isn't.
+  call is reported ("once more than 1.0 did"), even on the same line as the first, and a
+  call that was removed isn't.
 - A changed call is shown beside a trusted call to the same name that nothing matched, in
   line order, with both argument lists. A long shared beginning is cut to its last 20
   characters so the place they differ stays on the line.
 
 A variable is compared by its name, not by what was assigned to it: when `subprocess.call(cmd)`
 stays the same and only `cmd = [...]` changes, the call isn't reported. The call's arguments
-are recorded up to 1,000 characters of text; the comparison covers all of them.
+are compared in full however long or deeply nested they are; the evidence shows up to
+1,000 characters of them. An argument list of more than 2,000 syntax nodes is shown as its
+source text, with whitespace collapsed, rather than rebuilt from the tree. If Garnet couldn't
+record a trusted call's arguments, the finding says so ("Garnet couldn't compare its
+arguments with 1.0's, so they may have changed") instead of treating the call as unchanged.
+A finding lists up to 25 lines and counts the rest ("and 5 more").
 
 ## Why it matters
 

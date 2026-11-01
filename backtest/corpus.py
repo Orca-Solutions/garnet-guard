@@ -58,6 +58,7 @@ FIRST = {
 NOT_DETECTION = {"GRN-K001", "GRN-E001", "GRN-E002", "GRN-E003"}
 RELEASES_PER_PACKAGE = 11  # 11 releases give 10 updates per package
 CACHE_FORMAT = 54
+PY = f"{sys.version_info.major}{sys.version_info.minor}"
 
 
 def _ecosystem(argv: list[str]) -> tuple[str, int, list[str]]:
@@ -203,7 +204,9 @@ def decode(tp: Any, data: Any) -> Any:
 
 class FactCache:
     def __init__(self, root: Path) -> None:
-        self.root = root / f"v{CACHE_FORMAT}-garnet-{__version__}"
+        # Facts hold syntax-tree digests (GRN-C002's argument keys), whose
+        # fields can differ between Python versions, so each version caches apart.
+        self.root = root / f"v{CACHE_FORMAT}-garnet-{__version__}-py{PY}"
 
     def _path(self, ecosystem: str, package: str, version: str) -> Path:
         return self.root / ecosystem / package / f"{version}.json"

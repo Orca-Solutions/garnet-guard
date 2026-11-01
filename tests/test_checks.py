@@ -1135,3 +1135,69 @@ def test_code_not_in_source_quiet_when_trusted_version_carried_the_same_call() -
 def test_code_not_in_source_quiet_without_a_comparison() -> None:
     base = release("1.0", {"demo/__init__.py": INIT})
     assert "GRN-C007" not in rules(base, release("1.1", {"demo/dl.py": DL_PAYLOAD}))
+
+
+# GRN-C002 review findings (2026-11-01)
+
+
+def test_deep_arguments_are_compared_not_reported_as_unparsed() -> None:
+    # 400 terms nest past the recursion limit of a recursive copy or unparse;
+    # the key is computed without recursion, so the change is still reported.
+    deep = "'echo'" + " + 'a'" * 400
+    base = DOCS_HOOK.format(args="'echo hi'")
+    findings = run_checks(
+        CHANGE,
+        _sdist("1.0", {**SRC, "setup.py": base}),
+        _sdist("1.1", {**SRC, "setup.py": DOCS_HOOK.format(args=deep)}),
+    ).findings
+    assert {f.rule_id for f in findings} >= {"GRN-C002"}
+    assert "GRN-E002" not in {f.rule_id for f in findings}
+    [f] = [f for f in findings if f.rule_id == "GRN-C002"]
+    assert f.evidence[0].summary.startswith("setup.py:7 calls subprocess.call('echo' + 'a'")
+
+
+def test_nested_calls_cost_their_size_once() -> None:
+    import time
+
+    from garnet_guard.facts.pyindex import index_build_script
+
+    src = "import os\n" + "os.system(" * 40 + "[" + ",".join(["0"] * 50_000) + "]" + ")" * 40
+    start = time.monotonic()
+    assert len(index_build_script(src.encode())) == 40
+    assert time.monotonic() - start < 10  # about 35 s when each level copied its arguments
+
+
+def test_a_second_identical_call_on_one_line_is_reported() -> None:
+    base = DOCS_HOOK.format(args="['make']")
+    cand = base.replace(
+        "subprocess.call(['make'])", "subprocess.call(['make']); subprocess.call(['make'])"
+    )
+    [f] = _c002(base, cand)
+    assert [e.summary for e in f.evidence] == [
+        "setup.py:7 calls subprocess.call(['make']) (in BuildDocs.run()) once more than 1.0 did "
+        "(1 such call(s) in 1.0, 2 in 1.1)"
+    ]
+
+
+def test_evidence_past_the_cap_is_counted() -> None:
+    base = "import os\n" + "".join(f"os.system('echo {i}')\n" for i in range(30))
+    cand = "import os\n" + "".join(f"os.system('echo x{i}')\n" for i in range(30))
+    [f] = _c002(base, cand)
+    assert len(f.evidence) == 26 and f.evidence[-1].summary == "and 5 more"
+
+
+def test_arguments_not_recorded_are_never_a_pass() -> None:
+    from dataclasses import replace
+
+    from garnet_guard.checks.content import new_build_hook
+
+    base = _sdist("1.0", {**SRC, "setup.py": DOCS_HOOK.format(args="['make']")})
+    cand = _sdist("1.1", {**SRC, "setup.py": DOCS_HOOK.format(args="['make']")})
+    art = base.artifacts[0]
+    stripped = tuple(replace(s, args=None, args_key=None) for s in art.setup_py_calls)
+    base = replace(base, artifacts=(replace(art, setup_py_calls=stripped),))
+    [f] = list(new_build_hook(CHANGE, base, cand))
+    assert f.evidence[0].summary == (
+        "setup.py:7 calls subprocess.call (in BuildDocs.run()): Garnet couldn't compare its "
+        "arguments with 1.0's, so they may have changed"
+    )

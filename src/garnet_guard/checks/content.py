@@ -261,7 +261,10 @@ def new_build_hook(
     old_names = {s.name for s in old_calls}
     old_backend = b.build_backend if b is not None else None
     added = False
-    changed = dict(_changed_arguments(old_calls, c.setup_py_calls, base.version, cand.version))
+    changed = {
+        id(s): line
+        for s, line in _changed_arguments(old_calls, c.setup_py_calls, base.version, cand.version)
+    }
     for s in c.setup_py_calls:
         if s.name not in old_names:
             added = True
@@ -273,8 +276,8 @@ def new_build_hook(
                     line=s.line,
                 )
             )
-        elif s in changed:
-            evidence.append(Evidence("file", changed[s], path="setup.py", line=s.line))
+        elif id(s) in changed:
+            evidence.append(Evidence("file", changed[id(s)], path="setup.py", line=s.line))
     if c.build_backend != old_backend and c.build_backend is not None:
         if c.build_backend.startswith("in-tree:") or c.build_backend not in BACKEND_ALLOWLIST:
             added = True
@@ -291,10 +294,14 @@ def new_build_hook(
         )
     if evidence:
         what = "adds" if added else "changes"
+        files = [e for e in evidence if e.kind == "file"]
+        notes = [e for e in evidence if e.kind != "file"]
+        more = len(files) - MAX_EVIDENCE
+        tail = [Evidence("note", f"and {more} more")] if more > 0 else []
         yield RawFinding(
             "GRN-C002",
             f"{cand.version} {what} code that runs when the sdist is built",
-            tuple(evidence[:MAX_EVIDENCE]),
+            tuple(files[:MAX_EVIDENCE] + tail + notes),
         )
 
 
@@ -328,13 +335,20 @@ def _changed_arguments(
     call with none left is changed, so a call that moved lines or functions
     matches and a second copy of a trusted call doesn't. A changed call is
     shown beside a trusted call to the same name that nothing used up, in
-    line order, when there is one. A name whose calls have no recorded
-    arguments is not compared.
+    line order, when there is one. When a call's arguments weren't
+    recorded, every new call to that name is listed as one Garnet couldn't
+    compare: that is never a pass.
     """
     for name in sorted({s.name for s in new} & {s.name for s in old}):
         was = sorted((s for s in old if s.name == name), key=lambda s: s.line)
         now = sorted((s for s in new if s.name == name), key=lambda s: s.line)
         if any(s.args_key is None for s in (*was, *now)):
+            for s in now:
+                yield (
+                    s,
+                    f"setup.py:{s.line} calls {name}{_via(s)}: Garnet couldn't compare its "
+                    f"arguments with {old_version}'s, so they may have changed",
+                )
             continue
         left = Counter(s.args_key for s in was)
         unmatched: list[CallSite] = []
