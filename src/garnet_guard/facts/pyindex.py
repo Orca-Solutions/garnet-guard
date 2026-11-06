@@ -48,7 +48,7 @@ from collections.abc import Callable, Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from functools import partial
 
-from ..models import ARGS_TEXT_LIMIT, CallSite
+from ..models import ARGS_TEXT_LIMIT, MAKEFILES, CallSite
 
 SENSITIVE_SET_VERSION = "2026-10-c"
 
@@ -1211,7 +1211,6 @@ def call_arguments(
 
 
 MENTION_LIMIT = 200  # characters of a string argument read as a path
-MAKEFILES = ("GNUmakefile", "makefile", "Makefile")  # what ``make`` reads, in make's order
 
 
 def argument_mentions(

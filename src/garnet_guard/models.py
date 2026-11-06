@@ -234,6 +234,7 @@ class FileEntry:
 
 
 ARGS_TEXT_LIMIT = 1000  # characters of a call's argument text kept in CallSite.args
+MAKEFILES = ("GNUmakefile", "makefile", "Makefile")  # what ``make`` reads, in make's order
 
 
 @dataclass(frozen=True)

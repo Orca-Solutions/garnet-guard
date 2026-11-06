@@ -727,6 +727,41 @@ def test_a_script_setup_py_runs_that_changed_on_its_own_warns() -> None:
     )
 
 
+def test_a_named_file_that_isnt_a_build_script_doesnt_count() -> None:
+    """The top-1,000 corpus's three everyday shapes: setup.py naming itself,
+    data a call reads or writes, and the release's own module (which the
+    content rules read already). A script outside the package still counts."""
+    hook = DOCS_HOOK.format(
+        args="'python setup.py sdist && sed -i s/x/y/ pyproject.toml && python -c \"exec(open(\\'demo/_version.py\\').read())\"'"
+    )
+    base = {
+        **SRC,
+        "setup.py": hook,
+        "pyproject.toml": "[project]\n",
+        "demo/_version.py": "v = '1.0'\n",
+        ".gitrev": "abc\n",
+    }
+    cand = {
+        **base,
+        "setup.py": hook + "# 1.1\n",
+        "pyproject.toml": "[project]\nname='demo'\n",
+        "demo/_version.py": "v = '1.1'\n",
+        ".gitrev": "def\n",
+    }
+    assert _c002_files(base, cand) == []
+    # A single-module project's own module, under src/ or not, is its own too.
+    one = {
+        "setup.py": DOCS_HOOK.format(args="'python -c \"exec(open(\\'src/demo.py\\').read())\"'")
+    }
+    assert _c002_files({**one, "src/demo.py": "a = 1\n"}, {**one, "src/demo.py": "a = 2\n"}) == []
+    # A Python script outside the package, named the same way, counts.
+    two = {**SRC, "setup.py": DOCS_HOOK.format(args="[sys.executable, 'scripts/fetch.py']")}
+    [f] = _c002_files(
+        {**two, "scripts/fetch.py": "a = 1\n"}, {**two, "scripts/fetch.py": "a = 2\n"}
+    )
+    assert f.evidence[0].summary.endswith("as 1.0 did, but scripts/fetch.py changed since 1.0")
+
+
 def _c002_files(base: dict[str, str], cand: dict[str, str]):
     result = run_checks(CHANGE, _sdist("1.0", base), _sdist("1.1", cand))
     return [f for f in result.findings if f.rule_id == "GRN-C002"]

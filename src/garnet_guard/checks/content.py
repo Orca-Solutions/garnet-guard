@@ -6,14 +6,16 @@ import functools
 import posixpath
 import re
 from collections import Counter
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import replace
 from datetime import datetime
 
 from packaging.tags import Tag
+from packaging.utils import canonicalize_name
 
 from ..models import (
     ARGS_TEXT_LIMIT,
+    MAKEFILES,
     ArtifactFacts,
     CallSite,
     Change,
@@ -267,7 +269,7 @@ def new_build_hook(
     }
     for s in c.setup_py_calls:
         if id(s) not in changed and s.name in old_names:
-            line = _changed_script(s, b, c, base.version, cand.version)
+            line = _changed_script(s, b, c, cand.package, base.version, cand.version)
             if line is not None:
                 changed[id(s)] = line
     for s in c.setup_py_calls:
@@ -330,20 +332,27 @@ def _clip_pair(old: str, new: str) -> tuple[str, str]:
 
 
 def _changed_script(
-    s: CallSite, b: ArtifactFacts | None, c: ArtifactFacts, old_version: str, new_version: str
+    s: CallSite,
+    b: ArtifactFacts | None,
+    c: ArtifactFacts,
+    package: str,
+    old_version: str,
+    new_version: str,
 ) -> str | None:
     """The evidence line for a trusted call whose arguments didn't change but
     name a file in the new sdist that did: ``subprocess.call(['sh',
     'build.sh'])`` runs whatever build.sh holds now. A file the call names
-    that the trusted sdist didn't have, or has with other bytes, counts; a
-    file with the same bytes, or a word that names no file, doesn't.
+    that the trusted sdist didn't have, or has with other bytes, counts when
+    it is one that runs (``_runs_at_build``); a file with the same bytes, or a word
+    that names no file, doesn't.
     """
     if b is None:
         return None
     old = {f.path: f.sha256 for f in b.files}
-    new = {f.path: f.sha256 for f in c.files}
-    added = [p for p in s.mentions if p in new and p not in old]
-    altered = [p for p in s.mentions if p in new and p in old and new[p] != old[p]]
+    new = {f.path: f for f in c.files}
+    named = [p for p in s.mentions if p in new and _runs_at_build(p, new[p], new, package)]
+    added = [p for p in named if p not in old]
+    altered = [p for p in named if p in old and new[p].sha256 != old[p]]
     if not added and not altered:
         return None
     parts = []
@@ -355,6 +364,32 @@ def _changed_script(
         f"setup.py:{s.line} calls {s.name}{_clip(s.args or '', ARGS_SHOWN)}{_via(s)} as "
         f"{old_version} did, but {' and '.join(parts)}"
     )
+
+
+def _runs_at_build(
+    path: str, entry: FileEntry, files: Mapping[str, FileEntry], package: str
+) -> bool:
+    """Whether a file a ``setup.py`` call names is one whose change means
+    different code runs at build time. On the top-1,000 PyPI corpus the
+    first cut counted every file and flagged 155 everyday updates, mostly
+    ``os.system('python setup.py sdist')`` (setup.py is the file being
+    compared), ``sed`` on pyproject.toml and ``.gitrev`` (data the call
+    reads or writes), and ``exec(open('pkg/_version.py').read())`` (the
+    release's own module, which GRN-C003 and the other content rules read
+    already). Left: a Python or shell script outside the package, and the
+    Makefile behind ``make``.
+    """
+    if path == "setup.py":
+        return False
+    if entry.kind not in ("py", "script") and posixpath.basename(path) not in MAKEFILES:
+        return False
+    rel = path[4:] if path.startswith("src/") else path
+    prefix = path[: len(path) - len(rel)]
+    first, _, rest = rel.partition("/")
+    if rest:
+        return f"{prefix}{first}/__init__.py" not in files
+    own = canonicalize_name(package)
+    return not (first.endswith(".py") and canonicalize_name(first[:-3]) == own)
 
 
 def _changed_arguments(
