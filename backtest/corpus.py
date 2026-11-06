@@ -58,7 +58,8 @@ FIRST = {
 }
 NOT_DETECTION = {"GRN-K001", "GRN-E001", "GRN-E002", "GRN-E003"}
 RELEASES_PER_PACKAGE = 11  # 11 releases give 10 updates per package
-CACHE_FORMAT = 53
+CACHE_FORMAT = 60  # 59 + GRN-C005 (off by default; read only when asked)
+PY = f"{sys.version_info.major}{sys.version_info.minor}"
 # GRN-C005 is off by default and its read costs about as much again as the
 # rest, so the backtest reads its sites only when asked, in a cache of its own.
 C005 = os.environ.get("GARNET_BACKTEST_C005", "") not in ("", "0")
@@ -208,7 +209,9 @@ def decode(tp: Any, data: Any) -> Any:
 
 class FactCache:
     def __init__(self, root: Path) -> None:
-        self.root = root / f"v{CACHE_FORMAT}-garnet-{__version__}{'-c005' if C005 else ''}"
+        # Facts hold syntax-tree digests (GRN-C002's argument keys), whose
+        # fields can differ between Python versions, so each version caches apart.
+        self.root = root / f"v{CACHE_FORMAT}-garnet-{__version__}-py{PY}{'-c005' if C005 else ''}"
 
     def _path(self, ecosystem: str, package: str, version: str) -> Path:
         return self.root / ecosystem / package / f"{version}.json"

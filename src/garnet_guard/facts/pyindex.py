@@ -45,12 +45,15 @@ from __future__ import annotations
 
 import ast
 import builtins
+import copy
+import hashlib
 import re
 import warnings
-from collections.abc import Container, Iterable, Iterator, Mapping
+from collections.abc import Callable, Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from functools import partial
 
-from ..models import CallSite
+from ..models import ARGS_TEXT_LIMIT, MAKEFILES, CallSite
 from .obfuscation import Tracker, TreeFacts
 
 SENSITIVE_SET_VERSION = "2026-10-c"
@@ -952,6 +955,7 @@ def sensitive_calls(
     own: frozenset[str] = frozenset(),
     project: str | None = None,
     tree: ast.Module | None = None,
+    with_args: bool = False,
 ) -> tuple[CallSite, ...]:
     """Every sensitive call in a file, at any depth. Raises SyntaxError/ValueError.
 
@@ -963,7 +967,9 @@ def sensitive_calls(
     published copy matters whether or not anything calls it at import.
     ``via`` names the enclosing function or ``Class.method``. ``own`` and
     ``project`` leave out calls into the release's own packages, as in
-    ``scan_module``. ``tree`` is ``source`` already parsed. A file nested
+    ``scan_module``. ``tree`` is ``source`` already parsed. ``with_args``
+    records each call's arguments (``call_arguments``), with a variable
+    read as the literal it holds where ``_Bindings`` can tell. A file nested
     deeper than Python's recursion limit raises RecursionError.
     """
     if tree is None:
@@ -972,26 +978,371 @@ def sensitive_calls(
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             resolver.note_import(node)
-    calls: list[CallSite] = []
+    # A name the file defines at top level shadows a module of the same name,
+    # as in ``scan_module``; an alias assigned to it (``run = subprocess.call``)
+    # still resolves, since aliases are looked up first.
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            resolver.defined.add(stmt.name)
+        elif isinstance(stmt, ast.Assign):
+            resolver.defined.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            resolver.defined.add(stmt.target.id)
+    found: list[tuple[ast.Call, str, str | None, ast.AST]] = []  # call, name, via, scope
 
-    def visit(node: ast.AST, via: str | None) -> None:
+    def visit(node: ast.AST, via: str | None, scope: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                visit(child, f"{via}.{child.name}" if via else child.name)
+                visit(child, f"{via}.{child.name}" if via else child.name, child)
             elif isinstance(child, ast.ClassDef):
-                visit(child, child.name)
+                visit(child, child.name, child)
             else:
+                if isinstance(child, ast.Assign):
+                    # ``run = subprocess.call`` or ``sp = subprocess``: a call
+                    # through the alias is the call it names, from here on.
+                    resolver.note_assignment(child)
                 if isinstance(child, ast.Call):
                     name = resolver.resolve(child.func)
                     if name is not None and not _own(name, own, project, child):
                         if is_sensitive(name, child):
-                            calls.append(CallSite(name=name, line=child.lineno, via=via))
-                visit(child, via)
+                            found.append((child, name, via, scope))
+                visit(child, via, child if isinstance(child, _SCOPES) else scope)
 
-    visit(tree, None)
-    return tuple(sorted(set(calls), key=lambda c: (c.line, c.name, c.via or "")))
+    visit(tree, None, tree)
+    if not with_args:
+        # Without arguments, a call is one per line and name.
+        calls = {CallSite(name=name, line=call.lineno, via=via) for call, name, via, _ in found}
+        return tuple(sorted(calls, key=lambda c: (c.line, c.name, c.via or "")))
+    # With arguments, each call is kept: two identical calls on one line are
+    # two calls a trusted setup.py may have made once. A variable passed to
+    # one of these calls is followed to its value when nothing else touches it.
+    shapes = _Shapes(tree, source)
+    passed = {id(a) for call, *_ in found for a in (*call.args, *(k.value for k in call.keywords))}
+    bindings = _Bindings(tree, passed)
+    kept = []
+    for call, name, via, scope in found:
+        follow = partial(bindings.value, scope)
+        args, key = call_arguments(call, shapes, follow)
+        kept.append(
+            CallSite(
+                name=name,
+                line=call.lineno,
+                via=via,
+                args=args,
+                args_key=key,
+                mentions=argument_mentions(call, follow),
+            )
+        )
+    return tuple(sorted(kept, key=lambda c: (c.line, c.name, c.via or "", c.args_key or "")))
+
+
+_SCOPES = (
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.Lambda,
+    ast.ClassDef,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+)
+_LITERAL = (ast.Constant, ast.List, ast.Tuple, ast.Set, ast.Dict, ast.UnaryOp, ast.Load)
+_MUTABLE = (ast.List, ast.Set, ast.Dict)
+
+
+def _literal(node: ast.AST) -> bool:
+    """A value written out in full: constants, and lists, tuples, sets and
+    dicts of them (a sign in front is fine). Nothing is evaluated."""
+    return all(isinstance(n, _LITERAL) for n in ast.walk(node)) and all(
+        isinstance(n.op, (ast.UAdd, ast.USub, ast.Invert, ast.Not))
+        for n in ast.walk(node)
+        if isinstance(n, ast.UnaryOp)
+    )
+
+
+class _Bindings:
+    """What each scope of a file binds each name to, so that a variable passed
+    to a sensitive call can be read as the value it holds.
+
+    A name is followed when the scope Python would read it from (its own,
+    else the enclosing functions', else the module's, class bodies skipped
+    as Python skips them) binds it exactly once, by a plain assignment
+    (``cmd = [...]``) to a literal value, and, when that value is a list, set
+    or dict, every other use of the name in the file passes it straight to
+    one of the calls being indexed, so nothing can have changed it in
+    between. A parameter, a name bound twice, in a loop, by ``import`` or
+    ``global``, or a value with a call or another name in it, is not
+    followed, and the call keeps the variable's name.
+    """
+
+    def __init__(self, tree: ast.Module, passed: Container[int]) -> None:
+        self.parent: dict[int, ast.AST | None] = {id(tree): None}
+        self.bound: dict[int, dict[str, list[ast.AST]]] = {}
+        self.declared: dict[int, set[str]] = {}
+        self.loads: dict[str, list[ast.Name]] = {}  # every read of a name, any scope
+        self.passed = passed
+        stack: list[ast.AST] = [tree]
+        while stack:
+            scope = stack.pop()
+            bound: dict[str, list[ast.AST]] = {}
+            declared: set[str] = set()
+            todo = list(ast.iter_child_nodes(scope))
+            while todo:
+                node = todo.pop()
+                if isinstance(node, _SCOPES):
+                    self.parent[id(node)] = scope
+                    stack.append(node)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        bound.setdefault(node.name, []).append(node)
+                    continue
+                if isinstance(node, ast.Assign) and (
+                    len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                ):
+                    bound.setdefault(node.targets[0].id, []).append(node)
+                    todo.append(node.value)
+                    continue
+                if isinstance(node, ast.Name):
+                    if isinstance(node.ctx, ast.Load):
+                        self.loads.setdefault(node.id, []).append(node)
+                    else:
+                        bound.setdefault(node.id, []).append(node)
+                elif isinstance(node, ast.arg):
+                    bound.setdefault(node.arg, []).append(node)
+                elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                    for a in node.names:
+                        bound.setdefault((a.asname or a.name).split(".")[0], []).append(node)
+                elif isinstance(node, ast.ExceptHandler) and node.name:
+                    bound.setdefault(node.name, []).append(node)
+                elif isinstance(node, (ast.Global, ast.Nonlocal)):
+                    declared.update(node.names)
+                elif isinstance(node, (ast.MatchAs, ast.MatchStar, ast.MatchMapping)):
+                    name = node.rest if isinstance(node, ast.MatchMapping) else node.name
+                    if name:
+                        bound.setdefault(name, []).append(node)
+                todo.extend(ast.iter_child_nodes(node))
+            self.bound[id(scope)] = bound
+            self.declared[id(scope)] = declared
+
+    def value(self, scope: ast.AST, name: str) -> ast.expr | None:
+        """The literal ``name`` holds wherever it is read in ``scope``, or None."""
+        at: ast.AST | None = scope
+        while at is not None:
+            if name in self.declared[id(at)]:
+                return None
+            if (at is scope or not isinstance(at, ast.ClassDef)) and name in self.bound[id(at)]:
+                bindings = self.bound[id(at)][name]
+                if len(bindings) != 1 or not isinstance(bindings[0], ast.Assign):
+                    return None
+                binding = bindings[0]
+                if not _literal(binding.value):
+                    return None
+                if any(isinstance(n, _MUTABLE) for n in ast.walk(binding.value)) and any(
+                    id(load) not in self.passed for load in self.loads.get(name, ())
+                ):
+                    return None
+                return binding.value
+            at = self.parent[id(at)]
+        return None
+
+
+class _Plain(ast.NodeTransformer):
+    """Drop what doesn't change a value: the ``u`` prefix of a string literal."""
+
+    def visit_Constant(self, node: ast.Constant) -> ast.Constant:
+        node.kind = None
+        return node
+
+
+ARGS_UNPARSED = 2_000  # syntax nodes in an argument list shown with ast.unparse
+
+
+class _Shapes:
+    """A digest and a size for every node of a file, computed once, bottom
+    up and without recursion, so a call nested in another's arguments, or
+    nested deeper than the recursion limit, costs no more to compare."""
+
+    def __init__(self, tree: ast.AST, source: bytes) -> None:
+        self.digest: dict[int, bytes] = {}
+        self.size: dict[int, int] = {}
+        self.lines = source.splitlines(keepends=True)
+        stack: list[tuple[ast.AST, bool]] = [(tree, False)]
+        while stack:
+            node, ready = stack.pop()
+            if not ready:
+                stack.append((node, True))
+                stack.extend((c, False) for c in ast.iter_child_nodes(node))
+                continue
+            h = hashlib.sha256(type(node).__name__.encode())
+            n = 1
+            for field, value in ast.iter_fields(node):
+                if field == "kind" and isinstance(node, ast.Constant):
+                    continue  # the u prefix
+                items = value if isinstance(value, list) else [value]
+                h.update(b"\0" + field.encode() + (b"[" if isinstance(value, list) else b"("))
+                for item in items:
+                    if isinstance(item, ast.AST):
+                        h.update(self.digest[id(item)])
+                        n += self.size[id(item)]
+                    else:
+                        h.update(repr(item).encode("utf-8", "surrogatepass") + b",")
+            self.digest[id(node)] = h.digest()
+            self.size[id(node)] = n
+
+    def segment(self, node: ast.AST) -> str:
+        """``node``'s source text (offsets are UTF-8 bytes), as one line."""
+        lo, hi = getattr(node, "lineno", 0), getattr(node, "end_lineno", None)
+        c0, c1 = getattr(node, "col_offset", 0), getattr(node, "end_col_offset", None)
+        if not lo or hi is None or c1 is None:
+            return "…"
+        chunk = self.lines[lo - 1 : hi]
+        if not chunk:
+            return "…"
+        if len(chunk) == 1:
+            raw = chunk[0][c0:c1]
+        else:
+            raw = chunk[0][c0:] + b"".join(chunk[1:-1]) + chunk[-1][:c1]
+        raw = raw[: 4 * ARGS_TEXT_LIMIT]  # only the start is shown
+        text = " ".join(raw.decode("utf-8", "replace").split())
+        return "".join(ch if ch.isprintable() else repr(ch)[1:-1] for ch in text)
+
+
+def call_arguments(
+    call: ast.Call,
+    shapes: _Shapes | None = None,
+    follow: Callable[[str], ast.expr | None] | None = None,
+) -> tuple[str, str]:
+    """A call's arguments as text, and a key that is equal for equal arguments.
+
+    Nothing is evaluated: two calls have the same key when their argument
+    trees are the same, with positions, formatting, comments, quote style and
+    a ``u`` string prefix left out, and keyword arguments sorted by name
+    (``**`` arguments after them, in their order). Python binds keywords by
+    name, so their order doesn't change what the call receives. Any other
+    difference, ``['make']`` against ``('make',)`` or a renamed variable,
+    gives a different key. ``follow`` gives the literal a variable name
+    holds, or None (``_Bindings.value``); a followed argument is keyed by
+    that literal, as if it were written in the call, so ``call(cmd)`` with
+    ``cmd = ['make']`` and ``call(['make'])`` have the same key, and the
+    text ends ``with cmd = ['make']``. The key is a SHA-256 over every node
+    of the arguments (``_Shapes``), computed without recursion. The text is
+    ``ast.unparse`` of the arguments in parentheses when they have at most
+    ``ARGS_UNPARSED`` nodes, or else their source text on one line, clipped
+    to ``ARGS_TEXT_LIMIT`` characters.
+    """
+    keywords = sorted(call.keywords, key=lambda k: (k.arg is None, k.arg or ""))
+    held: dict[str, ast.expr] = {}  # each followed name, in argument order
+    for a in (*call.args, *(k.value for k in keywords)):
+        if follow is not None and isinstance(a, ast.Name) and isinstance(a.ctx, ast.Load):
+            value = follow(a.id)
+            if value is not None:
+                held.setdefault(a.id, value)
+
+    def read(a: ast.expr) -> ast.expr:
+        return held[a.id] if isinstance(a, ast.Name) and a.id in held else a
+
+    if shapes is None:
+        shapes = _Shapes(ast.Tuple(elts=[call, *held.values()], ctx=ast.Load()), b"")
+    h = hashlib.sha256(b"call")
+    for a in call.args:
+        h.update(b"a" + shapes.digest[id(read(a))])
+    for k in keywords:
+        h.update(b"k" + repr(k.arg).encode() + shapes.digest[id(read(k.value))])
+    key = h.hexdigest()
+    nodes = sum(shapes.size[id(a)] for a in call.args) + sum(
+        shapes.size[id(k.value)] for k in keywords
+    )
+    nodes += sum(shapes.size[id(v)] for v in held.values())
+    text: str | None = None
+    if nodes <= ARGS_UNPARSED:
+        try:
+            shape = _Plain().visit(
+                copy.deepcopy(
+                    ast.Call(func=ast.Name("_", ast.Load()), args=call.args, keywords=keywords)
+                )
+            )
+            text = ast.unparse(shape)[1:]
+            for name, value in held.items():
+                shown = ast.unparse(_Plain().visit(copy.deepcopy(value)))
+                text += f" with {name} = {shown}"
+        except RecursionError:
+            text = None
+    if text is None:
+        parts = [shapes.segment(a) for a in call.args]
+        parts += [
+            f"{k.arg}={shapes.segment(k.value)}" if k.arg else f"**{shapes.segment(k.value)}"
+            for k in keywords
+        ]
+        text = "(" + ", ".join(parts) + ")"
+        for name, value in held.items():
+            text += f" with {name} = {shapes.segment(value)}"
+    if len(text) > ARGS_TEXT_LIMIT:
+        text = text[: ARGS_TEXT_LIMIT - 1] + "…"
+    return text, key
+
+
+MENTION_LIMIT = 200  # characters of a string argument read as a path
+
+
+def argument_mentions(
+    call: ast.Call, follow: Callable[[str], ast.expr | None] | None = None
+) -> tuple[str, ...]:
+    """The relative paths a call's string arguments may name, for a check to
+    look up among the release's files: each string constant in the
+    arguments (and in a variable ``follow`` reads), each whitespace-separated
+    word of it, with a leading ``./`` taken off, and the files ``make``
+    reads for the word ``make``, each under the directory a ``cwd`` keyword
+    names. An absolute path, an empty string and a string over
+    ``MENTION_LIMIT`` characters are left out. A ``cwd`` that isn't a string
+    written out (or held by a variable ``follow`` reads), or that is
+    absolute, puts the paths where this can't see, so none is recorded.
+    Nothing is evaluated: ``'build.sh'`` is read as a name, not opened.
+    """
+    base = ""
+    nodes: list[ast.AST] = list(call.args)
+    for k in call.keywords:
+        if k.arg != "cwd":
+            nodes.append(k.value)
+            continue
+        where: ast.expr | None = k.value
+        if follow is not None and isinstance(where, ast.Name) and isinstance(where.ctx, ast.Load):
+            where = follow(where.id)
+        if isinstance(where, ast.Constant) and where.value is None:
+            continue
+        if not (isinstance(where, ast.Constant) and isinstance(where.value, str)):
+            return ()
+        base = where.value
+        while base.startswith("./"):
+            base = base[2:]
+        base = base.rstrip("/")
+        if base.startswith("/") or "\0" in base:
+            return ()
+        if base == ".":
+            base = ""
+    if follow is not None:
+        for a in list(nodes):
+            if isinstance(a, ast.Name) and isinstance(a.ctx, ast.Load):
+                value = follow(a.id)
+                if value is not None:
+                    nodes.append(value)
+    out: set[str] = set()
+    for node in nodes:
+        for n in ast.walk(node):
+            if not (isinstance(n, ast.Constant) and isinstance(n.value, str)):
+                continue
+            text = n.value
+            if len(text) > MENTION_LIMIT:
+                continue
+            for word in {text, *text.split()}:
+                if word == "make":
+                    out.update(f"{base}/{m}" if base else m for m in MAKEFILES)
+                while word.startswith("./"):
+                    word = word[2:]
+                if word and not word.startswith("/") and "\0" not in word:
+                    out.add(f"{base}/{word}" if base else word)
+    return tuple(sorted(out))
 
 
 def index_build_script(source: bytes, *, path: str = "setup.py") -> tuple[CallSite, ...]:
-    """Every sensitive call in a build script, at any depth (see ``sensitive_calls``)."""
-    return sensitive_calls(source, path=path)
+    """Every sensitive call in a build script, at any depth, with its arguments
+    (see ``sensitive_calls``)."""
+    return sensitive_calls(source, path=path, with_args=True)

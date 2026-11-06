@@ -5,13 +5,17 @@ from __future__ import annotations
 import functools
 import posixpath
 import re
-from collections.abc import Callable, Iterable, Iterator
+from collections import Counter
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import replace
 from datetime import datetime
 
 from packaging.tags import Tag
+from packaging.utils import canonicalize_name
 
 from ..models import (
+    ARGS_TEXT_LIMIT,
+    MAKEFILES,
     ArtifactFacts,
     CallSite,
     Change,
@@ -233,12 +237,15 @@ def new_pth_file(
 def new_build_hook(
     change: Change, base: ReleaseFacts | None, cand: ReleaseFacts
 ) -> Iterator[RawFinding]:
-    """GRN-C002: new sensitive calls in setup.py, or a new unusual build backend.
+    """GRN-C002: new sensitive calls in setup.py, a sensitive call whose
+    arguments changed, or a new unusual build backend.
 
     Only sdists are compared: a wheel is already built. For npm the rule
     compares install-time scripts instead (``_new_install_script``). A
     trusted version that shipped no sdist had no build code at all, so
-    every build-time call in the new sdist is new.
+    every build-time call in the new sdist is new. A call to a name the
+    trusted setup.py also called is compared by its arguments
+    (``_changed_arguments``).
     """
     if base is None:
         return
@@ -252,18 +259,35 @@ def new_build_hook(
     if b is None and any(a.packagetype == "sdist" for a in base.artifacts):
         return  # the trusted sdist couldn't be read; GRN-E001 says so
     evidence: list[Evidence] = []
-    old_names = {s.name for s in b.setup_py_calls} if b is not None else set()
+    old_calls = b.setup_py_calls if b is not None else ()
+    old_names = {s.name for s in old_calls}
     old_backend = b.build_backend if b is not None else None
+    added = False
+    changed = {
+        id(s): line
+        for s, line in _changed_arguments(old_calls, c.setup_py_calls, base.version, cand.version)
+    }
+    for s in c.setup_py_calls:
+        if id(s) not in changed and s.name in old_names:
+            line = _changed_script(s, b, c, cand.package, base.version, cand.version)
+            if line is not None:
+                changed[id(s)] = line
     for s in c.setup_py_calls:
         if s.name not in old_names:
-            via = f" (in {s.via}())" if s.via else ""
+            added = True
             evidence.append(
                 Evidence(
-                    "file", f"setup.py:{s.line} calls {s.name}{via}", path="setup.py", line=s.line
+                    "file",
+                    f"setup.py:{s.line} calls {s.name}{_via(s)}",
+                    path="setup.py",
+                    line=s.line,
                 )
             )
+        elif id(s) in changed:
+            evidence.append(Evidence("file", changed[id(s)], path="setup.py", line=s.line))
     if c.build_backend != old_backend and c.build_backend is not None:
         if c.build_backend.startswith("in-tree:") or c.build_backend not in BACKEND_ALLOWLIST:
+            added = True
             evidence.append(
                 Evidence(
                     "file",
@@ -276,11 +300,168 @@ def new_build_hook(
             Evidence("note", f"{base.version} shipped no sdist, so it had no build-time code")
         )
     if evidence:
+        what = "adds" if added else "changes"
+        files = [e for e in evidence if e.kind == "file"]
+        notes = [e for e in evidence if e.kind != "file"]
+        more = len(files) - MAX_EVIDENCE
+        tail = [Evidence("note", f"and {more} more")] if more > 0 else []
         yield RawFinding(
             "GRN-C002",
-            f"{cand.version} adds code that runs when the sdist is built",
-            tuple(evidence[:MAX_EVIDENCE]),
+            f"{cand.version} {what} code that runs when the sdist is built",
+            tuple(files[:MAX_EVIDENCE] + tail + notes),
         )
+
+
+def _via(s: CallSite) -> str:
+    return f" (in {s.via}())" if s.via else ""
+
+
+ARGS_SHOWN = 100  # characters of each argument list an evidence line shows
+
+
+def _clip_pair(old: str, new: str) -> tuple[str, str]:
+    """Two argument texts clipped so the place they differ stays in view.
+
+    A long shared beginning is cut down to its last 20 characters, after the
+    opening parenthesis, then each text is clipped to ``ARGS_SHOWN``.
+    """
+    p = len(posixpath.commonprefix([old, new]))
+    if p > 30:
+        old, new = old[0] + "…" + old[p - 20 :], new[0] + "…" + new[p - 20 :]
+    return _clip(old, ARGS_SHOWN), _clip(new, ARGS_SHOWN)
+
+
+def _changed_script(
+    s: CallSite,
+    b: ArtifactFacts | None,
+    c: ArtifactFacts,
+    package: str,
+    old_version: str,
+    new_version: str,
+) -> str | None:
+    """The evidence line for a trusted call whose arguments didn't change but
+    name a file in the new sdist that did: ``subprocess.call(['sh',
+    'build.sh'])`` runs whatever build.sh holds now. A file the call names
+    that the trusted sdist didn't have, or has with other bytes, counts when
+    it is one that runs (``_runs_at_build``); a file with the same bytes, or a word
+    that names no file, doesn't.
+    """
+    if b is None:
+        return None
+    old = {f.path: f.sha256 for f in b.files}
+    new = {f.path: f for f in c.files}
+    named = [p for p in s.mentions if p in new and _runs_at_build(p, new[p], new, package)]
+    added = [p for p in named if p not in old]
+    altered = [p for p in named if p in old and new[p].sha256 != old[p]]
+    if not added and not altered:
+        return None
+    parts = []
+    if altered:
+        parts.append(f"{', '.join(altered)} changed since {old_version}")
+    if added:
+        parts.append(f"{', '.join(added)} is new in {new_version}")
+    return (
+        f"setup.py:{s.line} calls {s.name}{_clip(s.args or '', ARGS_SHOWN)}{_via(s)} as "
+        f"{old_version} did, but {' and '.join(parts)}"
+    )
+
+
+def _runs_at_build(
+    path: str, entry: FileEntry, files: Mapping[str, FileEntry], package: str
+) -> bool:
+    """Whether a file a ``setup.py`` call names is one whose change means
+    different code runs at build time. On the top-1,000 PyPI corpus the
+    first cut counted every file and flagged 155 everyday updates, mostly
+    ``os.system('python setup.py sdist')`` (setup.py is the file being
+    compared), ``sed`` on pyproject.toml and ``.gitrev`` (data the call
+    reads or writes), and ``exec(open('pkg/_version.py').read())`` (the
+    release's own module, which GRN-C003 and the other content rules read
+    already). Left: a Python or shell script outside the package, and the
+    Makefile behind ``make``.
+    """
+    if path == "setup.py":
+        return False
+    if entry.kind not in ("py", "script") and posixpath.basename(path) not in MAKEFILES:
+        return False
+    rel = path[4:] if path.startswith("src/") else path
+    prefix = path[: len(path) - len(rel)]
+    first, _, rest = rel.partition("/")
+    if rest:
+        return f"{prefix}{first}/__init__.py" not in files
+    own = canonicalize_name(package)
+    return not (first.endswith(".py") and canonicalize_name(first[:-3]) == own)
+
+
+def _changed_arguments(
+    old: tuple[CallSite, ...], new: tuple[CallSite, ...], old_version: str, new_version: str
+) -> Iterator[tuple[CallSite, str]]:
+    """Calls in the new setup.py to a name the trusted one called, with
+    arguments the trusted one didn't use, and the evidence line for each.
+
+    For each name, the trusted calls' argument keys are a multiset: each new
+    call, in line order, uses up one trusted call with the same key, and a
+    call with none left is changed, so a call that moved lines or functions
+    matches and a second copy of a trusted call doesn't. A changed call is
+    shown beside a trusted call to the same name that nothing used up, in
+    line order, when there is one. When a call's arguments weren't
+    recorded, every new call to that name is listed as one Garnet couldn't
+    compare: that is never a pass.
+    """
+    for name in sorted({s.name for s in new} & {s.name for s in old}):
+        was = sorted((s for s in old if s.name == name), key=lambda s: s.line)
+        now = sorted((s for s in new if s.name == name), key=lambda s: s.line)
+        if any(s.args_key is None for s in (*was, *now)):
+            for s in now:
+                yield (
+                    s,
+                    f"setup.py:{s.line} calls {name}{_via(s)}: Garnet couldn't compare its "
+                    f"arguments with {old_version}'s, so they may have changed",
+                )
+            continue
+        left = Counter(s.args_key for s in was)
+        unmatched: list[CallSite] = []
+        for s in now:
+            if left[s.args_key] > 0:
+                left[s.args_key] -= 1
+            else:
+                unmatched.append(s)
+        gone: list[CallSite] = []
+        for s in was:
+            if left[s.args_key] > 0:
+                left[s.args_key] -= 1
+                gone.append(s)
+        trusted = Counter(s.args_key for s in was)
+        current = Counter(s.args_key for s in now)
+        for i, s in enumerate(unmatched):
+            if i < len(gone):
+                o = gone[i]
+                before, after = _clip_pair(o.args or "", s.args or "")
+                beyond = ""
+                if o.args == s.args:
+                    long = len(s.args or "") >= ARGS_TEXT_LIMIT
+                    beyond = (
+                        f" (the two differ after the first {ARGS_TEXT_LIMIT:,} characters)"
+                        if long
+                        else " (the two differ in their syntax tree, not in their text)"
+                    )
+                yield (
+                    s,
+                    f"setup.py:{s.line} calls {name}{after}{_via(s)}, changed from "
+                    f"{name}{before} at line {o.line} in {old_version}{beyond}",
+                )
+            elif trusted[s.args_key] > 0:
+                yield (
+                    s,
+                    f"setup.py:{s.line} calls {name}{_clip(s.args or '', ARGS_SHOWN)}{_via(s)} "
+                    f"once more than {old_version} did ({trusted[s.args_key]} such call(s) "
+                    f"in {old_version}, {current[s.args_key]} in {new_version})",
+                )
+            else:
+                yield (
+                    s,
+                    f"setup.py:{s.line} calls {name}{_clip(s.args or '', ARGS_SHOWN)}{_via(s)}: "
+                    f"{old_version} called {name} only with other arguments",
+                )
 
 
 def _new_install_script(base: ReleaseFacts, cand: ReleaseFacts) -> Iterator[RawFinding]:
