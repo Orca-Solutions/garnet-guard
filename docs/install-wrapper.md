@@ -5,7 +5,7 @@ Garnet Guard can check a dependency change before it is installed, in two ways:
 - **The wrapper.** Put `garnet` in front of a pip, uv or npm command: `garnet pip install requests==2.32.3`, `garnet uv add httpx`, `garnet npm install left-pad@1.3.0`. Garnet checks what the command would change and installs only what it checked.
 - **Agent hooks.** Claude Code and Codex run `garnet hook claude-code run` or `garnet hook codex run` before each shell command. When the command installs with pip, uv or npm, the hook checks it and tells the agent what it found. The hook never installs anything.
 
-Both are previews, on `main` for 0.3; 0.2.0 doesn't include them. pnpm, yarn, npx, `npm exec`, poetry, `uv pip`, `uv tool`, `uvx` and `uv run --with` aren't checked yet: the hooks say so, and the wrapper doesn't accept them.
+Both are previews, since 0.3. pnpm, yarn, npx, `npm exec`, poetry, `uv pip`, `uv tool`, `uvx` and `uv run --with` aren't checked yet: the hooks say so, and the wrapper doesn't accept them.
 
 ## What the wrapper does
 
