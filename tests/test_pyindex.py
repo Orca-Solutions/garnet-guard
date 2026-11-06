@@ -349,7 +349,7 @@ def test_build_script_calls_record_the_paths_their_strings_may_name() -> None:
         "cmd = ['sh', './scripts/build.sh', '-v']\n"
         "subprocess.call(cmd, cwd='docs')\n"
         "os.system('make -C docs html; /usr/bin/env python ./gen.py')\n"
-        f"os.system('{'x' * MENTION_LIMIT}' + 'y')\n"
+        f"os.system('{'x' * (MENTION_LIMIT + 1)}' + 'y')\n"
     )
     call, system, long = index_build_script(src.encode())
     assert long.mentions == ("y",)
@@ -362,6 +362,7 @@ def test_build_script_calls_record_the_paths_their_strings_may_name() -> None:
         "gen.py",
         "html;",
         "make",
+        "make -C docs html; /usr/bin/env python ./gen.py",
         "makefile",
         "python",
     )
