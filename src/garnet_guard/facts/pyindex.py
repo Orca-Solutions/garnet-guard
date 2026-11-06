@@ -1220,11 +1220,34 @@ def argument_mentions(
     look up among the release's files: each string constant in the
     arguments (and in a variable ``follow`` reads), each whitespace-separated
     word of it, with a leading ``./`` taken off, and the files ``make``
-    reads for the word ``make``. An absolute path, an empty string and a
-    string over ``MENTION_LIMIT`` characters are left out. Nothing is
-    evaluated: ``'build.sh'`` is read as a name, not opened.
+    reads for the word ``make``, each under the directory a ``cwd`` keyword
+    names. An absolute path, an empty string and a string over
+    ``MENTION_LIMIT`` characters are left out. A ``cwd`` that isn't a string
+    written out (or held by a variable ``follow`` reads), or that is
+    absolute, puts the paths where this can't see, so none is recorded.
+    Nothing is evaluated: ``'build.sh'`` is read as a name, not opened.
     """
-    nodes: list[ast.AST] = [*call.args, *(k.value for k in call.keywords)]
+    base = ""
+    nodes: list[ast.AST] = list(call.args)
+    for k in call.keywords:
+        if k.arg != "cwd":
+            nodes.append(k.value)
+            continue
+        where: ast.expr | None = k.value
+        if follow is not None and isinstance(where, ast.Name) and isinstance(where.ctx, ast.Load):
+            where = follow(where.id)
+        if isinstance(where, ast.Constant) and where.value is None:
+            continue
+        if not (isinstance(where, ast.Constant) and isinstance(where.value, str)):
+            return ()
+        base = where.value
+        while base.startswith("./"):
+            base = base[2:]
+        base = base.rstrip("/")
+        if base.startswith("/") or "\0" in base:
+            return ()
+        if base == ".":
+            base = ""
     if follow is not None:
         for a in list(nodes):
             if isinstance(a, ast.Name) and isinstance(a.ctx, ast.Load):
@@ -1241,11 +1264,11 @@ def argument_mentions(
                 continue
             for word in {text, *text.split()}:
                 if word == "make":
-                    out.update(MAKEFILES)
+                    out.update(f"{base}/{m}" if base else m for m in MAKEFILES)
                 while word.startswith("./"):
                     word = word[2:]
                 if word and not word.startswith("/") and "\0" not in word:
-                    out.add(word)
+                    out.add(f"{base}/{word}" if base else word)
     return tuple(sorted(out))
 
 
