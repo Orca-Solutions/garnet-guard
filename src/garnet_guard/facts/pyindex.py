@@ -40,12 +40,14 @@ from __future__ import annotations
 
 import ast
 import builtins
+import copy
+import hashlib
 import re
 import warnings
 from collections.abc import Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 
-from ..models import CallSite
+from ..models import ARGS_TEXT_LIMIT, CallSite
 
 SENSITIVE_SET_VERSION = "2026-10-c"
 
@@ -882,6 +884,7 @@ def sensitive_calls(
     own: frozenset[str] = frozenset(),
     project: str | None = None,
     tree: ast.Module | None = None,
+    with_args: bool = False,
 ) -> tuple[CallSite, ...]:
     """Every sensitive call in a file, at any depth. Raises SyntaxError/ValueError.
 
@@ -893,7 +896,8 @@ def sensitive_calls(
     published copy matters whether or not anything calls it at import.
     ``via`` names the enclosing function or ``Class.method``. ``own`` and
     ``project`` leave out calls into the release's own packages, as in
-    ``scan_module``. ``tree`` is ``source`` already parsed. A file nested
+    ``scan_module``. ``tree`` is ``source`` already parsed. ``with_args``
+    records each call's arguments (``call_arguments``). A file nested
     deeper than Python's recursion limit raises RecursionError.
     """
     if tree is None:
@@ -903,6 +907,7 @@ def sensitive_calls(
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             resolver.note_import(node)
     calls: list[CallSite] = []
+    shapes = _Shapes(tree, source) if with_args else None
 
     def visit(node: ast.AST, via: str | None) -> None:
         for child in ast.iter_child_nodes(node):
@@ -915,13 +920,133 @@ def sensitive_calls(
                     name = resolver.resolve(child.func)
                     if name is not None and not _own(name, own, project, child):
                         if is_sensitive(name, child):
-                            calls.append(CallSite(name=name, line=child.lineno, via=via))
+                            args, key = call_arguments(child, shapes) if shapes else (None, None)
+                            calls.append(
+                                CallSite(
+                                    name=name, line=child.lineno, via=via, args=args, args_key=key
+                                )
+                            )
                 visit(child, via)
 
     visit(tree, None)
-    return tuple(sorted(set(calls), key=lambda c: (c.line, c.name, c.via or "")))
+    # With arguments, each call is kept: two identical calls on one line are
+    # two calls a trusted setup.py may have made once.
+    kept = calls if with_args else list(set(calls))
+    return tuple(sorted(kept, key=lambda c: (c.line, c.name, c.via or "", c.args_key or "")))
+
+
+class _Plain(ast.NodeTransformer):
+    """Drop what doesn't change a value: the ``u`` prefix of a string literal."""
+
+    def visit_Constant(self, node: ast.Constant) -> ast.Constant:
+        node.kind = None
+        return node
+
+
+ARGS_UNPARSED = 2_000  # syntax nodes in an argument list shown with ast.unparse
+
+
+class _Shapes:
+    """A digest and a size for every node of a file, computed once, bottom
+    up and without recursion, so a call nested in another's arguments, or
+    nested deeper than the recursion limit, costs no more to compare."""
+
+    def __init__(self, tree: ast.AST, source: bytes) -> None:
+        self.digest: dict[int, bytes] = {}
+        self.size: dict[int, int] = {}
+        self.lines = source.splitlines(keepends=True)
+        stack: list[tuple[ast.AST, bool]] = [(tree, False)]
+        while stack:
+            node, ready = stack.pop()
+            if not ready:
+                stack.append((node, True))
+                stack.extend((c, False) for c in ast.iter_child_nodes(node))
+                continue
+            h = hashlib.sha256(type(node).__name__.encode())
+            n = 1
+            for field, value in ast.iter_fields(node):
+                if field == "kind" and isinstance(node, ast.Constant):
+                    continue  # the u prefix
+                items = value if isinstance(value, list) else [value]
+                h.update(b"\0" + field.encode() + (b"[" if isinstance(value, list) else b"("))
+                for item in items:
+                    if isinstance(item, ast.AST):
+                        h.update(self.digest[id(item)])
+                        n += self.size[id(item)]
+                    else:
+                        h.update(repr(item).encode("utf-8", "surrogatepass") + b",")
+            self.digest[id(node)] = h.digest()
+            self.size[id(node)] = n
+
+    def segment(self, node: ast.AST) -> str:
+        """``node``'s source text (offsets are UTF-8 bytes), as one line."""
+        lo, hi = getattr(node, "lineno", 0), getattr(node, "end_lineno", None)
+        c0, c1 = getattr(node, "col_offset", 0), getattr(node, "end_col_offset", None)
+        if not lo or hi is None or c1 is None:
+            return "…"
+        chunk = self.lines[lo - 1 : hi]
+        if not chunk:
+            return "…"
+        if len(chunk) == 1:
+            raw = chunk[0][c0:c1]
+        else:
+            raw = chunk[0][c0:] + b"".join(chunk[1:-1]) + chunk[-1][:c1]
+        raw = raw[: 4 * ARGS_TEXT_LIMIT]  # only the start is shown
+        text = " ".join(raw.decode("utf-8", "replace").split())
+        return "".join(ch if ch.isprintable() else repr(ch)[1:-1] for ch in text)
+
+
+def call_arguments(call: ast.Call, shapes: _Shapes | None = None) -> tuple[str, str]:
+    """A call's arguments as text, and a key that is equal for equal arguments.
+
+    Nothing is evaluated: two calls have the same key when their argument
+    trees are the same, with positions, formatting, comments, quote style and
+    a ``u`` string prefix left out, and keyword arguments sorted by name
+    (``**`` arguments after them, in their order). Python binds keywords by
+    name, so their order doesn't change what the call receives. Any other
+    difference, ``['make']`` against ``('make',)`` or a renamed variable,
+    gives a different key. The key is a SHA-256 over every node of the
+    arguments (``_Shapes``), computed without recursion. The text is
+    ``ast.unparse`` of the arguments in parentheses when they have at most
+    ``ARGS_UNPARSED`` nodes, or else their source text on one line, clipped
+    to ``ARGS_TEXT_LIMIT`` characters.
+    """
+    if shapes is None:
+        shapes = _Shapes(call, b"")
+    keywords = sorted(call.keywords, key=lambda k: (k.arg is None, k.arg or ""))
+    h = hashlib.sha256(b"call")
+    for a in call.args:
+        h.update(b"a" + shapes.digest[id(a)])
+    for k in keywords:
+        h.update(b"k" + repr(k.arg).encode() + shapes.digest[id(k.value)])
+    key = h.hexdigest()
+    nodes = sum(shapes.size[id(a)] for a in call.args) + sum(
+        shapes.size[id(k.value)] for k in keywords
+    )
+    text: str | None = None
+    if nodes <= ARGS_UNPARSED:
+        try:
+            shape = _Plain().visit(
+                copy.deepcopy(
+                    ast.Call(func=ast.Name("_", ast.Load()), args=call.args, keywords=keywords)
+                )
+            )
+            text = ast.unparse(shape)[1:]
+        except RecursionError:
+            text = None
+    if text is None:
+        parts = [shapes.segment(a) for a in call.args]
+        parts += [
+            f"{k.arg}={shapes.segment(k.value)}" if k.arg else f"**{shapes.segment(k.value)}"
+            for k in keywords
+        ]
+        text = "(" + ", ".join(parts) + ")"
+    if len(text) > ARGS_TEXT_LIMIT:
+        text = text[: ARGS_TEXT_LIMIT - 1] + "…"
+    return text, key
 
 
 def index_build_script(source: bytes, *, path: str = "setup.py") -> tuple[CallSite, ...]:
-    """Every sensitive call in a build script, at any depth (see ``sensitive_calls``)."""
-    return sensitive_calls(source, path=path)
+    """Every sensitive call in a build script, at any depth, with its arguments
+    (see ``sensitive_calls``)."""
+    return sensitive_calls(source, path=path, with_args=True)

@@ -277,6 +277,33 @@ def test_a_handed_function_carries_the_call_it_went_to() -> None:
     assert scan.calls_out == () and scan.handed_out == (("memos.work.go", "functools.partial"),)
 
 
+def test_build_script_calls_carry_their_arguments() -> None:
+    from garnet_guard.facts.pyindex import index_build_script, sensitive_calls
+    from garnet_guard.models import ARGS_TEXT_LIMIT
+
+    src = (
+        "import subprocess as sp\n"
+        "sp.call(['make', 'docs'], cwd='d', shell=False)\n"
+        "sp.call([\"make\",\n   u'docs'],  shell=False, cwd='d')  # same call\n"
+        "sp.call(('make', 'docs'), cwd='d', shell=False)\n"
+        "sp.call(cmd, **extra)\n"
+        f"sp.call('{'y' * 2000}')\n"
+    )
+    calls = index_build_script(src.encode())
+    assert [c.args for c in calls[:4]] == [
+        "(['make', 'docs'], cwd='d', shell=False)",
+        "(['make', 'docs'], cwd='d', shell=False)",
+        "(('make', 'docs'), cwd='d', shell=False)",
+        "(cmd, **extra)",
+    ]
+    keys = [c.args_key for c in calls]
+    assert keys[0] == keys[1] and len(set(keys)) == 4
+    long = calls[4].args
+    assert long is not None and len(long) == ARGS_TEXT_LIMIT and long.endswith("…")
+    # Only build scripts record arguments; the other rules compare names.
+    assert {(c.args, c.args_key) for c in sensitive_calls(src.encode())} == {(None, None)}
+
+
 def test_sensitive_calls_anywhere_names_the_enclosing_function() -> None:
     from garnet_guard.facts.pyindex import sensitive_calls
 

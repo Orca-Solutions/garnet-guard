@@ -135,13 +135,16 @@ _DOCS: tuple[RuleDoc, ...] = (
         "new-build-hook",
         "diff",
         W,
-        "setup.py gained sensitive calls, the build backend changed to an unknown or in-tree backend, "
-        "or an npm preinstall, install or postinstall script was added or changed.",
+        "setup.py gained sensitive calls or gave one it already made different arguments, the build "
+        "backend changed to an unknown or in-tree backend, or an npm preinstall, install or "
+        "postinstall script was added or changed. Arguments are compared as written, with keyword "
+        "order and formatting left out; a variable is compared by its name, not its value.",
         "Code in setup.py, a custom build backend or an npm install script runs on your machine when "
         "the package is built or installed, before you ever import it. nx 21.5.0 and "
         "@ctrl/tinycolor 4.1.1 (Shai-Hulud) carried their payload in a postinstall script.",
-        "Read the setup.py diff, the new backend, or the npm script and the file it runs. Prefer "
-        "installing the wheel if one exists; on npm, `npm install --ignore-scripts` skips the scripts.",
+        "Read the setup.py diff, the new backend, or the npm script and the file it runs; for "
+        "changed arguments the evidence shows the call before and after. Prefer installing the "
+        "wheel if one exists; on npm, `npm install --ignore-scripts` skips the scripts.",
     ),
     RuleDoc(
         "GRN-C003",
