@@ -59,12 +59,28 @@ argument trees, counted with repeats:
   the trusted call. Each trusted call matches one new call, so a second copy of a trusted
   call is reported ("once more than 1.0 did"), even on the same line as the first, and a
   call that was removed isn't.
+- A call made under another name is the call it names: `run = subprocess.call` then
+  `run(['make', 'docs'])`, or `sp = subprocess` then `sp.check_call(...)`, is compared with
+  the trusted `subprocess.call` or `subprocess.check_call`, so renaming a call isn't a
+  change and a new command given to the renamed call is. The alias counts from the line it
+  is assigned, and a name the file defines itself (`def call(...)`) is never one.
 - A changed call is shown beside a trusted call to the same name that nothing matched, in
   line order, with both argument lists. A long shared beginning is cut to its last 20
   characters so the place they differ stays on the line.
 
-A variable is compared by its name, not by what was assigned to it: when `subprocess.call(cmd)`
-stays the same and only `cmd = [...]` changes, the call isn't reported. The call's arguments
+- A variable passed to the call is read as the value it holds when Garnet can be sure of
+  it: the scope Python reads the name from assigns it once, to a value written out in full
+  (strings, numbers, lists, tuples, sets and dicts of them), and, for a list, set or dict,
+  nothing else in the file reads the name, so no method call or other function can have
+  changed it. Then `cmd = ['make', 'docs']` followed by `subprocess.call(cmd)` is the same
+  call as `subprocess.call(['make', 'docs'])`, a changed `cmd = [...]` is reported, and the
+  evidence shows the value (`subprocess.call(cmd) with cmd = [...]`). A parameter, a name
+  assigned twice or in a loop, a name bound by `import` or declared `global`, and a value
+  with a call or another name in it are not followed: that variable is compared by its
+  name, so a change to what it holds isn't seen, and a variable Garnet could follow in the
+  trusted release but can't in the new one is reported as changed, never passed.
+
+The call's arguments
 are compared in full however long or deeply nested they are; the evidence shows up to
 1,000 characters of them. An argument list of more than 2,000 syntax nodes is shown as its
 source text, with whitespace collapsed, rather than rebuilt from the tree. If Garnet couldn't

