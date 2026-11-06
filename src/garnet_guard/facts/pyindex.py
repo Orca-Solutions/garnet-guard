@@ -906,6 +906,16 @@ def sensitive_calls(
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             resolver.note_import(node)
+    # A name the file defines at top level shadows a module of the same name,
+    # as in ``scan_module``; an alias assigned to it (``run = subprocess.call``)
+    # still resolves, since aliases are looked up first.
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            resolver.defined.add(stmt.name)
+        elif isinstance(stmt, ast.Assign):
+            resolver.defined.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            resolver.defined.add(stmt.target.id)
     calls: list[CallSite] = []
     shapes = _Shapes(tree, source) if with_args else None
 
@@ -916,6 +926,10 @@ def sensitive_calls(
             elif isinstance(child, ast.ClassDef):
                 visit(child, child.name)
             else:
+                if isinstance(child, ast.Assign):
+                    # ``run = subprocess.call`` or ``sp = subprocess``: a call
+                    # through the alias is the call it names, from here on.
+                    resolver.note_assignment(child)
                 if isinstance(child, ast.Call):
                     name = resolver.resolve(child.func)
                     if name is not None and not _own(name, own, project, child):

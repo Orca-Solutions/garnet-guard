@@ -59,6 +59,11 @@ argument trees, counted with repeats:
   the trusted call. Each trusted call matches one new call, so a second copy of a trusted
   call is reported ("once more than 1.0 did"), even on the same line as the first, and a
   call that was removed isn't.
+- A call made under another name is the call it names: `run = subprocess.call` then
+  `run(['make', 'docs'])`, or `sp = subprocess` then `sp.check_call(...)`, is compared with
+  the trusted `subprocess.call` or `subprocess.check_call`, so renaming a call isn't a
+  change and a new command given to the renamed call is. The alias counts from the line it
+  is assigned, and a name the file defines itself (`def call(...)`) is never one.
 - A changed call is shown beside a trusted call to the same name that nothing matched, in
   line order, with both argument lists. A long shared beginning is cut to its last 20
   characters so the place they differ stays on the line.
