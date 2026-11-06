@@ -57,7 +57,7 @@ FIRST = {
 }
 NOT_DETECTION = {"GRN-K001", "GRN-E001", "GRN-E002", "GRN-E003"}
 RELEASES_PER_PACKAGE = 11  # 11 releases give 10 updates per package
-CACHE_FORMAT = 56  # 54 + aliases resolved in setup.py and GRN-C012's names
+CACHE_FORMAT = 57  # 56 + setup.py variables read as the literal they hold
 PY = f"{sys.version_info.major}{sys.version_info.minor}"
 
 

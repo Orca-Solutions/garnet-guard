@@ -489,6 +489,24 @@ def _rows() -> list[Row]:
         eco=PYPI,
     )
     quiet("GRN-C002", "setup.py unchanged", _sdist("1.0", SRC), _sdist("1.1", SRC), eco=PYPI)
+    held = SETUP_PHONES_HOME.replace(
+        "subprocess.check_output(['curl', '-s', 'https://example.invalid/x'])",
+        "cmd = ['curl', '-s', 'https://example.invalid/x']\nsubprocess.check_output(cmd)",
+    )
+    fires(
+        "GRN-C002",
+        "only the variable setup.py's trusted call passes changed",
+        _sdist("1.0", {**SRC, "setup.py": held}),
+        _sdist("1.1", {**SRC, "setup.py": held.replace("'-s', ", "'-s', '-o', '/tmp/x', ")}),
+        eco=PYPI,
+    )
+    quiet(
+        "GRN-C002",
+        "setup.py's trusted command moved into a variable",
+        _sdist("1.0", {**SRC, "setup.py": SETUP_PHONES_HOME}),
+        _sdist("1.1", {**SRC, "setup.py": held}),
+        eco=PYPI,
+    )
     quiet(
         "GRN-C002",
         "same calls, setup.py rewritten",

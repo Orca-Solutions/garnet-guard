@@ -44,8 +44,9 @@ import copy
 import hashlib
 import re
 import warnings
-from collections.abc import Container, Iterable, Iterator, Mapping
+from collections.abc import Callable, Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from functools import partial
 
 from ..models import ARGS_TEXT_LIMIT, CallSite
 
@@ -897,7 +898,8 @@ def sensitive_calls(
     ``via`` names the enclosing function or ``Class.method``. ``own`` and
     ``project`` leave out calls into the release's own packages, as in
     ``scan_module``. ``tree`` is ``source`` already parsed. ``with_args``
-    records each call's arguments (``call_arguments``). A file nested
+    records each call's arguments (``call_arguments``), with a variable
+    read as the literal it holds where ``_Bindings`` can tell. A file nested
     deeper than Python's recursion limit raises RecursionError.
     """
     if tree is None:
@@ -916,15 +918,14 @@ def sensitive_calls(
             resolver.defined.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
         elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
             resolver.defined.add(stmt.target.id)
-    calls: list[CallSite] = []
-    shapes = _Shapes(tree, source) if with_args else None
+    found: list[tuple[ast.Call, str, str | None, ast.AST]] = []  # call, name, via, scope
 
-    def visit(node: ast.AST, via: str | None) -> None:
+    def visit(node: ast.AST, via: str | None, scope: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                visit(child, f"{via}.{child.name}" if via else child.name)
+                visit(child, f"{via}.{child.name}" if via else child.name, child)
             elif isinstance(child, ast.ClassDef):
-                visit(child, child.name)
+                visit(child, child.name, child)
             else:
                 if isinstance(child, ast.Assign):
                     # ``run = subprocess.call`` or ``sp = subprocess``: a call
@@ -934,19 +935,134 @@ def sensitive_calls(
                     name = resolver.resolve(child.func)
                     if name is not None and not _own(name, own, project, child):
                         if is_sensitive(name, child):
-                            args, key = call_arguments(child, shapes) if shapes else (None, None)
-                            calls.append(
-                                CallSite(
-                                    name=name, line=child.lineno, via=via, args=args, args_key=key
-                                )
-                            )
-                visit(child, via)
+                            found.append((child, name, via, scope))
+                visit(child, via, child if isinstance(child, _SCOPES) else scope)
 
-    visit(tree, None)
+    visit(tree, None, tree)
+    if not with_args:
+        # Without arguments, a call is one per line and name.
+        calls = {CallSite(name=name, line=call.lineno, via=via) for call, name, via, _ in found}
+        return tuple(sorted(calls, key=lambda c: (c.line, c.name, c.via or "")))
     # With arguments, each call is kept: two identical calls on one line are
-    # two calls a trusted setup.py may have made once.
-    kept = calls if with_args else list(set(calls))
+    # two calls a trusted setup.py may have made once. A variable passed to
+    # one of these calls is followed to its value when nothing else touches it.
+    shapes = _Shapes(tree, source)
+    passed = {id(a) for call, *_ in found for a in (*call.args, *(k.value for k in call.keywords))}
+    bindings = _Bindings(tree, passed)
+    kept = []
+    for call, name, via, scope in found:
+        args, key = call_arguments(call, shapes, partial(bindings.value, scope))
+        kept.append(CallSite(name=name, line=call.lineno, via=via, args=args, args_key=key))
     return tuple(sorted(kept, key=lambda c: (c.line, c.name, c.via or "", c.args_key or "")))
+
+
+_SCOPES = (
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.Lambda,
+    ast.ClassDef,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+)
+_LITERAL = (ast.Constant, ast.List, ast.Tuple, ast.Set, ast.Dict, ast.UnaryOp, ast.Load)
+_MUTABLE = (ast.List, ast.Set, ast.Dict)
+
+
+def _literal(node: ast.AST) -> bool:
+    """A value written out in full: constants, and lists, tuples, sets and
+    dicts of them (a sign in front is fine). Nothing is evaluated."""
+    return all(isinstance(n, _LITERAL) for n in ast.walk(node)) and all(
+        isinstance(n.op, (ast.UAdd, ast.USub, ast.Invert, ast.Not))
+        for n in ast.walk(node)
+        if isinstance(n, ast.UnaryOp)
+    )
+
+
+class _Bindings:
+    """What each scope of a file binds each name to, so that a variable passed
+    to a sensitive call can be read as the value it holds.
+
+    A name is followed when the scope Python would read it from (its own,
+    else the enclosing functions', else the module's, class bodies skipped
+    as Python skips them) binds it exactly once, by a plain assignment
+    (``cmd = [...]``) to a literal value, and, when that value is a list, set
+    or dict, every other use of the name in the file passes it straight to
+    one of the calls being indexed, so nothing can have changed it in
+    between. A parameter, a name bound twice, in a loop, by ``import`` or
+    ``global``, or a value with a call or another name in it, is not
+    followed, and the call keeps the variable's name.
+    """
+
+    def __init__(self, tree: ast.Module, passed: Container[int]) -> None:
+        self.parent: dict[int, ast.AST | None] = {id(tree): None}
+        self.bound: dict[int, dict[str, list[ast.AST]]] = {}
+        self.declared: dict[int, set[str]] = {}
+        self.loads: dict[str, list[ast.Name]] = {}  # every read of a name, any scope
+        self.passed = passed
+        stack: list[ast.AST] = [tree]
+        while stack:
+            scope = stack.pop()
+            bound: dict[str, list[ast.AST]] = {}
+            declared: set[str] = set()
+            todo = list(ast.iter_child_nodes(scope))
+            while todo:
+                node = todo.pop()
+                if isinstance(node, _SCOPES):
+                    self.parent[id(node)] = scope
+                    stack.append(node)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        bound.setdefault(node.name, []).append(node)
+                    continue
+                if isinstance(node, ast.Assign) and (
+                    len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                ):
+                    bound.setdefault(node.targets[0].id, []).append(node)
+                    todo.append(node.value)
+                    continue
+                if isinstance(node, ast.Name):
+                    if isinstance(node.ctx, ast.Load):
+                        self.loads.setdefault(node.id, []).append(node)
+                    else:
+                        bound.setdefault(node.id, []).append(node)
+                elif isinstance(node, ast.arg):
+                    bound.setdefault(node.arg, []).append(node)
+                elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                    for a in node.names:
+                        bound.setdefault((a.asname or a.name).split(".")[0], []).append(node)
+                elif isinstance(node, ast.ExceptHandler) and node.name:
+                    bound.setdefault(node.name, []).append(node)
+                elif isinstance(node, (ast.Global, ast.Nonlocal)):
+                    declared.update(node.names)
+                elif isinstance(node, (ast.MatchAs, ast.MatchStar, ast.MatchMapping)):
+                    name = node.rest if isinstance(node, ast.MatchMapping) else node.name
+                    if name:
+                        bound.setdefault(name, []).append(node)
+                todo.extend(ast.iter_child_nodes(node))
+            self.bound[id(scope)] = bound
+            self.declared[id(scope)] = declared
+
+    def value(self, scope: ast.AST, name: str) -> ast.expr | None:
+        """The literal ``name`` holds wherever it is read in ``scope``, or None."""
+        at: ast.AST | None = scope
+        while at is not None:
+            if name in self.declared[id(at)]:
+                return None
+            if (at is scope or not isinstance(at, ast.ClassDef)) and name in self.bound[id(at)]:
+                bindings = self.bound[id(at)][name]
+                if len(bindings) != 1 or not isinstance(bindings[0], ast.Assign):
+                    return None
+                binding = bindings[0]
+                if not _literal(binding.value):
+                    return None
+                if any(isinstance(n, _MUTABLE) for n in ast.walk(binding.value)) and any(
+                    id(load) not in self.passed for load in self.loads.get(name, ())
+                ):
+                    return None
+                return binding.value
+            at = self.parent[id(at)]
+        return None
 
 
 class _Plain(ast.NodeTransformer):
@@ -1010,7 +1126,11 @@ class _Shapes:
         return "".join(ch if ch.isprintable() else repr(ch)[1:-1] for ch in text)
 
 
-def call_arguments(call: ast.Call, shapes: _Shapes | None = None) -> tuple[str, str]:
+def call_arguments(
+    call: ast.Call,
+    shapes: _Shapes | None = None,
+    follow: Callable[[str], ast.expr | None] | None = None,
+) -> tuple[str, str]:
     """A call's arguments as text, and a key that is equal for equal arguments.
 
     Nothing is evaluated: two calls have the same key when their argument
@@ -1019,24 +1139,39 @@ def call_arguments(call: ast.Call, shapes: _Shapes | None = None) -> tuple[str, 
     (``**`` arguments after them, in their order). Python binds keywords by
     name, so their order doesn't change what the call receives. Any other
     difference, ``['make']`` against ``('make',)`` or a renamed variable,
-    gives a different key. The key is a SHA-256 over every node of the
-    arguments (``_Shapes``), computed without recursion. The text is
+    gives a different key. ``follow`` gives the literal a variable name
+    holds, or None (``_Bindings.value``); a followed argument is keyed by
+    that literal, as if it were written in the call, so ``call(cmd)`` with
+    ``cmd = ['make']`` and ``call(['make'])`` have the same key, and the
+    text ends ``with cmd = ['make']``. The key is a SHA-256 over every node
+    of the arguments (``_Shapes``), computed without recursion. The text is
     ``ast.unparse`` of the arguments in parentheses when they have at most
     ``ARGS_UNPARSED`` nodes, or else their source text on one line, clipped
     to ``ARGS_TEXT_LIMIT`` characters.
     """
-    if shapes is None:
-        shapes = _Shapes(call, b"")
     keywords = sorted(call.keywords, key=lambda k: (k.arg is None, k.arg or ""))
+    held: dict[str, ast.expr] = {}  # each followed name, in argument order
+    for a in (*call.args, *(k.value for k in keywords)):
+        if follow is not None and isinstance(a, ast.Name) and isinstance(a.ctx, ast.Load):
+            value = follow(a.id)
+            if value is not None:
+                held.setdefault(a.id, value)
+
+    def read(a: ast.expr) -> ast.expr:
+        return held[a.id] if isinstance(a, ast.Name) and a.id in held else a
+
+    if shapes is None:
+        shapes = _Shapes(ast.Tuple(elts=[call, *held.values()], ctx=ast.Load()), b"")
     h = hashlib.sha256(b"call")
     for a in call.args:
-        h.update(b"a" + shapes.digest[id(a)])
+        h.update(b"a" + shapes.digest[id(read(a))])
     for k in keywords:
-        h.update(b"k" + repr(k.arg).encode() + shapes.digest[id(k.value)])
+        h.update(b"k" + repr(k.arg).encode() + shapes.digest[id(read(k.value))])
     key = h.hexdigest()
     nodes = sum(shapes.size[id(a)] for a in call.args) + sum(
         shapes.size[id(k.value)] for k in keywords
     )
+    nodes += sum(shapes.size[id(v)] for v in held.values())
     text: str | None = None
     if nodes <= ARGS_UNPARSED:
         try:
@@ -1046,6 +1181,9 @@ def call_arguments(call: ast.Call, shapes: _Shapes | None = None) -> tuple[str, 
                 )
             )
             text = ast.unparse(shape)[1:]
+            for name, value in held.items():
+                shown = ast.unparse(_Plain().visit(copy.deepcopy(value)))
+                text += f" with {name} = {shown}"
         except RecursionError:
             text = None
     if text is None:
@@ -1055,6 +1193,8 @@ def call_arguments(call: ast.Call, shapes: _Shapes | None = None) -> tuple[str, 
             for k in keywords
         ]
         text = "(" + ", ".join(parts) + ")"
+        for name, value in held.items():
+            text += f" with {name} = {shapes.segment(value)}"
     if len(text) > ARGS_TEXT_LIMIT:
         text = text[: ARGS_TEXT_LIMIT - 1] + "…"
     return text, key

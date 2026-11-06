@@ -2,6 +2,14 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-11-06: setup.py variables passed to a sensitive call are read as the literal they hold (#121 follow-up)
+
+**State.** GRN-C002's argument comparison (`index_build_script`) follows a variable passed to a sensitive call to the value it holds when nothing can have made it anything else: the scope Python reads the name from (its own, else the enclosing functions', else the module's, class bodies skipped) binds it exactly once, by a plain assignment to a value written out in full (`_literal`: constants and lists, tuples, sets and dicts of them), and, for a list, set or dict, every other read of the name in the file passes it straight to one of the calls being indexed (`_Bindings`). The call is keyed as if the value were written in it, so `cmd = ['make']; subprocess.call(cmd)` matches `subprocess.call(['make'])` and a changed `cmd = [...]` is reported, with the value in the evidence (`subprocess.call(cmd) with cmd = [...]`). Anything else (a parameter, two bindings, a loop target, `import`, `global`, a value with a call or a name in it, a list read by `print` or `.append`) keeps the variable's name, as before, and a variable followed in the trusted release but not in the new one is a change. The rule page says which variables are followed. The independent review of #121 found the limit (its finding 3); the maintainer chose to build it for 0.3. `CACHE_FORMAT` is 57.
+
+**Decisions.** Mutable values are followed only when every read of the name is a direct argument of an indexed call, since `cmd.append(...)` or `helper(cmd)` can change a list without rebinding the name; a string or tuple can't change, so a read elsewhere doesn't stop it. A value with a name in it (`['make', target]`) is not followed, since reading two steps of data flow is where this stops for 0.3.
+
+**Next.** Replays and the corpus delta; the remaining limit (a script `setup.py` runs changing on its own) is saved for 1.0.
+
 ## 2026-11-06: setup.py calls through an alias resolve to the call they name (#121 follow-up)
 
 **State.** `sensitive_calls`, which indexes `setup.py` for GRN-C002 and lists a wheel's calls anywhere for GRN-C012, now notes assignments as the module index does (`_Resolver.note_assignment`): `run = subprocess.call; run([...])` and `sp = subprocess; sp.check_call(...)` are `subprocess.call` and `subprocess.check_call`, from the line of the assignment on. Names the file defines at top level (a `def`, `class` or assignment) shadow a module of the same name, as in `scan_module`, so `def call` is never an alias. The rule page and SPEC §6.3 already said calls resolve through simple aliasing; the build-script index didn't. The independent review of #121 found it (its finding 4), and the maintainer chose to build it for 0.3. `CACHE_FORMAT` is 56.

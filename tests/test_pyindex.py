@@ -341,6 +341,62 @@ def test_build_script_calls_through_an_alias_are_the_calls_they_name() -> None:
     }
 
 
+def test_build_script_variables_are_read_as_the_literal_they_hold() -> None:
+    """A variable bound once, to a value written out in full, that nothing else
+    touches, is keyed as that value and shown beside the call."""
+    from garnet_guard.facts.pyindex import index_build_script
+
+    def one(src: str) -> tuple[str | None, str | None]:
+        [c] = [c for c in index_build_script(src.encode()) if c.name != "os.system"]
+        return c.args, c.args_key
+
+    plain = one("import subprocess\nsubprocess.call(['make', 'docs'], cwd='d')\n")
+    held = one("import subprocess\ncmd = ['make', 'docs']\nsubprocess.call(cmd, cwd='d')\n")
+    assert held[0] == "(cmd, cwd='d') with cmd = ['make', 'docs']"
+    assert held[1] == plain[1]
+    # Keyword values, ``**`` mappings and immutable values are followed too,
+    # from an enclosing scope, with each name shown once.
+    src = (
+        "import subprocess\n"
+        "where = 'docs'\n"
+        "opts = {'shell': False}\n"
+        "def build():\n"
+        "    cmd = ('make', '-j')\n"
+        "    subprocess.call(cmd, cmd, cwd=where, **opts)\n"
+    )
+    assert one(src)[0] == (
+        "(cmd, cmd, cwd=where, **opts) with cmd = ('make', '-j') with where = 'docs'"
+        " with opts = {'shell': False}"
+    )
+    # Not followed: a value with a name or a call in it, a name bound twice
+    # or in a loop, a parameter, a name under ``global``, a name an import
+    # binds, and a list or dict read anywhere else, where a method call or
+    # another function may have changed it.
+    for src in (
+        "cmd = ['make', target]\nsubprocess.call(cmd)\n",
+        "cmd = ['make'] + extra\nsubprocess.call(cmd)\n",
+        "cmd = ['make']\ncmd = ['sh']\nsubprocess.call(cmd)\n",
+        "for cmd in (['make'], ['sh']):\n    subprocess.call(cmd)\n",
+        "def run(cmd=['make']):\n    subprocess.call(cmd)\n",
+        "cmd = ['make']\ndef run():\n    global cmd\n    subprocess.call(cmd)\n",
+        "import cmd\nsubprocess.call(cmd)\n",
+        "cmd = ['make']\ncmd.append('docs')\nsubprocess.call(cmd)\n",
+        "cmd = ['make']\nprint(cmd)\nsubprocess.call(cmd)\n",
+        "cmd = ['make']\ndef run():\n    cmd[0] = 'sh'\nsubprocess.call(cmd)\n",
+    ):
+        args, key = one("import subprocess\n" + src)
+        assert args == "(cmd)", src
+        assert key == one("import subprocess\nsubprocess.call(cmd)\n")[1], src
+    # A string read elsewhere can't have been changed, so it is followed.
+    args, _ = one("import subprocess\ncmd = 'make'\nprint(cmd)\nsubprocess.call(cmd)\n")
+    assert args == "(cmd) with cmd = 'make'"
+    # Python reads a function's name from the module, not from a class body.
+    src = "import subprocess\ncmd = 'make'\nclass B:\n    cmd = 'sh'\n    def run(self):\n        subprocess.call(cmd)\n"
+    assert one(src)[0] == "(cmd) with cmd = 'make'"
+    src = "import subprocess\ncmd = 'make'\nclass B:\n    cmd = 'sh'\n    subprocess.call(cmd)\n"
+    assert one(src)[0] == "(cmd) with cmd = 'sh'"
+
+
 def test_sensitive_calls_anywhere_names_the_enclosing_function() -> None:
     from garnet_guard.facts.pyindex import sensitive_calls
 
