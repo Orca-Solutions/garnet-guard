@@ -703,6 +703,39 @@ class ModuleScan:
     handed_out: tuple[tuple[str, str], ...] = ()  # own callables handed to a call, with the call
 
 
+@dataclass(frozen=True)
+class ModulePrep:
+    """A module parsed and read once, for ``scan_module`` to scan from its
+    body or from any number of its callables: ``_follow_calls_out`` scans a
+    module once per callable that import-time code reaches (sympy 1.14.0:
+    34,843 scans of 1,533 modules), and parsing and reading the imports
+    again each time cost more than the scans."""
+
+    tree: ast.Module
+    imports: tuple[ast.Import | ast.ImportFrom, ...]  # in ``ast.walk`` order
+    defined: frozenset[str]  # names the module's top level binds
+    reachable: Mapping[str, list[ast.AST]]  # ``_reachable``
+
+
+def prepare_module(
+    source: bytes, *, path: str = "<module>", tree: ast.Module | None = None
+) -> ModulePrep:
+    """Parse ``source`` (or take ``tree``) and read what every scan of it
+    needs. Raises SyntaxError/ValueError."""
+    if tree is None:
+        tree = parse(source, path=path)
+    imports = tuple(n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom)))
+    defined: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(stmt.name)
+        elif isinstance(stmt, ast.Assign):
+            defined.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            defined.add(stmt.target.id)
+    return ModulePrep(tree, imports, frozenset(defined), _reachable(tree))
+
+
 def scan_module(
     source: bytes,
     *,
@@ -713,6 +746,7 @@ def scan_module(
     entry: str | None = None,
     handed: str | None = None,
     tree: ast.Module | None = None,
+    prep: ModulePrep | None = None,
     obfuscation: bool = True,
 ) -> ModuleScan:
     """Index what runs at import, or what runs when ``entry`` is called.
@@ -727,27 +761,23 @@ def scan_module(
     (instantiation) or ``Class.method`` defined in the module; an unknown
     entry runs nothing. ``handed`` names the call that ``entry`` was handed to
     when that call is not known to run it; it is carried on every call site.
-    ``tree`` is ``source`` already parsed. With ``obfuscation`` off, GRN-C005's
-    sites aren't read: that read costs about as much again as the rest.
+    ``tree`` is ``source`` already parsed, and ``prep`` is ``source`` already
+    prepared (``prepare_module``), which saves the parse and the read of
+    the imports when a module is scanned from several entries. With
+    ``obfuscation`` off, GRN-C005's sites aren't read: that read costs
+    about as much again as the rest.
     """
-    if tree is None:
-        tree = parse(source, path=path)
+    if prep is None:
+        prep = prepare_module(source, path=path, tree=tree)
+    tree = prep.tree
     resolver = _Resolver()
     if module is not None:
         is_pkg = path.endswith("__init__.py")
         resolver.package = module if is_pkg else module.rpartition(".")[0]
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            resolver.note_import(node)
-    for stmt in tree.body:
-        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            resolver.defined.add(stmt.name)
-        elif isinstance(stmt, ast.Assign):
-            resolver.defined.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
-        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
-            resolver.defined.add(stmt.target.id)
-
-    reachable = _reachable(tree)
+    for node in prep.imports:
+        resolver.note_import(node)
+    resolver.defined.update(prep.defined)
+    reachable = prep.reachable
     # GRN-C005, off by default: a None tracker reads nothing.
     tracker = (
         Tracker(resolver.resolve, is_sensitive, tree, SENSITIVE_HEADS) if obfuscation else None

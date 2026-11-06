@@ -2,6 +2,12 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-11-06: a module reached from many entries is parsed once
+
+**State.** Profiling sympy 1.14.0's wheel on main (no GRN-C005 at all) took 1,070 s under cProfile, 1,000 s of it in `inventory._follow_calls_out`: it called `scan_module` 34,843 times for 1,533 modules, once per (module, entry, handed-to) reached, and each call parsed the module and walked its whole tree for imports again (320 s of parsing, ~450 s of import walks). `prepare_module` now does the parse, the import list, the top-level names and `_reachable` once per module (`ModulePrep`), and `scan_module` takes a `prep`; `_follow_calls_out` keeps one per module. Plain timing of the wheel: 479 s on main, 58 s with the prep. The scans themselves are unchanged (a test checks a prepared scan equals a fresh one, from the body and from an entry), so no finding changes. GRN-C005's `Tracker` still walks the tree per scan when it is on; that is the next cost on large packages when a policy turns the rule on.
+
+**Why.** The 0.3 full run left sympy, litellm and google-ads out at the 2-hour cap, and the first read blamed GRN-C005; the profile shows the re-parse on main is most of it. The maintainer asked for a size cutoff that skips GRN-C005 only; this fix comes first so the cutoff is measured on the real cost.
+
 ## 2026-11-06: GRN-C005 ships off by default; its read runs only when a policy turns it on
 
 **State.** The maintainer's decision after the top-1,000 run (2026-11-06): GRN-C005 is off by default, opt-in, and the documentation says why and that most projects don't need it on. `RuleDoc` gives it `Severity.OFF`; `"GRN-C005" = "info"` (or `warn`) in `[garnet.rules]` turns it on. The read is the expensive part, so it follows the policy too: `Options.scan_obfuscation` (default False) reaches `pypi.FetchContext.obfuscation`, `inspect_artifact(obfuscation=)` and `scan_module(obfuscation=)`, where a `None` tracker reads nothing; `engine._with_policy` sets it when the policy gives the rule a severity, beside the lower limits it already applied. `scan_module` itself defaults to reading the sites, so the facts tests are unchanged; `tests.builders.release(obfuscation=True)` reads them. The backtest reads them only with `GARNET_BACKTEST_C005=1`, in a cache suffixed `-c005`, and runs the checks with the rule at `info`.

@@ -729,3 +729,40 @@ def test_a_def_that_may_bind_something_else_keeps_the_alias() -> None:
         head + "try:\n    def run(c):\n        return c\nexcept Exception:\n    pass\nrun(['id'])\n"
     )
     assert sites(tried) == [(8, "subprocess.run", None)]
+
+
+def test_a_module_reached_from_many_entries_is_parsed_once(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """``_follow_calls_out`` scans a module once per callable reached, from a
+    prep made once: sympy 1.14.0 was parsed 34,843 times for 1,533 modules,
+    and the parses and import reads were 94% of an 18-minute inspection."""
+    from garnet_guard.facts import inventory
+    from garnet_guard.facts.pyindex import prepare_module, scan_module
+    from tests.builders import release
+
+    prepared: list[str] = []
+
+    def counting(source: bytes, **kw):  # type: ignore[no-untyped-def]
+        prepared.append(kw["path"])
+        return prepare_module(source, **kw)
+
+    monkeypatch.setattr(inventory, "prepare_module", counting)
+    helpers = "import subprocess\n" + "".join(
+        f"def h{i}():\n    subprocess.run(['x{i}'])\n" for i in range(5)
+    )
+    files = {"demo/__init__.py": "", "demo/helpers.py": helpers}
+    for i in range(5):
+        files[f"demo/m{i}.py"] = f"from demo.helpers import h{i}\nh{i}()\n"
+    files["demo/__init__.py"] = "".join(f"import demo.m{i}\n" for i in range(5))
+    facts = release("1.0", files)
+    assert prepared == ["demo/helpers.py"]
+    [helpers_index] = [m for m in facts.artifacts[0].modules if m.path == "demo/helpers.py"]
+    assert sorted({(c.via, c.from_module) for c in helpers_index.top_level_calls}) == [
+        (f"h{i}", f"demo/m{i}.py") for i in range(5)
+    ]
+    # A prepared module scans the same as a fresh one, from the body or an entry.
+    src = helpers.encode()
+    prep = prepare_module(src, path="demo/helpers.py")
+    for entry in (None, "h2"):
+        assert scan_module(src, path="demo/helpers.py", entry=entry, prep=prep) == scan_module(
+            src, path="demo/helpers.py", entry=entry
+        )

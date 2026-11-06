@@ -31,10 +31,12 @@ from ..models import (
 )
 from ..safe_archive import ArchiveError, ArchiveReader, LimitExceeded, open_archive
 from .pyindex import (
+    ModulePrep,
     ModuleScan,
     index_build_script,
     module_name,
     parse,
+    prepare_module,
     scan_module,
     sensitive_calls,
     sensitive_set,
@@ -462,6 +464,7 @@ def _follow_calls_out(
         (callee, mod, to) for mod, pairs in handed_out.items() for callee, to in pairs
     )
     seen: set[tuple[tuple[str, str], str, str | None]] = set()
+    preps: dict[str, ModulePrep | None] = {}  # each module parsed once, however many entries
     scans: dict[tuple[tuple[str, str], str | None], ModuleScan | None] = {}
     extra: dict[str, list[CallSite]] = {}
     while pending:
@@ -474,17 +477,26 @@ def _follow_calls_out(
         if (target, to) not in scans:
             index = result.modules[by_module[mod]]
             try:
-                scans[target, to] = scan_module(
-                    sources[mod],
-                    path=index.path,
-                    own=own,
-                    project=project,
-                    module=mod,
-                    entry=entry,
-                    handed=to,
-                    obfuscation=obfuscation,
+                if mod not in preps:
+                    preps[mod] = prepare_module(sources[mod], path=index.path)
+                prep = preps[mod]
+                scans[target, to] = (
+                    None
+                    if prep is None
+                    else scan_module(
+                        sources[mod],
+                        path=index.path,
+                        own=own,
+                        project=project,
+                        module=mod,
+                        entry=entry,
+                        handed=to,
+                        prep=prep,
+                        obfuscation=obfuscation,
+                    )
                 )
             except (SyntaxError, ValueError, RecursionError):
+                preps.setdefault(mod, None)
                 scans[target, to] = None
         scan = scans[target, to]
         if scan is None:
