@@ -2,6 +2,14 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-11-06: clean-corpus numbers for 0.3.0
+
+**State.** The top-1,000 PyPI corpus was run on 0.3.0's code (main at `680789c`, GRN-C005 off by default) from an empty cache: 331 of 9,439 updates flagged for a look (3.5%, 0.2.0: 300), in 243 packages. npm is unchanged at 306 of 8,742 (the 0.3 run flags the same updates with the same rules; only release counts in `info` text moved, so its files stay). Combined: 637 of 18,181 (3.5%, 0.2.0: 606, 3.3%). `backtest/corpus-results-pypi-1000/` holds the new `updates.json`, `summary.json`, `triage.json` and REPORT; README, the badge, ARCHITECTURE, PROJECT_BRIEF, the expert brief and rule coverage quote the new numbers.
+
+**Delta.** 32 updates newly flagged, 1 no longer (mako 1.4.1, GRN-C009 `info` since #103). GRN-C002's argument comparison (#121) adds 18 updates in 12 packages, its script lookup (#127) 14 in 3 (babel, defusedxml, sentencepiece), GRN-C006 (#98) 2 (ecdsa 0.14, reportlab 4.5.0); #125, #126 and GRN-C005 add none. Four packages whose downloads timed out in the full run were run again on their own from the same cache.
+
+**Verification.** All 40 new (update, rule) findings were checked against the release files downloaded from PyPI (hashes checked, archives read as bytes, nothing extracted or run): each cited setup.py line holds the call with the quoted arguments, each "only with other arguments" command is absent from the trusted setup.py, each named script differs byte for byte between the sdists, and each GRN-C006 file is in the wheel with no copy in the sdist. None made a false claim; each has its note in `triage.json`.
+
 ## 2026-11-06: a module reached from many entries is parsed once
 
 **State.** Profiling sympy 1.14.0's wheel on main (no GRN-C005 at all) took 1,070 s under cProfile, 1,000 s of it in `inventory._follow_calls_out`: it called `scan_module` 34,843 times for 1,533 modules, once per (module, entry, handed-to) reached, and each call parsed the module and walked its whole tree for imports again (320 s of parsing, ~450 s of import walks). `prepare_module` now does the parse, the import list, the top-level names and `_reachable` once per module (`ModulePrep`), and `scan_module` takes a `prep`; `_follow_calls_out` keeps one per module. Plain timing of the wheel: 479 s on main, 58 s with the prep. The scans themselves are unchanged (a test checks a prepared scan equals a fresh one, from the body and from an entry), so no finding changes. GRN-C005's `Tracker` walked the tree three more times per scan when it is on (379 s for the wheel with the rule on); `TreeFacts` reads those once per module in the prep, and the wheel takes 82 s with the rule on. litellm 1.106.6's sdist (2,781 modules) takes 25 s off and 38 s on, google-ads 35.0.0's wheel (7,032 modules) 23 s and 36 s; these three were the packages the 0.3 full run left out at its 2-hour cap.

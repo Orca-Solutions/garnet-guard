@@ -1,4 +1,4 @@
-# PyPI clean-corpus backtest, top 1,000 packages, 2026-10-31
+# PyPI clean-corpus backtest, top 1,000 packages, 2026-11-06
 
 The last 11 final, non-yanked releases of the 1,000 most downloaded PyPI packages
 ([top-pypi-1000.json](../top-pypi-1000.json), hugovk/top-pypi-packages, snapshot of
@@ -12,41 +12,69 @@ uv run python -m backtest select pypi 1000   # writes corpus-pypi-1000.json
 uv run python -m backtest corpus pypi 1000   # writes this folder's summary.json and updates.json
 ```
 
-The run used the rules as they ship in 0.2.0: main at `17b8cd1`, which has every launch
-check, the GRN-C007 fix (PR #85) and the sensitive call set without the subprocess names
-that start nothing (PR #90), plus PR #96 (`9314359`), which changes which wheel is read for
-a release with no wheel for this Python. #96 changes the facts of 391 releases in 71
-packages; those were fetched again, and the facts of the other 9,876 releases were reused
-from the `17b8cd1` run's cache (7 reused releases fetched fresh gave identical facts). A
-second pass retried everything the first couldn't fetch.
+The run used the rules as they ship in 0.3.0, with GRN-C005 off as it is by default: the
+code of main at `680789c` (PRs #121, #125, #126, #127 and #119 on top of 0.2.0 and the 0.3
+rules merged since), from an empty cache, on 2026-11-06. The tree it ran from differs from
+`680789c` only in a comment and the backtest cache version; `src/` and `tests/` are the
+same files, and its version string still read 0.2.0. Four packages whose downloads timed
+out (scikit-image, claude-agent-sdk, nvidia-cusparse-cu12, semgrep) were run again on their
+own from the same cache, and those results replace theirs; without that, one scikit-image
+update would count as flagged through a fallback to its sdist. The 0.2.0 run of the same
+9,439 updates is in this folder's history (main at `9d94bd9`).
 
 ## Result
 
-**300 of 9,439 updates were flagged for a look (3.2%), in 235 packages. Each of the 300
+**331 of 9,439 updates were flagged for a look (3.5%), in 243 packages. Each of the 331
 was checked on its own against PyPI, GitHub and the release files, and none made a false
 claim.**
 
 | Rule | Updates | Packages |
 |---|---|---|
 | GRN-C003 new-import-time-exec | 65 | 52 |
-| GRN-C002 new-build-hook | 60 | 53 |
+| GRN-C002 new-build-hook | 93 | 66 |
 | GRN-T004 no-matching-tag | 48 | 38 |
 | GRN-T006 files-uploaded-late | 34 | 30 |
 | GRN-C008 new-dependency | 23 | 23 |
 | GRN-T001 lost-provenance | 18 | 18 |
 | GRN-T003 workflow-changed | 16 | 14 |
 | GRN-T002 publisher-changed | 14 | 13 |
-| GRN-C009 new-entry-point | 9 | 8 |
+| GRN-C009 new-entry-point | 8 | 7 |
+| GRN-C006 sdist-wheel-mismatch | 7 | 6 |
 | GRN-C004 new-binary | 6 | 6 |
 | GRN-C007 code-not-in-source | 5 | 4 |
 | GRN-C001 new-pth-file | 4 | 3 |
 | GRN-C012 wheels-differ | 2 | 2 |
 | GRN-C010 new-startup-file | 1 | 1 |
 
-Five updates carry two rules, so the rows add up to 305.
+Twelve updates carry more than one rule (eleven two, one three), so the rows add up to 344.
+
+**Compared with the 0.2.0 run (300 of 9,439):** 32 updates are newly flagged and 1 is no
+longer flagged, all through rules that changed for 0.3; nothing else moved.
+
+- **GRN-C002 compares a trusted setup.py call's arguments (#121): 18 updates in 12
+  packages.** arrow, blis, cached-property, configargparse, grpcio-tools, pillow, pynacl,
+  pyodbc, sentencepiece, shapely, simple-salesforce and sympy each changed a command their
+  setup.py already ran: `exec(f.read())` became `exec(Path(...).read_text())`, pynacl's
+  `make` gained `make_args`, cached-property's publish shortcut gained `twine upload`.
+  ddtrace 4.15.0 (seven new build commands) and pillow 11.3.0, already flagged by other
+  rules, gain such lines too.
+- **GRN-C002 looks up the scripts a trusted call names (#127): 14 updates in 3 packages**
+  (babel 6, defusedxml 5, sentencepiece 3), 12 of them flagged only because of it, and
+  babel 2.14.0, already flagged by GRN-C009, gains one too. Each names a script that
+  changed between the two sdists (checked byte for byte).
+- **GRN-C006 sdist-wheel-mismatch (#98): 2 updates** (ecdsa 0.14, reportlab 4.5.0). It
+  also warns on 5 updates already flagged by other rules (amazon-ion 0.11.3 and 0.13.0, rsa
+  4.6, shellingham 1.2.8, zope-event 5.1).
+- **No longer flagged:** mako 1.4.1, whose renamed `pygments.lexers` names GRN-C009 now
+  reports at `info` (#103).
+- **No change** from GRN-C002's alias and variable handling (#125, #126) or from GRN-C005,
+  which is off by default.
+
+The npm run on the same 0.3 code flags the same 306 of 8,742 updates with the same rules;
+only release counts in `info` text differ, so the npm folder keeps its 0.2.0 files.
 
 The [first top-1,000 run](https://github.com/orca-solutions/garnet-guard/pull/39) flagged
-220. All 220 still warn, and 80 more do: 76 through the rules added since (GRN-T006 33,
+220. In the 0.2.0 run all 220 still warned, and 80 more did: 76 through the rules added since (GRN-T006 33,
 GRN-C008 22, GRN-C009 8, GRN-C004 6, GRN-C007 5, GRN-C012 1, GRN-C010 1), 3 through the
 wider sensitive call set (GRN-C002 on glom 23.4.0, hiredis 3.3.1 and pywavelets 1.2.0), and
 1 because a release that is the first to ship a wheel is now read through it (GRN-C001 on
@@ -54,12 +82,13 @@ amazon-ion 0.11.3). One GRN-T004 warning is gone: grimp has tagged `v3.18` since
 
 "None made a false claim" means every finding states something true about the release.
 It does not mean no warning was a false alarm: none of these 9,439 updates is known to be
-malicious, so from a user's point of view every one of the 300 is a false alarm, a true
+malicious, so from a user's point of view every one of the 331 is a false alarm, a true
 observation about a legitimate release that a reviewer has to look at and dismiss.
 
 More findings were reported at `info`, not warn: 282 GRN-C008 (established new
-dependencies), 125 GRN-T006 (late wheels that only add a platform or a Python version), 70
-GRN-C009, 66 GRN-C003, 62 GRN-C010 (new scripts and data files) and 8 GRN-C004.
+dependencies), 125 GRN-T006 (late wheels that only add a platform or a Python version), 71
+GRN-C009, 66 GRN-C003, 62 GRN-C010 (new scripts and data files), 8 GRN-C004 and 3 GRN-C006
+(test files and files outside the packages).
 
 304 updates (3.2%) carry a couldn't-check finding (GRN-E), which names what wasn't
 checked. Some carry more than one kind:
@@ -120,10 +149,11 @@ finds nothing new running: it does what the trusted release did, in a new way, o
 code runs only under Python 2. These are the ones the triage found; it didn't look for
 them in every warning.
 
-- **mako 1.3.12 → 1.4.1 (GRN-C009).** The `pygments.lexers` names `css+mako`,
+- **mako 1.3.12 → 1.4.1 (GRN-C009, 0.2.0 run).** The `pygments.lexers` names `css+mako`,
   `html+mako`, `js+mako` and `xml+mako` became `css_mako` and so on, with the same classes.
-  pygments loads every lexer by class, not by name. GRN-C009 compares targets name by name,
-  so each renamed name reads as new.
+  pygments loads every lexer by class, not by name. 0.2.0 compared targets name by name, so
+  each renamed name read as new; 0.3 reports a renamed name with the same target at `info`
+  (#103), and this update is no longer flagged.
 - **amazon-ion 0.11.2 → 0.11.3 (GRN-C001).** 0.11.3 is the first release with wheels, and
   each holds the `-nspkg.pth` file setuptools writes for a namespace package. 0.11.2 shipped
   only an sdist, and building it writes the same kind of file. GRN-C001 reports this case
@@ -143,6 +173,13 @@ them in every warning.
   2.9.7 run `pg_config` with `subprocess.run` where 2.9.6 used `Popen`, and glom 23.4.0,
   hiredis 3.3.1 and pywavelets 1.2.0 load their own version file with a different
   `importlib` or `runpy` call than before. The other 11 weren't read for this.
+- **GRN-C002 argument and script changes (new in 0.3).** Some change a command without
+  changing what runs: arrow 1.1.1, simple-salesforce 1.12.3 and sympy 1.14.0 read the same
+  version file with `pathlib` instead of `open()` before `exec`. cached-property and
+  configargparse change publish shortcuts that run only for `setup.py publish` or a release
+  command. babel's `scripts/download_import_cldr.py` and defusedxml's `tests.py` run only
+  from a custom command (`setup.py import_cldr`, `setup.py test`), not during an ordinary
+  build; GRN-C002 counts every setup.py call, and the evidence names the method.
 
 ## Triage
 
@@ -189,6 +226,23 @@ version that shipped no sdist, so every build-time call is new, and the finding 
 reportlab 5.1.0's setup.py builds and installs a URL opener. 3 are new since the first
 run, through calls the sensitive set added (glom 23.4.0, hiredis 3.3.1, pywavelets 1.2.0).
 
+**GRN-C002, new in 0.3 (33 more updates).** The two sdists of each were read with the
+cited lines. In the 20 updates with argument changes, the candidate's setup.py has the call on the
+cited line with the new arguments, and the trusted one has it with the arguments the
+evidence quotes, or (for "only with other arguments") never runs that command. In the 15
+updates with script changes (two have both), the script the call names is in both sdists and its bytes differ. ddtrace
+4.15.0's seven lines are new commands in its native build (cargo, patchelf, objcopy,
+strip). Every line is true; the shapes that run nothing new are under
+[Accurate, but nothing new runs](#accurate-but-nothing-new-runs).
+
+**GRN-C006 (7).** Each file the finding names was looked for in the wheel and in the sdist:
+it is in the wheel and the sdist has no copy. Three are the `-nspkg.pth` file setuptools
+writes for a namespace package (amazon-ion 0.11.3 and 0.13.0, zope-event 5.1), which the
+sdist never carries. ecdsa 0.14's wheel adds `ecdsa/six.py`, reportlab 4.5.0's
+`reportlab/lib/extformat.py` (an `eval` in `dictformat()`), rsa 4.6's four old modules
+including `rsa/_version133.py` (`pickle.loads`), and shellingham 1.2.8's `posix`
+subpackage, all missing from their sdists.
+
 **GRN-T004 (48).** Each was checked with `git ls-remote --tags` against every repository
 the finding names: no tag names the candidate version, in any form. 12 are releases from
 before 2020; 18 are from 2025 or 2026, releases a maintainer didn't tag (s3fs 2026.6.0,
@@ -228,11 +282,12 @@ explosion/wheelmonger; matplotlib and scikit-learn publish from a separate `-rel
 repository; langsmith and mcp-types moved repositories. The workflow changes are renames
 (gcsfs, pluggy, holidays) and a new deployment environment (`pypi`, `release`, `publish`).
 
-**GRN-C009 (9).** Read from `entry_points.txt` in both wheels. Five change a setuptools or
+**GRN-C009 (8).** Read from `entry_points.txt` in both wheels. Five change a setuptools or
 `distutils` target (babel 2.14.0, incremental 24.7.1, pbr 7.0.2, setuptools-scm 10.3.3) or
 add one (pbr 7.1.3): code setuptools can load while it builds any package. pytest-html 4.0.0 and pytest-metadata 2.0.1 add a `pytest11` plugin, which every
 pytest run loads; opentelemetry-sdk 1.43.0 adds a resource detector its own code always
-loads. mako 1.4.1 is under [Accurate, but nothing new runs](#accurate-but-nothing-new-runs).
+loads. mako 1.4.1, flagged in the 0.2.0 run, is now `info` (see
+[Accurate, but nothing new runs](#accurate-but-nothing-new-runs)).
 
 **GRN-C004 (6).** isort 9.0.0 (45 files), pytokens 0.4.0 (3) and tomli 2.2.1 (5) are now
 built with mypyc, and the cp313 Linux wheel has ELF `.so` files where the trusted release
@@ -281,7 +336,7 @@ subprocess call). 2 of the 22 warn only through rules added since the first top-
 - The corpus takes each package's last 11 releases, so a package that releases weekly
   contributes a few months of updates and one that releases yearly contributes a decade.
 - Run in the cloud container: pypi.org, files.pythonhosted.org and github.com git refs are
-  reachable, api.osv.dev is not (the run doesn't need it). The `17b8cd1` run took about
-  4 hours from an empty cache, with 4 worker processes and the npm run sharing the machine;
-  the #96 run fetched its 391 releases again in under 10 minutes. Two passes gave the same
-  result.
+  reachable, api.osv.dev is not (the run doesn't need it). The 0.3 run took 1 hour 38
+  minutes from an empty cache with 6 worker processes. The 0.2.0 run took about 4 hours
+  with 4; most of the difference is 0.3 parsing each module once where 0.2.0 parsed it
+  again for every entry that reached it.

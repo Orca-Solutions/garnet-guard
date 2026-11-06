@@ -55,6 +55,94 @@
     "title": "0.14.6 adds code that runs when the sdist is built"
   },
   {
+    "baseline": "1.1.0",
+    "baseline_published": "2021-04-27",
+    "candidate": "1.1.1",
+    "candidate_published": "2021-06-24",
+    "claim": "true",
+    "note": "setup.py line 9 is `exec(version, about)`; 1.1.0's line 9 was `exec(f.read(), about)`. True: the version file is now read into a variable first. Same file, read a new way.",
+    "package": "arrow",
+    "rule": "GRN-C002",
+    "title": "1.1.1 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "2.10.3",
+    "baseline_published": "2022-06-16",
+    "candidate": "2.11.0",
+    "candidate_published": "2022-11-01",
+    "claim": "true",
+    "note": "setup.py's import_cldr command runs scripts/download_import_cldr.py, as the trusted release's did; the sdists' copies of that script differ (checked byte for byte). True. The script runs only when someone runs `setup.py import_cldr`, not during an ordinary build; GRN-C002 counts every setup.py call, and the evidence names the method.",
+    "package": "babel",
+    "rule": "GRN-C002",
+    "title": "2.11.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "2.11.0",
+    "baseline_published": "2022-11-01",
+    "candidate": "2.12.0",
+    "candidate_published": "2023-02-28",
+    "claim": "true",
+    "note": "setup.py's import_cldr command runs scripts/download_import_cldr.py, as the trusted release's did; the sdists' copies of that script differ (checked byte for byte). True. The script runs only when someone runs `setup.py import_cldr`, not during an ordinary build; GRN-C002 counts every setup.py call, and the evidence names the method.",
+    "package": "babel",
+    "rule": "GRN-C002",
+    "title": "2.12.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "2.13.1",
+    "baseline_published": "2023-10-24",
+    "candidate": "2.14.0",
+    "candidate_published": "2023-12-12",
+    "claim": "true",
+    "note": "setup.py's import_cldr command runs scripts/download_import_cldr.py, as the trusted release's did; the sdists' copies of that script differ (checked byte for byte). True. The script runs only when someone runs `setup.py import_cldr`, not during an ordinary build; GRN-C002 counts every setup.py call, and the evidence names the method.",
+    "package": "babel",
+    "rule": "GRN-C002",
+    "title": "2.14.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "2.14.0",
+    "baseline_published": "2023-12-12",
+    "candidate": "2.15.0",
+    "candidate_published": "2024-05-05",
+    "claim": "true",
+    "note": "setup.py's import_cldr command runs scripts/download_import_cldr.py, as the trusted release's did; the sdists' copies of that script differ (checked byte for byte). True. The script runs only when someone runs `setup.py import_cldr`, not during an ordinary build; GRN-C002 counts every setup.py call, and the evidence names the method.",
+    "package": "babel",
+    "rule": "GRN-C002",
+    "title": "2.15.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "2.15.0",
+    "baseline_published": "2024-05-05",
+    "candidate": "2.16.0",
+    "candidate_published": "2024-08-08",
+    "claim": "true",
+    "note": "setup.py's import_cldr command runs scripts/download_import_cldr.py, as the trusted release's did; the sdists' copies of that script differ (checked byte for byte). True. The script runs only when someone runs `setup.py import_cldr`, not during an ordinary build; GRN-C002 counts every setup.py call, and the evidence names the method.",
+    "package": "babel",
+    "rule": "GRN-C002",
+    "title": "2.16.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "2.16.0",
+    "baseline_published": "2024-08-08",
+    "candidate": "2.17.0",
+    "candidate_published": "2025-02-01",
+    "claim": "true",
+    "note": "setup.py's import_cldr command runs scripts/download_import_cldr.py, as the trusted release's did; the sdists' copies of that script differ (checked byte for byte). True. The script runs only when someone runs `setup.py import_cldr`, not during an ordinary build; GRN-C002 counts every setup.py call, and the evidence names the method.",
+    "package": "babel",
+    "rule": "GRN-C002",
+    "title": "2.17.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "2.17.0",
+    "baseline_published": "2025-02-01",
+    "candidate": "2.18.0",
+    "candidate_published": "2026-02-01",
+    "claim": "true",
+    "note": "setup.py's import_cldr command runs scripts/download_import_cldr.py, as the trusted release's did; the sdists' copies of that script differ (checked byte for byte). True. The script runs only when someone runs `setup.py import_cldr`, not during an ordinary build; GRN-C002 counts every setup.py call, and the evidence names the method.",
+    "package": "babel",
+    "rule": "GRN-C002",
+    "title": "2.18.0 changes code that runs when the sdist is built"
+  },
+  {
     "baseline": "3.2.2",
     "baseline_published": "2022-05-01",
     "candidate": "4.0.0",
@@ -77,6 +165,39 @@
     "title": "0.22.0 adds code that runs when the sdist is built"
   },
   {
+    "baseline": "1.1.0",
+    "baseline_published": "2024-12-16",
+    "candidate": "1.2.0",
+    "candidate_published": "2025-01-13",
+    "claim": "true",
+    "note": "check_compiler_flag()'s subprocess.check_call (line 177) now passes `-march={flag}` where 1.1.0's (line 192) passed `{flag}` (both checked in the sdists). True: a compiler-flag probe, reworded.",
+    "package": "blis",
+    "rule": "GRN-C002",
+    "title": "1.2.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "1.4.0",
+    "baseline_published": "2018-02-25",
+    "candidate": "1.4.1",
+    "candidate_published": "2018-04-08",
+    "claim": "true",
+    "note": "setup.py's publish shortcut now runs `os.system(\"python setup.py sdist bdist_wheel\")` and adds `os.system(\"twine upload dist/*\")`; 1.4.0 ran `... sdist bdist_wheel upload` (lines checked in both sdists). True: the upload moved from setup.py to twine. Runs only for `setup.py publish`.",
+    "package": "cached-property",
+    "rule": "GRN-C002",
+    "title": "1.4.1 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "1.4.2",
+    "baseline_published": "2018-04-08",
+    "candidate": "1.4.3",
+    "candidate_published": "2018-06-15",
+    "claim": "true",
+    "note": "setup.py's publish shortcut adds `os.system(\"rm -rf dist\")` (line 26), a command 1.4.2's os.system calls didn't run (checked). True. Runs only for `setup.py publish`.",
+    "package": "cached-property",
+    "rule": "GRN-C002",
+    "title": "1.4.3 changes code that runs when the sdist is built"
+  },
+  {
     "baseline": "3.4.2",
     "baseline_published": "2025-05-02",
     "candidate": "3.4.3",
@@ -86,6 +207,17 @@
     "package": "charset-normalizer",
     "rule": "GRN-C002",
     "title": "3.4.3 adds code that runs when the sdist is built"
+  },
+  {
+    "baseline": "1.5.3",
+    "baseline_published": "2021-10-03",
+    "candidate": "1.7.1",
+    "candidate_published": "2025-05-23",
+    "claim": "true",
+    "note": "setup.py's release shortcut now runs `python3 setup.py sdist` (was `python setup.py sdist` at the same line) and adds `twine check dist/*` (checked in both sdists). True. Runs only from that shortcut.",
+    "package": "configargparse",
+    "rule": "GRN-C002",
+    "title": "1.7.1 changes code that runs when the sdist is built"
   },
   {
     "baseline": "0.3.0",
@@ -108,6 +240,72 @@
     "package": "dataclasses-json",
     "rule": "GRN-C002",
     "title": "0.6.0 adds code that runs when the sdist is built"
+  },
+  {
+    "baseline": "4.14.2",
+    "baseline_published": "2026-09-22",
+    "candidate": "4.15.0",
+    "candidate_published": "2026-09-16",
+    "claim": "true",
+    "note": "CustomBuildExt gained build_heap_gotter() (cargo, patchelf, install_name_tool) and debug-symbol stripping (objcopy, strip), seven subprocess.run calls with commands 4.14.2's never ran (lines checked in the sdists). True; real build-time changes in a native build.",
+    "package": "ddtrace",
+    "rule": "GRN-C002",
+    "title": "4.15.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "0.4",
+    "baseline_published": "2013-02-25",
+    "candidate": "0.4.1",
+    "candidate_published": "2013-03-28",
+    "claim": "true",
+    "note": "setup.py's test command runs tests.py, as the trusted release's did; the sdists' copies of tests.py differ (checked byte for byte). True. It runs only from `setup.py test`, not during an ordinary build; the evidence names the method (PyTest.run()).",
+    "package": "defusedxml",
+    "rule": "GRN-C002",
+    "title": "0.4.1 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "0.4.1",
+    "baseline_published": "2013-03-28",
+    "candidate": "0.5.0",
+    "candidate_published": "2017-02-09",
+    "claim": "true",
+    "note": "setup.py's test command runs tests.py, as the trusted release's did; the sdists' copies of tests.py differ (checked byte for byte). True. It runs only from `setup.py test`, not during an ordinary build; the evidence names the method (PyTest.run()).",
+    "package": "defusedxml",
+    "rule": "GRN-C002",
+    "title": "0.5.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "0.5.0",
+    "baseline_published": "2017-02-09",
+    "candidate": "0.6.0",
+    "candidate_published": "2019-04-17",
+    "claim": "true",
+    "note": "setup.py's test command runs tests.py, as the trusted release's did; the sdists' copies of tests.py differ (checked byte for byte). True. It runs only from `setup.py test`, not during an ordinary build; the evidence names the method (PyTest.run()).",
+    "package": "defusedxml",
+    "rule": "GRN-C002",
+    "title": "0.6.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "0.6.0",
+    "baseline_published": "2019-04-17",
+    "candidate": "0.7.0",
+    "candidate_published": "2021-03-04",
+    "claim": "true",
+    "note": "setup.py's test command runs tests.py, as the trusted release's did; the sdists' copies of tests.py differ (checked byte for byte). True. It runs only from `setup.py test`, not during an ordinary build; the evidence names the method (PyTest.run()).",
+    "package": "defusedxml",
+    "rule": "GRN-C002",
+    "title": "0.7.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "0.7.0",
+    "baseline_published": "2021-03-04",
+    "candidate": "0.7.1",
+    "candidate_published": "2021-03-08",
+    "claim": "true",
+    "note": "setup.py's test command runs tests.py, as the trusted release's did; the sdists' copies of tests.py differ (checked byte for byte). True. It runs only from `setup.py test`, not during an ordinary build; the evidence names the method (PyTest.run()).",
+    "package": "defusedxml",
+    "rule": "GRN-C002",
+    "title": "0.7.1 changes code that runs when the sdist is built"
   },
   {
     "baseline": "0.2.3",
@@ -163,6 +361,17 @@
     "package": "graphql-relay",
     "rule": "GRN-C002",
     "title": "3.0.0 adds code that runs when the sdist is built"
+  },
+  {
+    "baseline": "1.82.2",
+    "baseline_published": "2026-08-28",
+    "candidate": "1.83.0",
+    "candidate_published": "2026-07-23",
+    "claim": "true",
+    "note": "check_linker_need_libatomic()'s two subprocess.Popen calls (lines 79 and 90) now split the compiler command with shlex.split(cxx) where 1.82.2's passed [cxx, ...] (same lines; checked). True: a linker probe, changed.",
+    "package": "grpcio-tools",
+    "rule": "GRN-C002",
+    "title": "1.83.0 changes code that runs when the sdist is built"
   },
   {
     "baseline": "3.14.0",
@@ -451,6 +660,39 @@
     "title": "2.0.4 adds code that runs when the sdist is built"
   },
   {
+    "baseline": "10.4.0",
+    "baseline_published": "2024-07-01",
+    "candidate": "11.0.0",
+    "candidate_published": "2024-10-15",
+    "claim": "true",
+    "note": "_find_library_dirs_ldconfig()'s subprocess.Popen (line 191) adds text=True against 10.4.0's at line 186 (checked). True.",
+    "package": "pillow",
+    "rule": "GRN-C002",
+    "title": "11.0.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "11.0.0",
+    "baseline_published": "2024-10-15",
+    "candidate": "11.1.0",
+    "candidate_published": "2025-01-02",
+    "claim": "true",
+    "note": "get_macos_sdk_path() now runs `xcrun --show-sdk-path --sdk macosx` (line 454); 11.0.0 ran `xcrun --show-sdk-path` (line 451). True.",
+    "package": "pillow",
+    "rule": "GRN-C002",
+    "title": "11.1.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "11.2.1",
+    "baseline_published": "2025-04-12",
+    "candidate": "11.3.0",
+    "candidate_published": "2025-07-01",
+    "claim": "true",
+    "note": "New get_ios_sdk_path() runs `xcrun --show-sdk-path --sdk <sdk>` (line 481), a command 11.2.1's check_output calls didn't run (checked). True: iOS build support.",
+    "package": "pillow",
+    "rule": "GRN-C002",
+    "title": "11.3.0 changes code that runs when the sdist is built"
+  },
+  {
     "baseline": "2.9.6",
     "baseline_published": "2023-04-03",
     "candidate": "2.9.7",
@@ -526,6 +768,50 @@
     "package": "pycparser",
     "rule": "GRN-C002",
     "title": "2.19 adds code that runs when the sdist is built"
+  },
+  {
+    "baseline": "1.1.2",
+    "baseline_published": "2017-03-31",
+    "candidate": "1.2.0",
+    "candidate_published": "2017-11-01",
+    "claim": "true",
+    "note": "build_clib.run()'s three make calls gain `+ make_args` (lines 174, 177, 180 against 1.1.2's 163, 166, 169; checked). True.",
+    "package": "pynacl",
+    "rule": "GRN-C002",
+    "title": "1.2.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "1.3.0",
+    "baseline_published": "2018-09-26",
+    "candidate": "1.4.0",
+    "candidate_published": "2020-05-25",
+    "claim": "true",
+    "note": "build_clib.run()'s configure call (line 176) now takes its flags from a configure_flags list and adds `--prefix` with the build path; 1.3.0's (line 165) listed the flags inline (checked). True.",
+    "package": "pynacl",
+    "rule": "GRN-C002",
+    "title": "1.4.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "1.6.0",
+    "baseline_published": "2025-09-10",
+    "candidate": "1.6.1",
+    "candidate_published": "2025-11-10",
+    "claim": "true",
+    "note": "build_clib.run()'s make calls now run `make_command` instead of the literal 'make' (lines 155, 158, 163 against 1.6.0's 151, 154, 157; checked). True: the make program is now chosen at run time.",
+    "package": "pynacl",
+    "rule": "GRN-C002",
+    "title": "1.6.1 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "4.0.32",
+    "baseline_published": "2021-08-19",
+    "candidate": "4.0.34",
+    "candidate_published": "2022-07-14",
+    "claim": "true",
+    "note": "get_compiler_settings() adds `os.popen('odbc_config --cflags --libs 2>/dev/null')` (line 199), a command 4.0.32's os.popen calls didn't run (checked). True.",
+    "package": "pyodbc",
+    "rule": "GRN-C002",
+    "title": "4.0.34 changes code that runs when the sdist is built"
   },
   {
     "baseline": "1.1.0",
@@ -616,6 +902,17 @@
     "title": "0.1.94 adds code that runs when the sdist is built"
   },
   {
+    "baseline": "0.1.94",
+    "baseline_published": "2020-10-24",
+    "candidate": "0.1.95",
+    "candidate_published": "2021-01-10",
+    "claim": "true",
+    "note": "build_extension() adds `subprocess.check_call(['./build_bundled.sh', version()])` (line 69), a command 0.1.94's check_call didn't run (checked). True: the bundled C++ build moved into a script.",
+    "package": "sentencepiece",
+    "rule": "GRN-C002",
+    "title": "0.1.95 changes code that runs when the sdist is built"
+  },
+  {
     "baseline": "0.1.96",
     "baseline_published": "2021-06-18",
     "candidate": "0.1.97",
@@ -627,6 +924,39 @@
     "title": "0.1.97 adds code that runs when the sdist is built"
   },
   {
+    "baseline": "0.1.97",
+    "baseline_published": "2022-08-07",
+    "candidate": "0.1.98",
+    "candidate_published": "2023-04-12",
+    "claim": "true",
+    "note": "build_bundled.sh, which setup.py runs as 0.1.97's did, differs between the sdists (checked byte for byte), and two new cmake check_call commands were added (lines 126 and 136; checked). True.",
+    "package": "sentencepiece",
+    "rule": "GRN-C002",
+    "title": "0.1.98 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "0.2.0",
+    "baseline_published": "2024-02-19",
+    "candidate": "0.2.1",
+    "candidate_published": "2025-08-12",
+    "claim": "true",
+    "note": "build_bundled.sh, which setup.py runs as 0.2.0's did, differs between the sdists (checked byte for byte). True.",
+    "package": "sentencepiece",
+    "rule": "GRN-C002",
+    "title": "0.2.1 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "0.2.1",
+    "baseline_published": "2025-08-12",
+    "candidate": "0.2.2",
+    "candidate_published": "2026-07-12",
+    "claim": "true",
+    "note": "build_bundled.sh, which setup.py runs as 0.2.1's did, differs between the sdists (checked byte for byte), and `xcrun --show-sdk-path` (line 124) replaced 0.2.1's `check_output(cmd, shell=True)` (line 47). True.",
+    "package": "sentencepiece",
+    "rule": "GRN-C002",
+    "title": "0.2.2 changes code that runs when the sdist is built"
+  },
+  {
     "baseline": "2.0.4",
     "baseline_published": "2024-04-16",
     "candidate": "2.0.5",
@@ -636,6 +966,28 @@
     "package": "shapely",
     "rule": "GRN-C002",
     "title": "2.0.5 adds code that runs when the sdist is built"
+  },
+  {
+    "baseline": "2.0.7",
+    "baseline_published": "2025-01-31",
+    "candidate": "2.1.0",
+    "candidate_published": "2025-04-03",
+    "claim": "true",
+    "note": "get_geos_config()'s subprocess.run (line 45) adds check=True to 2.0.7's (line 44; checked). True.",
+    "package": "shapely",
+    "rule": "GRN-C002",
+    "title": "2.1.0 changes code that runs when the sdist is built"
+  },
+  {
+    "baseline": "1.12.2",
+    "baseline_published": "2022-09-15",
+    "candidate": "1.12.3",
+    "candidate_published": "2023-01-12",
+    "claim": "true",
+    "note": "setup.py line 11 is `exec((here / 'simple_salesforce' / '__version__.py').read_text(), about)`; 1.12.2's line 13 was `exec(f.read(), about)`. True: the same version file, read with pathlib.",
+    "package": "simple-salesforce",
+    "rule": "GRN-C002",
+    "title": "1.12.3 changes code that runs when the sdist is built"
   },
   {
     "baseline": "4.0.0",
@@ -680,6 +1032,17 @@
     "package": "spacy",
     "rule": "GRN-C002",
     "title": "3.8.16 adds code that runs when the sdist is built"
+  },
+  {
+    "baseline": "1.13.3",
+    "baseline_published": "2024-09-18",
+    "candidate": "1.14.0",
+    "candidate_published": "2025-04-27",
+    "claim": "true",
+    "note": "setup.py line 305 is `exec(Path(os.path.join(dir_setup, 'sympy', 'release.py')).read_text())`; 1.13.3's line 306 was `exec(f.read())`. True: the same release.py, read with pathlib.",
+    "package": "sympy",
+    "rule": "GRN-C002",
+    "title": "1.14.0 changes code that runs when the sdist is built"
   },
   {
     "baseline": "1.0.2",
@@ -1485,6 +1848,83 @@
     "title": "0.9.0 adds 1 file(s) of native code or bytecode that 0.8.5 didn't have"
   },
   {
+    "baseline": "0.11.2",
+    "baseline_published": "2023-11-17",
+    "candidate": "0.11.3",
+    "candidate_published": "2023-11-30",
+    "claim": "true",
+    "note": "The wheel holds amazon.ion-0.11.3-py3.10-nspkg.pth, a setuptools namespace-package .pth, and the sdist has no file of that name (checked in both archives). True: setuptools writes it at build time, the sdist doesn't carry it. 0.11.2 had no wheel, so there is no trusted wheel to have carried it.",
+    "package": "amazon-ion",
+    "rule": "GRN-C006",
+    "title": "0.11.3's wheel has code that is not in its sdist (1 file(s))"
+  },
+  {
+    "baseline": "0.12.0",
+    "baseline_published": "2024-03-14",
+    "candidate": "0.13.0",
+    "candidate_published": "2025-01-10",
+    "claim": "true",
+    "note": "The wheel holds amazon.ion-0.13.0-py3.11-nspkg.pth and the sdist has no file of that name (checked in both archives). True; setuptools writes it at build time. The trusted 0.12.0 had no wheel.",
+    "package": "amazon-ion",
+    "rule": "GRN-C006",
+    "title": "0.13.0's wheel has code that is not in its sdist (1 file(s))"
+  },
+  {
+    "baseline": "0.13.3",
+    "baseline_published": "2019-10-07",
+    "candidate": "0.14",
+    "candidate_published": "2019-11-06",
+    "claim": "true",
+    "note": "The wheel holds ecdsa/six.py, which the sdist lacks (checked in both archives); its _import_module, exec_ and builtins.exec are six's own helpers. True. Already reported in the GRN-C006 PR's corpus check (#98).",
+    "package": "ecdsa",
+    "rule": "GRN-C006",
+    "title": "0.14's wheel has code that is not in its sdist (1 file(s))"
+  },
+  {
+    "baseline": "4.4.10",
+    "baseline_published": "2026-02-12",
+    "candidate": "4.5.0",
+    "candidate_published": "2026-04-29",
+    "claim": "true",
+    "note": "The wheel holds reportlab/lib/extformat.py, whose dictformat() calls eval, and the sdist has no copy (checked in both archives). True. Already reported in the GRN-C006 PR's corpus check (#98).",
+    "package": "reportlab",
+    "rule": "GRN-C006",
+    "title": "4.5.0's wheel has code that is not in its sdist (1 file(s))"
+  },
+  {
+    "baseline": "4.5",
+    "baseline_published": "2020-06-12",
+    "candidate": "4.6",
+    "candidate_published": "2020-06-12",
+    "claim": "true",
+    "note": "The wheel holds rsa/_version133.py (pickle.loads in unpicklechops()) and three other old modules the sdist lacks (checked in both archives). True: 4.6's wheel shipped files its sdist had dropped.",
+    "package": "rsa",
+    "rule": "GRN-C006",
+    "title": "4.6's wheel has code that is not in its sdist (1 file(s))"
+  },
+  {
+    "baseline": "1.2.7",
+    "baseline_published": "2018-10-15",
+    "candidate": "1.2.8",
+    "candidate_published": "2018-12-15",
+    "claim": "true",
+    "note": "The wheel holds shellingham/posix/_default.py (subprocess.check_output in get_process_mapping()) and five other files the sdist lacks (checked in both archives). True: the 1.2.8 sdist is missing the posix subpackage the wheel ships.",
+    "package": "shellingham",
+    "rule": "GRN-C006",
+    "title": "1.2.8's wheel has code that is not in its sdist (1 file(s))"
+  },
+  {
+    "baseline": "5.0",
+    "baseline_published": "2023-06-23",
+    "candidate": "5.1",
+    "candidate_published": "2025-06-26",
+    "claim": "true",
+    "note": "The wheel holds zope.event-5.1-py3.12-nspkg.pth and the sdist has no file of that name (checked in both archives). True; setuptools writes it at build time.",
+    "package": "zope-event",
+    "rule": "GRN-C006",
+    "title": "5.1's wheel has code that is not in its sdist (1 file(s))"
+  },
+  {
     "baseline": "1.3.44",
     "baseline_published": "2020-07-19",
     "candidate": "1.3.45",
@@ -1813,17 +2253,6 @@
     "package": "incremental",
     "rule": "GRN-C009",
     "title": "24.7.1 adds or changes 3 entry point(s), including [distutils.setup_keywords] use_incremental, [hatch] incremental, [setuptools.finalize_distribution_options] incremental"
-  },
-  {
-    "baseline": "1.3.12",
-    "baseline_published": "2026-04-28",
-    "candidate": "1.4.1",
-    "candidate_published": "2026-08-05",
-    "claim": "true",
-    "note": "entry_points.txt in both wheels: the pygments.lexers names css+mako, html+mako, js+mako and xml+mako became css_mako, html_mako, js_mako and xml_mako, with the same classes. Accurate, but pygments loads every lexer by class, not by name, so nothing new runs: GRN-C009 compares targets name by name even in a group whose tool loads every line.",
-    "package": "mako",
-    "rule": "GRN-C009",
-    "title": "1.4.1 adds or changes 6 entry point(s), including [pygments.lexers] css_mako, [pygments.lexers] html_mako, [pygments.lexers] js_mako and 1 more"
   },
   {
     "baseline": "1.42.1",
