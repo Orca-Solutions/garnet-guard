@@ -1,17 +1,17 @@
 {
   "updates": 9439,
   "packages": 975,
-  "updates_warned": 300,
-  "warn_rate": 0.0318,
-  "packages_with_a_warn": 235,
+  "updates_warned": 331,
+  "warn_rate": 0.0351,
+  "packages_with_a_warn": 243,
   "warns_by_rule": {
+    "GRN-C002": {
+      "updates": 93,
+      "packages": 66
+    },
     "GRN-C003": {
       "updates": 65,
       "packages": 52
-    },
-    "GRN-C002": {
-      "updates": 60,
-      "packages": 53
     },
     "GRN-T004": {
       "updates": 48,
@@ -38,8 +38,12 @@
       "packages": 13
     },
     "GRN-C009": {
-      "updates": 9,
-      "packages": 8
+      "updates": 8,
+      "packages": 7
+    },
+    "GRN-C006": {
+      "updates": 7,
+      "packages": 6
     },
     "GRN-C004": {
       "updates": 6,
@@ -68,7 +72,7 @@
     "GRN-E002": 145,
     "GRN-E003": 18
   },
-  "garnet_version": "0.1.0a1",
+  "garnet_version": "0.2.0",
   "ecosystem": "pypi",
   "corpus": {
     "selected_on": "2026-10-30",
