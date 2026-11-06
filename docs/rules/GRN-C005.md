@@ -2,7 +2,7 @@
 id: GRN-C005
 name: obfuscated-blob
 kind: diff
-default_severity: info
+default_severity: off
 status: implemented
 ---
 
@@ -10,9 +10,31 @@ status: implemented
 
 | | |
 |---|---|
-| Default severity | `info` |
+| Default severity | `off` (set `"GRN-C005" = "info"` in `[garnet.rules]` to turn it on) |
 | Kind | diff rule: fires only when the trusted version had the property and the new version lost it, or the new version gained a risky property the trusted version lacked. |
-| Status | Implemented in 0.3 (PyPI) |
+| Status | Implemented in 0.3 (PyPI); off by default |
+
+## Off by default
+
+GRN-C005 is the one rule Garnet ships turned off. Two reasons:
+
+- **It costs time.** Reading these sites costs about as much again as every other content
+  check together: on sympy 1.14.0, about 36 seconds against 16 without it. A pull request
+  that updates a large package waits that much longer for its comment.
+- **It has found nothing hidden yet.** On 1,000 everyday PyPI packages (9,409 updates) it
+  reported 94 updates in 31 packages, every one a protobuf descriptor blob or a lazy
+  importer looking a module up by a computed name. On the 52 replayed malicious releases it
+  adds a line to 7, each already warned by another rule; all 52 are caught without it.
+
+Most projects don't need it on. Turn it on for a package worth the wait, or when you review
+a release by hand and want every encoded literal listed:
+
+```toml
+[garnet.rules]
+"GRN-C005" = "info"   # or "warn"; the rule reads nothing until a policy sets it
+```
+
+With the rule off, Garnet doesn't read the sites at all, so the time isn't spent either.
 
 ## What it checks
 
@@ -165,11 +187,11 @@ reason = "vendored font table in _fonts.py, see example/examplelib#700"
 until = "2027-06-30"
 ```
 
-To change the rule's severity for every package instead:
+To turn the rule on, or change its severity, for every package:
 
 ```toml
 [garnet.rules]
-"GRN-C005" = "warn"   # "off" | "info" | "warn" | "block"
+"GRN-C005" = "info"   # "off" (the default) | "info" | "warn" | "block"
 ```
 
 Suppressed findings still appear in JSON and SARIF output, marked with the ignore that

@@ -254,12 +254,15 @@ def wheel_own(paths: list[str]) -> frozenset[str]:
     return _own_packages(paths) - _NEVER_OWN
 
 
-def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool) -> Inspection:
+def inspect_artifact(
+    filename: str, data: bytes, limits: Limits, *, sdist: bool, obfuscation: bool = False
+) -> Inspection:
     """Read every file in a wheel or sdist and record what it contains.
 
     Python files are parsed, never run. Archive problems and limits become
     ``FactError``s in the result. In a wheel, each module also records every
-    sensitive call it makes anywhere, for GRN-C012.
+    sensitive call it makes anywhere, for GRN-C012. GRN-C005's sites are read
+    only with ``obfuscation`` on (the rule is off by default).
     """
     result = Inspection()
     rules = _ARCHIVE_RULES if sdist else _WHEEL_RULES
@@ -317,7 +320,13 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                         continue
                     tree = parse(body, path=rel)
                     scan = scan_module(
-                        body, path=rel, own=own, project=project, module=mod, tree=tree
+                        body,
+                        path=rel,
+                        own=own,
+                        project=project,
+                        module=mod,
+                        tree=tree,
+                        obfuscation=obfuscation,
                     )
                 except (SyntaxError, ValueError, RecursionError):
                     result.unparsed.append(rel)
@@ -342,7 +351,7 @@ def inspect_artifact(filename: str, data: bytes, limits: Limits, *, sdist: bool)
                 if reqs is not None:
                     result.requirements = reqs
                     result.requirements_read = True
-        _follow_calls_out(result, sources, calls_out, handed_out, own, project)
+        _follow_calls_out(result, sources, calls_out, handed_out, own, project, obfuscation)
         result.entry_points_read = not sdist
     except LimitExceeded as err:
         result.errors.append(FactError("GRN-E003", f"{filename}: {err}", rules))
@@ -432,6 +441,7 @@ def _follow_calls_out(
     handed_out: Mapping[str, tuple[tuple[str, str], ...]],
     own: frozenset[str],
     project: str,
+    obfuscation: bool = False,
 ) -> None:
     """Follow import-time calls into the package's other modules.
 
@@ -472,6 +482,7 @@ def _follow_calls_out(
                     module=mod,
                     entry=entry,
                     handed=to,
+                    obfuscation=obfuscation,
                 )
             except (SyntaxError, ValueError, RecursionError):
                 scans[target, to] = None

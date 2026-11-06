@@ -10,15 +10,25 @@ from __future__ import annotations
 import base64
 import random
 import zlib
+from typing import Any
 
 from garnet_guard.checks.docs import DOCS, PLANNED
 from garnet_guard.cli import main
-from garnet_guard.engine import run_checks
+from garnet_guard.ecosystems import pypi
+from garnet_guard.engine import Options, _with_policy, run_checks
 from garnet_guard.facts.obfuscation import BLOB_CHARS, DECODED_CHARS, blob, entropy
 from garnet_guard.facts.pyindex import index_module, scan_module
-from garnet_guard.models import Change, Finding, ReleaseFacts, Severity, Verdict
+from garnet_guard.models import Change, Finding, Policy, ReleaseFacts, Severity, Verdict
 from garnet_guard.report import escape
-from tests.builders import release
+from tests import builders
+
+# GRN-C005 is off by default: these tests read its sites and turn the rule on.
+C005_ON = Policy(rules={"GRN-C005": Severity.INFO})
+
+
+def release(version: str, files: dict[str, str | bytes] | None = None, **kw: Any) -> ReleaseFacts:
+    return builders.release(version, files, obfuscation=True, **kw)
+
 
 CHANGE = Change("pypi", "demo", "1.0", "1.1")
 INIT = "def hello():\n    return 1\n"
@@ -36,7 +46,11 @@ def sites(src: str, **kw: object) -> list[tuple[int, str]]:
 
 
 def c005(base: ReleaseFacts, cand: ReleaseFacts) -> list[Finding]:
-    return [f for f in run_checks(CHANGE, base, cand).findings if f.rule_id == "GRN-C005"]
+    return [
+        f
+        for f in run_checks(CHANGE, base, cand, policy=C005_ON).findings
+        if f.rule_id == "GRN-C005"
+    ]
 
 
 def lines(findings: list[Finding]) -> list[str]:
@@ -300,9 +314,9 @@ LOOKUP = "import os\ndef _go(n):\n    getattr(os, n)('id')\n_go(NAME)\n"
 def test_new_blob_reports_at_info() -> None:
     base = release("1.0", PKG)
     cand = release("1.1", {"demo/__init__.py": INIT + f"_X = '{B64}'\n"})
-    result = run_checks(CHANGE, base, cand)
+    result = run_checks(CHANGE, base, cand, policy=C005_ON)
     (f,) = [f for f in result.findings if f.rule_id == "GRN-C005"]
-    assert f.severity == Severity.INFO == f.default_severity
+    assert f.severity == Severity.INFO and f.default_severity == Severity.OFF
     assert result.verdict == Verdict.PASS
     assert f.title == "1.1 adds encoded literals or computed lookups at import in 1 module(s)"
     assert lines([f]) == [
@@ -313,7 +327,10 @@ def test_new_blob_reports_at_info() -> None:
 
 def test_decoded_and_run_reports_with_grn_c003() -> None:
     result = run_checks(
-        CHANGE, release("1.0", PKG), release("1.1", {"demo/_p.py": BLOB_MODULE, **PKG})
+        CHANGE,
+        release("1.0", PKG),
+        release("1.1", {"demo/_p.py": BLOB_MODULE, **PKG}),
+        policy=C005_ON,
     )
     ids = {f.rule_id for f in result.findings}
     assert {"GRN-C003", "GRN-C005"} <= ids
@@ -407,7 +424,7 @@ def test_c003_is_unchanged_by_the_new_sites() -> None:
     """GRN-C003 compares call names; GRN-C005's sites never count as calls."""
     old = release("1.0", {"demo/__init__.py": INIT + f"_X = '{B64}'\n"})
     new = release("1.1", {"demo/__init__.py": INIT + f"_X = '{B64[::-1]}'\n"})
-    ids = {f.rule_id for f in run_checks(CHANGE, old, new).findings}
+    ids = {f.rule_id for f in run_checks(CHANGE, old, new, policy=C005_ON).findings}
     assert "GRN-C003" not in ids and "GRN-C005" in ids
 
 
@@ -421,13 +438,37 @@ def test_evidence_is_capped_and_sorted() -> None:
     assert any(e.summary == "and 5 more" for e in f.evidence)
 
 
+def test_off_by_default_reads_nothing_until_a_policy_turns_it_on() -> None:
+    """The fetcher reads GRN-C005's sites only when the policy gives the rule a
+    severity, so a default run doesn't pay for a rule it won't report."""
+    src = "import os\nexec(base64.b64decode(" + repr(B64) + "))\n"
+    off = builders.release("1.1", {"demo/__init__.py": "import base64\n" + src})
+    assert not [c for c in off.artifacts[0].modules[0].top_level_calls if c.obscured]
+    on = release("1.1", {"demo/__init__.py": "import base64\n" + src})
+    assert [c for c in on.artifacts[0].modules[0].top_level_calls if c.obscured]
+    # Sites that were read still report nothing under the default policy.
+    base = release("1.0", PKG)
+    assert not [f for f in run_checks(CHANGE, base, on).findings if f.rule_id == "GRN-C005"]
+    assert c005(base, on)
+    # The engine derives the read from the policy.
+    assert not Options().scan_obfuscation
+    assert not _with_policy(Options(), Policy()).scan_obfuscation
+    assert _with_policy(Options(), C005_ON).scan_obfuscation
+    assert (
+        _with_policy(Options(), Policy(rules={"GRN-C005": Severity.OFF})).scan_obfuscation is False
+    )
+    assert _with_policy(Options(scan_obfuscation=True), Policy()).scan_obfuscation
+    assert pypi.FetchContext.__dataclass_fields__["obfuscation"].default is False
+
+
 def test_docs_and_explain(capsys) -> None:
     doc = DOCS["GRN-C005"]
-    assert doc.default == Severity.INFO and "GRN-C005" not in PLANNED
+    assert doc.default == Severity.OFF and "GRN-C005" not in PLANNED
+    assert "off by default" in doc.explanation and '"GRN-C005" = "info"' in doc.explanation
     assert len(doc.summary) <= 1024 and len(doc.explanation) <= 1024
     assert main(["explain", "GRN-C005"]) == 0
     out = capsys.readouterr().out
-    assert "default info" in out and "What it reads (set 2026-10-a)" in out
+    assert "default off" in out and "What it reads (set 2026-10-a)" in out
     assert "base64.b64decode" in out and "sys.modules" in out
 
 
@@ -462,7 +503,7 @@ def test_an_expression_that_fails_when_folded_keeps_grn_c003s_scan() -> None:
     init = INIT + "from demo import _boot\n_boot.start()\n"
     old = release("1.0", {"demo/__init__.py": init, "demo/_boot.py": "def start():\n    pass\n"})
     new = release("1.1", {"demo/__init__.py": init, "demo/_boot.py": boot})
-    rules = {f.rule_id for f in run_checks(CHANGE, old, new).findings}
+    rules = {f.rule_id for f in run_checks(CHANGE, old, new, policy=C005_ON).findings}
     assert "GRN-C003" in rules
 
 

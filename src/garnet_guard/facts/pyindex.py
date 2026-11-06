@@ -713,6 +713,7 @@ def scan_module(
     entry: str | None = None,
     handed: str | None = None,
     tree: ast.Module | None = None,
+    obfuscation: bool = True,
 ) -> ModuleScan:
     """Index what runs at import, or what runs when ``entry`` is called.
 
@@ -726,7 +727,8 @@ def scan_module(
     (instantiation) or ``Class.method`` defined in the module; an unknown
     entry runs nothing. ``handed`` names the call that ``entry`` was handed to
     when that call is not known to run it; it is carried on every call site.
-    ``tree`` is ``source`` already parsed.
+    ``tree`` is ``source`` already parsed. With ``obfuscation`` off, GRN-C005's
+    sites aren't read: that read costs about as much again as the rest.
     """
     if tree is None:
         tree = parse(source, path=path)
@@ -746,7 +748,10 @@ def scan_module(
             resolver.defined.add(stmt.target.id)
 
     reachable = _reachable(tree)
-    tracker = Tracker(resolver.resolve, is_sensitive, tree, SENSITIVE_HEADS)  # GRN-C005
+    # GRN-C005, off by default: a None tracker reads nothing.
+    tracker = (
+        Tracker(resolver.resolve, is_sensitive, tree, SENSITIVE_HEADS) if obfuscation else None
+    )
     calls: list[CallSite] = []
     calls_out: set[str] = set()
     handed_out: set[tuple[str, str]] = set()
@@ -783,13 +788,14 @@ def scan_module(
                 calls.append(
                     CallSite(read, getattr(node, "lineno", 0), via, handed_to=handed, read=True)
                 )
-            obscured = tracker.sites(node)
-            if isinstance(node, (ast.For, ast.AsyncFor, ast.AugAssign)):
-                obscured += tracker.forget(node.target)
-            elif isinstance(node, ast.AnnAssign):
-                obscured += tracker.note_assign(node)
-            for what, line, key in obscured:
-                calls.append(CallSite(what, line, via, handed_to=handed, obscured=key))
+            if tracker is not None:
+                obscured = tracker.sites(node)
+                if isinstance(node, (ast.For, ast.AsyncFor, ast.AugAssign)):
+                    obscured += tracker.forget(node.target)
+                elif isinstance(node, ast.AnnAssign):
+                    obscured += tracker.note_assign(node)
+                for what, line, key in obscured:
+                    calls.append(CallSite(what, line, via, handed_to=handed, obscured=key))
             if isinstance(node, ast.Call):
                 args = [*node.args, *(k.value for k in node.keywords)]
                 name = resolver.resolve(node.func)
@@ -834,8 +840,9 @@ def scan_module(
                     local[node.name] = list(node.body)
             elif isinstance(node, ast.Assign):
                 resolver.note_assignment(node)
-                for what, line, key in tracker.note_assign(node):
-                    calls.append(CallSite(what, line, via, handed_to=handed, obscured=key))
+                if tracker is not None:
+                    for what, line, key in tracker.note_assign(node):
+                        calls.append(CallSite(what, line, via, handed_to=handed, obscured=key))
                 for decode in _decoded_inputs([node.value], resolver, decoded):
                     decoded.update((t.id, decode) for t in node.targets if isinstance(t, ast.Name))
                 if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):

@@ -16,6 +16,7 @@ import random
 import zlib
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -29,6 +30,7 @@ from garnet_guard.models import (
     FactError,
     JsUse,
     Limits,
+    Policy,
     ReleaseFacts,
     Requirement,
     Severity,
@@ -104,10 +106,17 @@ class Row:
     verdict: Verdict | None = None  # expected when the rule fires, if it sets one
     instead: str | None = None  # a rule that must fire when this one stays quiet
     ecosystems: tuple[str, ...] | None = None  # None: every ecosystem the rule runs on
+    policy: Policy | None = None  # the defaults, unless the rule is off by default
 
 
 PYPI = ("pypi",)
 NPM = ("npm",)
+C005_ON = Policy(rules={"GRN-C005": Severity.INFO})
+
+
+def c5(version: str, files: dict[str, str | bytes] | None = None, **kw: Any) -> ReleaseFacts:
+    """A release read with GRN-C005's sites, which the fetcher reads only when the rule is on."""
+    return release(version, files, obfuscation=True, **kw)
 
 
 def _sdist(version: str, files: dict[str, str | bytes]) -> ReleaseFacts:
@@ -246,8 +255,9 @@ def _rows() -> list[Row]:
         cand: ReleaseFacts,
         verdict: Verdict | None = None,
         eco: tuple[str, ...] | None = None,
+        policy: Policy | None = None,
     ) -> None:
-        rows.append(Row(rule, label, base, cand, True, verdict, ecosystems=eco))
+        rows.append(Row(rule, label, base, cand, True, verdict, ecosystems=eco, policy=policy))
 
     def quiet(
         rule: str,
@@ -256,8 +266,11 @@ def _rows() -> list[Row]:
         cand: ReleaseFacts,
         instead: str | None = None,
         eco: tuple[str, ...] | None = None,
+        policy: Policy | None = None,
     ) -> None:
-        rows.append(Row(rule, label, base, cand, False, instead=instead, ecosystems=eco))
+        rows.append(
+            Row(rule, label, base, cand, False, instead=instead, ecosystems=eco, policy=policy)
+        )
 
     # GRN-T001 lost-provenance
     fires(
@@ -605,39 +618,45 @@ def _rows() -> list[Row]:
         ),
     )
 
-    # GRN-C005 obfuscated-blob (info): encoded literals and computed lookups at import.
+    # GRN-C005 obfuscated-blob: encoded literals and computed lookups at import. Off by
+    # default, so its rows read the sites and turn it on.
     fires(
         "GRN-C005",
         "a base64 blob decoded and run at import",
-        release("1.0", PKG),
-        release("1.1", {"demo/__init__.py": INIT + BLOB_EXEC}),
+        c5("1.0", PKG),
+        c5("1.1", {"demo/__init__.py": INIT + BLOB_EXEC}),
         Verdict.WARN,  # GRN-C003 warns for the exec; GRN-C005 adds the blob at info
+        policy=C005_ON,
     )
     fires(
         "GRN-C005",
         "os.system looked up by a name built from character codes",
-        release("1.0", PKG),
-        release("1.1", {"demo/__init__.py": INIT + CHR_LOOKUP}),
+        c5("1.0", PKG),
+        c5("1.1", {"demo/__init__.py": INIT + CHR_LOOKUP}),
         Verdict.PASS,
+        policy=C005_ON,
     )
     quiet(
         "GRN-C005",
         "a PEM certificate bundle",
-        release("1.0", PKG),
-        release("1.1", {**PKG, "demo/_certs.py": f'CERTS = """{PEM_BUNDLE}"""\n'}),
+        c5("1.0", PKG),
+        c5("1.1", {**PKG, "demo/_certs.py": f'CERTS = """{PEM_BUNDLE}"""\n'}),
+        policy=C005_ON,
     )
     quiet(
         "GRN-C005",
         "a plugin loader imports names read from entry points",
-        release("1.0", PKG),
-        release("1.1", {"demo/__init__.py": INIT + PLUGIN_LOADER}),
+        c5("1.0", PKG),
+        c5("1.1", {"demo/__init__.py": INIT + PLUGIN_LOADER}),
         instead="GRN-C003",
+        policy=C005_ON,
     )
     quiet(
         "GRN-C005",
         "the same blob in both",
-        release("1.0", {"demo/__init__.py": INIT + BLOB_EXEC}),
-        release("1.1", {"demo/__init__.py": INIT + BLOB_EXEC + "X = 2\n"}),
+        c5("1.0", {"demo/__init__.py": INIT + BLOB_EXEC}),
+        c5("1.1", {"demo/__init__.py": INIT + BLOB_EXEC + "X = 2\n"}),
+        policy=C005_ON,
     )
     # GRN-C006 sdist-wheel-mismatch: the wheel has code its own sdist doesn't.
     # The shape issue #60 expected of telnyx 4.87.1: a call appended to the
@@ -1636,7 +1655,7 @@ CASES = [(row, eco) for row in ROWS for eco in _ecosystems(row)]
     ("row", "eco"), CASES, ids=[f"{r.rule} {eco} {r.label}" for r, eco in CASES]
 )
 def test_rule(row: Row, eco: str) -> None:
-    result = run_checks(replace(CHANGE, ecosystem=eco), row.base, row.cand)
+    result = run_checks(replace(CHANGE, ecosystem=eco), row.base, row.cand, policy=row.policy)
     ids = {f.rule_id for f in result.findings}
     if row.fires:
         assert row.rule in ids, f"{row.rule} should fire: {row.label}"

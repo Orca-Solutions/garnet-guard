@@ -44,7 +44,7 @@ In `pyproject.toml` the same keys go under `[tool.garnet]`, `[tool.garnet.rules]
 ## Severities
 
 - `default` changes the severity of every rule whose default is `warn`, so one line makes a project strict (`"block"`) or quiet (`"info"`). It doesn't touch rules whose default is `info` or `block`.
-- `[garnet.rules]` sets one rule, and wins over `default`. A rule set to `"off"` produces no findings at all.
+- `[garnet.rules]` sets one rule, and wins over `default`. A rule set to `"off"` produces no findings at all. GRN-C005 is off by default; `"GRN-C005" = "info"` turns it on, and only then does Garnet read what it checks (the read doubles the time spent on a release).
 - Two groups can't be turned down for every package at once:
   - **GRN-T007, GRN-T008 and GRN-K001** mean a release failed verification or is listed as malicious. They can be raised, never lowered. To accept one package after reviewing it, write an ignore with `acknowledge_critical = true`.
   - **GRN-E001 to GRN-E005** say a check didn't run. They can't go below their default, because a check that didn't run would then pass. An ignore for one package, with a reason and an expiry, still works.

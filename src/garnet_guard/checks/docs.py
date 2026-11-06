@@ -185,7 +185,7 @@ _DOCS: tuple[RuleDoc, ...] = (
         "GRN-C005",
         "obfuscated-blob",
         "diff",
-        Severity.INFO,
+        Severity.OFF,
         "Code that runs at import gains encoded data or a lookup by a name the source "
         "doesn't hold: a hex, base64 or base85 literal of more than 2,048 characters, or "
         "binary bytes, over the entropy threshold (from 256 characters when passed to a "
@@ -200,7 +200,11 @@ _DOCS: tuple[RuleDoc, ...] = (
         'reviewer and from rules that match names: GRN-C003 reads getattr(os, "system") but '
         'not getattr(os, "".join(map(chr, codes))). Packages also embed data (certificates, '
         "fonts, compressed tables) and look names up in plugin loaders and compatibility "
-        "shims, so this rule reports at info, and only what the trusted version didn't have.",
+        "shims, so this rule reports only what the trusted version didn't have. It is off by "
+        "default: reading these sites costs about as much again as every other check, and on "
+        "1,000 everyday packages it found protobuf blobs and lazy importers, nothing hidden; "
+        'turn it on with "GRN-C005" = "info" in [garnet.rules] when a package is worth the '
+        "wait. The 52 replayed incidents are all caught without it.",
         "Open the line the evidence names. Find out what the literal decodes to and where it "
         "goes, or which names the lookup can reach, with a separate tool: never by importing "
         "the package. Data that is only read is usually fine. Code decoded and run at import, "
