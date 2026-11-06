@@ -266,6 +266,11 @@ def new_build_hook(
         for s, line in _changed_arguments(old_calls, c.setup_py_calls, base.version, cand.version)
     }
     for s in c.setup_py_calls:
+        if id(s) not in changed and s.name in old_names:
+            line = _changed_script(s, b, c, base.version, cand.version)
+            if line is not None:
+                changed[id(s)] = line
+    for s in c.setup_py_calls:
         if s.name not in old_names:
             added = True
             evidence.append(
@@ -322,6 +327,34 @@ def _clip_pair(old: str, new: str) -> tuple[str, str]:
     if p > 30:
         old, new = old[0] + "…" + old[p - 20 :], new[0] + "…" + new[p - 20 :]
     return _clip(old, ARGS_SHOWN), _clip(new, ARGS_SHOWN)
+
+
+def _changed_script(
+    s: CallSite, b: ArtifactFacts | None, c: ArtifactFacts, old_version: str, new_version: str
+) -> str | None:
+    """The evidence line for a trusted call whose arguments didn't change but
+    name a file in the new sdist that did: ``subprocess.call(['sh',
+    'build.sh'])`` runs whatever build.sh holds now. A file the call names
+    that the trusted sdist didn't have, or has with other bytes, counts; a
+    file with the same bytes, or a word that names no file, doesn't.
+    """
+    if b is None:
+        return None
+    old = {f.path: f.sha256 for f in b.files}
+    new = {f.path: f.sha256 for f in c.files}
+    added = [p for p in s.mentions if p in new and p not in old]
+    altered = [p for p in s.mentions if p in new and p in old and new[p] != old[p]]
+    if not added and not altered:
+        return None
+    parts = []
+    if altered:
+        parts.append(f"{', '.join(altered)} changed since {old_version}")
+    if added:
+        parts.append(f"{', '.join(added)} is new in {new_version}")
+    return (
+        f"setup.py:{s.line} calls {s.name}{_clip(s.args or '', ARGS_SHOWN)}{_via(s)} as "
+        f"{old_version} did, but {' and '.join(parts)}"
+    )
 
 
 def _changed_arguments(

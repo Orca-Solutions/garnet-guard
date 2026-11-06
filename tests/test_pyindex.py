@@ -341,6 +341,32 @@ def test_build_script_calls_through_an_alias_are_the_calls_they_name() -> None:
     }
 
 
+def test_build_script_calls_record_the_paths_their_strings_may_name() -> None:
+    from garnet_guard.facts.pyindex import MENTION_LIMIT, index_build_script
+
+    src = (
+        "import subprocess, os\n"
+        "cmd = ['sh', './scripts/build.sh', '-v']\n"
+        "subprocess.call(cmd, cwd='docs')\n"
+        "os.system('make -C docs html; /usr/bin/env python ./gen.py')\n"
+        f"os.system('{'x' * MENTION_LIMIT}' + 'y')\n"
+    )
+    call, system, long = index_build_script(src.encode())
+    assert long.mentions == ("y",)
+    assert call.mentions == ("-v", "docs", "scripts/build.sh", "sh")
+    assert system.mentions == (
+        "-C",
+        "GNUmakefile",
+        "Makefile",
+        "docs",
+        "gen.py",
+        "html;",
+        "make",
+        "makefile",
+        "python",
+    )
+
+
 def test_build_script_variables_are_read_as_the_literal_they_hold() -> None:
     """A variable bound once, to a value written out in full, that nothing else
     touches, is keyed as that value and shown beside the call."""

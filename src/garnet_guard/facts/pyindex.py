@@ -951,8 +951,18 @@ def sensitive_calls(
     bindings = _Bindings(tree, passed)
     kept = []
     for call, name, via, scope in found:
-        args, key = call_arguments(call, shapes, partial(bindings.value, scope))
-        kept.append(CallSite(name=name, line=call.lineno, via=via, args=args, args_key=key))
+        follow = partial(bindings.value, scope)
+        args, key = call_arguments(call, shapes, follow)
+        kept.append(
+            CallSite(
+                name=name,
+                line=call.lineno,
+                via=via,
+                args=args,
+                args_key=key,
+                mentions=argument_mentions(call, follow),
+            )
+        )
     return tuple(sorted(kept, key=lambda c: (c.line, c.name, c.via or "", c.args_key or "")))
 
 
@@ -1198,6 +1208,46 @@ def call_arguments(
     if len(text) > ARGS_TEXT_LIMIT:
         text = text[: ARGS_TEXT_LIMIT - 1] + "…"
     return text, key
+
+
+MENTION_LIMIT = 200  # characters of a string argument read as a path
+MAKEFILES = ("GNUmakefile", "makefile", "Makefile")  # what ``make`` reads, in make's order
+
+
+def argument_mentions(
+    call: ast.Call, follow: Callable[[str], ast.expr | None] | None = None
+) -> tuple[str, ...]:
+    """The relative paths a call's string arguments may name, for a check to
+    look up among the release's files: each string constant in the
+    arguments (and in a variable ``follow`` reads), each whitespace-separated
+    word of it, with a leading ``./`` taken off, and the files ``make``
+    reads for the word ``make``. An absolute path, an empty string and a
+    string over ``MENTION_LIMIT`` characters are left out. Nothing is
+    evaluated: ``'build.sh'`` is read as a name, not opened.
+    """
+    nodes: list[ast.AST] = [*call.args, *(k.value for k in call.keywords)]
+    if follow is not None:
+        for a in list(nodes):
+            if isinstance(a, ast.Name) and isinstance(a.ctx, ast.Load):
+                value = follow(a.id)
+                if value is not None:
+                    nodes.append(value)
+    out: set[str] = set()
+    for node in nodes:
+        for n in ast.walk(node):
+            if not (isinstance(n, ast.Constant) and isinstance(n.value, str)):
+                continue
+            text = n.value
+            if len(text) > MENTION_LIMIT:
+                continue
+            for word in {text, *text.split()}:
+                if word == "make":
+                    out.update(MAKEFILES)
+                while word.startswith("./"):
+                    word = word[2:]
+                if word and not word.startswith("/") and "\0" not in word:
+                    out.add(word)
+    return tuple(sorted(out))
 
 
 def index_build_script(source: bytes, *, path: str = "setup.py") -> tuple[CallSite, ...]:

