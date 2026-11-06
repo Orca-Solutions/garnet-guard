@@ -13,7 +13,7 @@
   <a href="https://www.bestpractices.dev/projects/16128"><img src="https://www.bestpractices.dev/projects/16128/badge" alt="OpenSSF Best Practices" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-8E1B2C" alt="License: Apache-2.0" height="20"></a>
   <a href="https://pypi.org/project/garnet-guard/"><img src="https://img.shields.io/pypi/v/garnet-guard?color=8E1B2C" alt="PyPI version" height="20"></a>
-  <img src="https://img.shields.io/badge/status-alpha-5C636B" alt="Status: alpha" height="20">
+  <img src="https://img.shields.io/badge/status-beta-5C636B" alt="Status: beta" height="20">
   <a href="https://github.com/orca-solutions/garnet-guard/blob/main/backtest/incidents.toml"><img src="https://img.shields.io/badge/replayed%20releases-52%2F52%20warn-8E1B2C" alt="Replayed malicious releases: 52 of 52 warn" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard#replays-of-real-malicious-releases"><img src="https://img.shields.io/badge/clean%20updates-3.3%25%20flagged%20(606%2F18%2C181)-1B1F24" alt="Clean updates: 606 of 18,181 flagged for a look (3.3%), none a false claim" height="20"></a>
   <a href="https://github.com/orca-solutions/garnet-guard/actions/workflows/garnet-guard.yml"><img src="https://raw.githubusercontent.com/orca-solutions/garnet-guard/main/docs/brand/badge/checked-by-garnet-guard.svg" alt="Dependencies checked by Garnet Guard" height="20"></a>
@@ -23,7 +23,7 @@
 
 *Trust the last release. Check the next.*
 
-> Status: alpha. 0.2.0 is on PyPI: `pip install garnet-guard`. The GitHub Action is on the [Marketplace](https://github.com/marketplace/actions/garnet-guard). Website, rule pages and replays: [garnetguard.dev](https://garnetguard.dev/).
+> Status: beta. 0.3.0 is on PyPI: `pip install garnet-guard`. The GitHub Action is on the [Marketplace](https://github.com/marketplace/actions/garnet-guard). Website, rule pages and replays: [garnetguard.dev](https://garnetguard.dev/).
 
 ## Why
 
@@ -85,7 +85,7 @@ The example pins the commit tagged `v0.2.0`, the release on PyPI. Inputs, permis
 
 **Locally.** `garnet check` compares two lockfiles, for example your branch against `main`, and checks every package that changed. Once you've reviewed a finding, an ignore in `garnet.toml` silences it until a date you choose ([docs/policy.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/policy.md)). In VS Code, the same findings show on the lockfile lines through the SARIF Viewer extension ([docs/vscode.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/vscode.md)).
 
-**Before an install (preview, on `main` for 0.3).** Put `garnet` in front of pip, uv or npm, and it checks the change before anything is installed, then installs exactly what it checked:
+**Before an install (preview, since 0.3).** Put `garnet` in front of pip, uv or npm, and it checks the change before anything is installed, then installs exactly what it checked:
 
 ```sh
 garnet pip install requests==2.32.3
@@ -95,7 +95,7 @@ garnet npm install left-pad@1.3.0
 
 It resolves with builds turned off (for npm, with scripts and git turned off), so no package's code runs during the check. npm then installs the checked lockfile with `npm ci --ignore-scripts`, and runs install scripts only for packages that didn't change. Findings at or above `fail_on` stop the install (exit 2 for block). A command it can't resolve without building, such as a release that needs a source-only dependency, is reported as not checked, with what you can do, and nothing is installed (exit 3). Details and limits: [docs/install-wrapper.md](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md).
 
-**In agent hooks (preview, on `main` for 0.3).** `garnet hook claude-code` and `garnet hook codex` print a PreToolUse hook configuration. Before the agent runs a pip, uv or npm install, the hook checks it the same way and answers: findings as context, a deny at or above `fail_on`, and an ask (Claude Code) or a deny (Codex) when it can't check the command. The hook never installs. pnpm, yarn, npx and poetry aren't checked yet; the hook says so instead of staying silent. The configurations for both agents: [docs/install-wrapper.md#agent-hooks](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md#agent-hooks).
+**In agent hooks (preview, since 0.3).** `garnet hook claude-code` and `garnet hook codex` print a PreToolUse hook configuration. Before the agent runs a pip, uv or npm install, the hook checks it the same way and answers: findings as context, a deny at or above `fail_on`, and an ask (Claude Code) or a deny (Codex) when it can't check the command. The hook never installs. pnpm, yarn, npx and poetry aren't checked yet; the hook says so instead of staying silent. The configurations for both agents: [docs/install-wrapper.md#agent-hooks](https://github.com/orca-solutions/garnet-guard/blob/main/docs/install-wrapper.md#agent-hooks).
 
 ## Replays of real malicious releases
 
@@ -175,13 +175,13 @@ uv sync
 uv run python -m backtest      # replay 52 malicious releases and the clean corpus
 ```
 
-`garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml and yarn.lock (Yarn 1, and Yarn 2 and later) for npm (on `main` for 0.3; 0.2.0 reads the PyPI lockfiles only). Entries it can't check (not pinned with `==`; from git, a path, a private index or registry; bundled inside another npm package) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. pnpm-lock.yaml and a Yarn 2+ yarn.lock don't record which registry a package comes from, so `garnet check` reads the registry settings beside them (`registry` and `@scope:registry` in .npmrc, `registries` in pnpm-workspace.yaml, `npmRegistryServer` and `npmScopes` in .yarnrc.yml) and lists a package they send to another registry as GRN-E005; nothing else in those files is read or shown. A pnpm-lock.yaml from pnpm 7 or earlier is refused with exit code 3. `garnet --help` lists every option.
+`garnet check` reads uv.lock, poetry.lock, pylock.toml and requirements files for PyPI, and package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml and yarn.lock (Yarn 1, and Yarn 2 and later) for npm (npm since 0.3). Entries it can't check (not pinned with `==`; from git, a path, a private index or registry; bundled inside another npm package) are listed as [GRN-E004](https://garnetguard.dev/rules/GRN-E004) or [GRN-E005](https://garnetguard.dev/rules/GRN-E005), never skipped. pnpm-lock.yaml and a Yarn 2+ yarn.lock don't record which registry a package comes from, so `garnet check` reads the registry settings beside them (`registry` and `@scope:registry` in .npmrc, `registries` in pnpm-workspace.yaml, `npmRegistryServer` and `npmScopes` in .yarnrc.yml) and lists a package they send to another registry as GRN-E005; nothing else in those files is read or shown. A pnpm-lock.yaml from pnpm 7 or earlier is refused with exit code 3. `garnet --help` lists every option.
 
 The exit code is 0 below `--fail-on` (default: the policy's `fail_on`, else `block`), 1 for warn, 2 for block and 3 if Garnet Guard itself failed.
 
 ## Ecosystems
 
-PyPI (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt) and npm (package-lock.json and npm-shrinkwrap.json, lockfileVersion 1 to 3; pnpm-lock.yaml, lockfileVersion 9.0 and 6.x; yarn.lock from Yarn 1 and from Yarn 2 and later; on `main` for 0.3). npm releases are checked for provenance, tags, install scripts and OSV advisories, from a lockfile with `garnet check` or one release at a time with `garnet diff npm:<name> <old> <new>`.
+PyPI (uv.lock, poetry.lock, pylock.toml, pinned requirements.txt) and npm (package-lock.json and npm-shrinkwrap.json, lockfileVersion 1 to 3; pnpm-lock.yaml, lockfileVersion 9.0 and 6.x; yarn.lock from Yarn 1 and from Yarn 2 and later; since 0.3). npm releases are checked for provenance, tags, install scripts and OSV advisories, from a lockfile with `garnet check` or one release at a time with `garnet diff npm:<name> <old> <new>`.
 
 ## Project
 

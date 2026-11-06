@@ -1,6 +1,6 @@
 [project]
 name = "garnet-guard"
-version = "0.2.0"
+version = "0.3.0"
 description = "Release-diff guard: flags trust and content changes between two releases of a dependency"
 readme = "README.md"
 license = "Apache-2.0"
@@ -9,7 +9,7 @@ authors = [{ name = "Garnet contributors" }]
 requires-python = ">=3.11"
 keywords = ["supply-chain", "security", "dependencies", "provenance", "dependabot", "renovate"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
