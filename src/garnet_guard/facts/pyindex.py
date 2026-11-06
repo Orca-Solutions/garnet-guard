@@ -29,6 +29,11 @@ A ``base64.*decode`` whose result reaches a sensitive call is reported with
 that call, so ``exec(base64.b64decode(...))`` is new even where ``exec`` was
 already used.
 
+Encoded literals, values built from literals that reach ``exec`` or a name
+lookup, and lookups on ``os``, ``sys``, ``builtins``, ``ctypes`` and
+``importlib`` by a name the source doesn't hold are indexed as call sites
+marked ``obscured``, for GRN-C005 (see ``obfuscation.py``).
+
 Reads of credentials and CI settings in the same code are indexed too, as
 call sites marked ``read``: an environment variable such as ``GITHUB_TOKEN``
 or ``CI`` (``os.environ[...]``, ``os.getenv``, ``"CI" in os.environ``), the
@@ -49,6 +54,7 @@ from dataclasses import dataclass
 from functools import partial
 
 from ..models import ARGS_TEXT_LIMIT, MAKEFILES, CallSite
+from .obfuscation import Tracker, TreeFacts
 
 SENSITIVE_SET_VERSION = "2026-10-c"
 
@@ -191,6 +197,13 @@ def sensitive_set() -> tuple[str, ...]:
             for twin, targets in sorted(_SAME_AS.items())
         ),
     )
+
+
+# The modules a name in the set starts with, and the modules that hold the
+# same objects: an import of one, by a name built from pieces, is GRN-C005's.
+SENSITIVE_HEADS = frozenset(
+    n.split(".")[0] for n in (*_EXACT, *_PREFIXES, *_SAME_AS, "importlib.import_module")
+) - {"exec", "eval", "compile", "__import__", ""}
 
 
 def _prefix_line(prefix: str) -> str:
@@ -693,6 +706,46 @@ class ModuleScan:
     handed_out: tuple[tuple[str, str], ...] = ()  # own callables handed to a call, with the call
 
 
+@dataclass(frozen=True)
+class ModulePrep:
+    """A module parsed and read once, for ``scan_module`` to scan from its
+    body or from any number of its callables: ``_follow_calls_out`` scans a
+    module once per callable that import-time code reaches (sympy 1.14.0:
+    34,843 scans of 1,533 modules), and parsing and reading the imports
+    again each time cost more than the scans."""
+
+    tree: ast.Module
+    imports: tuple[ast.Import | ast.ImportFrom, ...]  # in ``ast.walk`` order
+    defined: frozenset[str]  # names the module's top level binds
+    reachable: Mapping[str, list[ast.AST]]  # ``_reachable``
+    tree_facts: TreeFacts | None = None  # what GRN-C005's tracker reads first, when it is on
+
+
+def prepare_module(
+    source: bytes,
+    *,
+    path: str = "<module>",
+    tree: ast.Module | None = None,
+    obfuscation: bool = False,
+) -> ModulePrep:
+    """Parse ``source`` (or take ``tree``) and read what every scan of it
+    needs, with GRN-C005's tree facts when ``obfuscation`` is on. Raises
+    SyntaxError/ValueError."""
+    if tree is None:
+        tree = parse(source, path=path)
+    imports = tuple(n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom)))
+    defined: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(stmt.name)
+        elif isinstance(stmt, ast.Assign):
+            defined.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
+        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            defined.add(stmt.target.id)
+    facts = TreeFacts.read(tree) if obfuscation else None
+    return ModulePrep(tree, imports, frozenset(defined), _reachable(tree), facts)
+
+
 def scan_module(
     source: bytes,
     *,
@@ -703,6 +756,8 @@ def scan_module(
     entry: str | None = None,
     handed: str | None = None,
     tree: ast.Module | None = None,
+    prep: ModulePrep | None = None,
+    obfuscation: bool = True,
 ) -> ModuleScan:
     """Index what runs at import, or what runs when ``entry`` is called.
 
@@ -716,26 +771,29 @@ def scan_module(
     (instantiation) or ``Class.method`` defined in the module; an unknown
     entry runs nothing. ``handed`` names the call that ``entry`` was handed to
     when that call is not known to run it; it is carried on every call site.
-    ``tree`` is ``source`` already parsed.
+    ``tree`` is ``source`` already parsed, and ``prep`` is ``source`` already
+    prepared (``prepare_module``), which saves the parse and the read of
+    the imports when a module is scanned from several entries. With
+    ``obfuscation`` off, GRN-C005's sites aren't read: that read costs
+    about as much again as the rest.
     """
-    if tree is None:
-        tree = parse(source, path=path)
+    if prep is None:
+        prep = prepare_module(source, path=path, tree=tree)
+    tree = prep.tree
     resolver = _Resolver()
     if module is not None:
         is_pkg = path.endswith("__init__.py")
         resolver.package = module if is_pkg else module.rpartition(".")[0]
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            resolver.note_import(node)
-    for stmt in tree.body:
-        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            resolver.defined.add(stmt.name)
-        elif isinstance(stmt, ast.Assign):
-            resolver.defined.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
-        elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
-            resolver.defined.add(stmt.target.id)
-
-    reachable = _reachable(tree)
+    for node in prep.imports:
+        resolver.note_import(node)
+    resolver.defined.update(prep.defined)
+    reachable = prep.reachable
+    # GRN-C005, off by default: a None tracker reads nothing.
+    tracker = (
+        Tracker(resolver.resolve, is_sensitive, tree, SENSITIVE_HEADS, prep.tree_facts)
+        if obfuscation
+        else None
+    )
     calls: list[CallSite] = []
     calls_out: set[str] = set()
     handed_out: set[tuple[str, str]] = set()
@@ -772,6 +830,14 @@ def scan_module(
                 calls.append(
                     CallSite(read, getattr(node, "lineno", 0), via, handed_to=handed, read=True)
                 )
+            if tracker is not None:
+                obscured = tracker.sites(node)
+                if isinstance(node, (ast.For, ast.AsyncFor, ast.AugAssign)):
+                    obscured += tracker.forget(node.target)
+                elif isinstance(node, ast.AnnAssign):
+                    obscured += tracker.note_assign(node)
+                for what, line, key in obscured:
+                    calls.append(CallSite(what, line, via, handed_to=handed, obscured=key))
             if isinstance(node, ast.Call):
                 args = [*node.args, *(k.value for k in node.keywords)]
                 name = resolver.resolve(node.func)
@@ -816,6 +882,9 @@ def scan_module(
                     local[node.name] = list(node.body)
             elif isinstance(node, ast.Assign):
                 resolver.note_assignment(node)
+                if tracker is not None:
+                    for what, line, key in tracker.note_assign(node):
+                        calls.append(CallSite(what, line, via, handed_to=handed, obscured=key))
                 for decode in _decoded_inputs([node.value], resolver, decoded):
                     decoded.update((t.id, decode) for t in node.targets if isinstance(t, ast.Name))
                 if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -865,9 +934,10 @@ def index_module(
     project: str | None = None,
     module: str | None = None,
 ) -> tuple[tuple[CallSite, ...], tuple[str, ...]]:
-    """Return (import-time call sites, imports). Raises SyntaxError/ValueError."""
+    """Return (import-time call sites, imports), without GRN-C005's sites.
+    Raises SyntaxError/ValueError."""
     scan = scan_module(source, path=path, own=own, project=project, module=module)
-    return scan.calls, scan.imports
+    return tuple(c for c in scan.calls if c.obscured is None), scan.imports
 
 
 def module_name(path: str) -> str:

@@ -111,7 +111,7 @@ IDs are stable forever. A retired rule keeps its ID reserved. Exact firing condi
 | GRN-C002 | new-build-hook | New `setup.py` logic, custom build backend, or new npm install-time script. |
 | GRN-C003 | new-import-time-exec | New module-level calls to `exec`, `eval`, `compile`, `subprocess`, `os.system`, `ctypes`, sockets or HTTP clients. |
 | GRN-C004 | new-binary | Native code where the trusted release had none or under a name that hides it (a DLL named `.py`, num2words 0.5.15), bytecode with no source beside it or that Python loads in place of its source, and, at info, a library in a new folder. |
-| GRN-C005 | obfuscated-blob (planned) | New long base64/hex/compressed literals, especially passed to exec or decode. |
+| GRN-C005 | obfuscated-blob | New long hex, base64 or compressed literals at import, values built from literals that reach `exec` or a name lookup, and `os`, `sys`, `builtins`, `ctypes` or `importlib` looked up by a name the source doesn't hold (`info`, PyPI). |
 | GRN-C006 | sdist-wheel-mismatch | The wheel the content rules read has a Python file that isn't in the release's own sdist byte for byte and makes sensitive calls the sdist's copy doesn't, or a `.pth` file the sdist lacks. |
 | GRN-C007 | code-not-in-source | A Python file in the release isn't the one at its git tag and has sensitive calls the source lacks (code injected by the build, as in ultralytics 8.3.42). |
 | GRN-C008 | new-dependency | A dependency the old release didn't declare, a warning when it is missing from the registry, less than 90 days old there, or installed from outside it, whoever owns it (event-stream 3.3.6). |

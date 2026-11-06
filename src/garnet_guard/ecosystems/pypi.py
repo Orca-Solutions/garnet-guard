@@ -75,6 +75,7 @@ class FetchContext:
     limits: Limits
     tags: github.TagLookup
     trees: gittree.TreeLookup
+    obfuscation: bool = False  # read GRN-C005's sites (the rule is off by default)
 
 
 def normalize(package: str) -> str:
@@ -666,7 +667,13 @@ def _inspect(
     digest = hashlib.sha256(resp.content).hexdigest()
     if digest != f.sha256.lower():
         return replace(art, inspected=True, downloaded_sha256=digest), [], None, False
-    ins = inspect_artifact(f.filename, resp.content, ctx.limits, sdist=f.packagetype == "sdist")
+    ins = inspect_artifact(
+        f.filename,
+        resp.content,
+        ctx.limits,
+        sdist=f.packagetype == "sdist",
+        obfuscation=ctx.obfuscation,
+    )
     wheel_tag = None
     if f.filename.endswith(".whl"):
         try:

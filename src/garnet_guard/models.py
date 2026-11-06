@@ -256,6 +256,11 @@ class CallSite:
     # it, ``make`` as its Makefile), for GRN-C002 to look up in the sdist:
     # a script the call runs can change while the call doesn't.
     mentions: tuple[str, ...] = ()
+    # GRN-C005: an encoded literal or a name built at run time, not a call. The
+    # key the trusted version must have had for it not to be new: ``blob:`` and
+    # ``built:`` keys anywhere in the trusted release, ``lookup:`` keys in the
+    # same module. ``name`` then says what it is, for the evidence.
+    obscured: str | None = None
 
 
 @dataclass(frozen=True)

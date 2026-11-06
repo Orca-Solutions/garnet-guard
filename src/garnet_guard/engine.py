@@ -54,6 +54,10 @@ class Options:
     check_known_bad: bool = True
     # The day ignores expire against. None means today in UTC.
     today: date | None = None
+    # Read GRN-C005's sites (encoded literals, computed lookups). It costs about
+    # as much again as the rest of the read, so it follows the policy: on when
+    # [garnet.rules] gives GRN-C005 a severity. ``diff`` and ``evaluate`` set it.
+    scan_obfuscation: bool = False
 
 
 ECOSYSTEMS = ("pypi", "npm")
@@ -68,7 +72,11 @@ class Fetcher:
         tags = github.TagLookup(self.http, options.tags_then)
         trees = gittree.TreeLookup(self.http)
         self._pypi = pypi.FetchContext(
-            http=self.http, limits=options.limits, tags=tags, trees=trees
+            http=self.http,
+            limits=options.limits,
+            tags=tags,
+            trees=trees,
+            obfuscation=options.scan_obfuscation,
         )
         self._npm = npm.FetchContext(http=self.http, limits=options.limits, tags=tags)
         self._profiles: dict[tuple[str, str], DependencyProfile] = {}
@@ -321,8 +329,7 @@ def compare(
     reading them come back as GRN-E findings, not exceptions.
     """
     policy = policy or Policy()
-    opts = options or Options()
-    opts = replace(opts, limits=_lowest(opts.limits, policy.limits))
+    opts = _with_policy(options or Options(), policy)
     name = normalize(ecosystem, package)
     versions = [candidate] + ([baseline] if baseline else [])
     with Fetcher(opts) as fetcher:
@@ -331,6 +338,17 @@ def compare(
         cand = with_dependency_profiles(fetcher, base, facts[candidate])
     change = Change(ecosystem, name, baseline, candidate)
     return run_checks(change, base, cand, policy=policy, today=opts.today)
+
+
+def _with_policy(opts: Options, policy: Policy) -> Options:
+    """The options a policy implies: its lower limits, and GRN-C005's read
+    when the policy turns the rule on."""
+    c005 = pol.severity_for(policy, DOCS["GRN-C005"]) > Severity.OFF
+    return replace(
+        opts,
+        limits=_lowest(opts.limits, policy.limits),
+        scan_obfuscation=opts.scan_obfuscation or c005,
+    )
 
 
 def pypi_releases(package: str, options: Options | None = None) -> ProjectReleases:
@@ -345,8 +363,7 @@ def evaluate(
 ) -> list[ChangeResult]:
     """Check many changes with one HTTP client, fetching each release once."""
     policy = policy or Policy()
-    opts = options or Options()
-    opts = replace(opts, limits=_lowest(opts.limits, policy.limits))
+    opts = _with_policy(options or Options(), policy)
     for c in changes:
         if c.ecosystem not in ECOSYSTEMS:
             raise ValueError(f"unsupported ecosystem: {c.ecosystem!r} (supported: pypi, npm)")

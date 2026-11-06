@@ -390,8 +390,11 @@ def test_base64_into_existing_exec_fires() -> None:
     old = INIT + "exec('X = 1')\n"
     new = old + "import base64\nexec(base64.b64decode('aW1wb3J0IG9z'))\n"
     base = release("1.0", {"demo/__init__.py": old})
-    [f] = [f for f in run_checks(CHANGE, base, release("1.1", {"demo/__init__.py": new})).findings]
-    assert f.rule_id == "GRN-C003"
+    found = run_checks(CHANGE, base, release("1.1", {"demo/__init__.py": new})).findings
+    # GRN-C005 would list the decoded value beside it, when turned on
+    # (tests/test_obfuscation.py); it is off by default.
+    assert sorted(f.rule_id for f in found) == ["GRN-C003"]
+    [f] = [f for f in found if f.rule_id == "GRN-C003"]
     assert "base64.b64decode → exec" in f.evidence[0].summary
     assert "GRN-C003" not in rules(base, release("1.1", {"demo/__init__.py": old + "Y = 2\n"}))
 

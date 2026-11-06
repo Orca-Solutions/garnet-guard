@@ -67,7 +67,9 @@ Every run goes through the same five stages, whichever command started it.
 3. **Read the files.** `facts/inventory.py` lists every file in an archive with its size,
    hash and kind. `facts/pyindex.py` parses each Python file with `ast` (Python's own
    parser, which reads code as a tree without running it) and records the sensitive calls
-   that run at import time and the id git would give the file's bytes. `facts/npmmeta.py`
+   that run at import time and the id git would give the file's bytes; `facts/obfuscation.py`
+   adds, from the same walk, the encoded literals and computed lookups GRN-C005 reports.
+   `facts/npmmeta.py`
    reads an npm tarball's file list and the install-time scripts in its `package.json`, and
    `facts/jsscan.py` tokenizes the JavaScript the package loads (skipping comments, strings
    and regular expressions) to find process, network and eval uses for GRN-C011.

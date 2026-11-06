@@ -30,6 +30,8 @@ from garnet_guard.engine import Options, compare, report
 from garnet_guard.models import ChangeResult, DependencyProfile, Requirement, Severity
 from garnet_guard.report import to_text
 
+from . import corpus
+
 HERE = Path(__file__).parent
 DETECTION_RULES_EXCLUDED = {"GRN-K001", "GRN-E001", "GRN-E002", "GRN-E003"}
 
@@ -86,7 +88,10 @@ def _pypi_options(inc: dict[str, Any]) -> Options:
         attested=attested,
     )
     return Options(
-        replay={str(inc["candidate"]): replay}, check_known_bad=False, tags_then=_tags_then(inc)
+        replay={str(inc["candidate"]): replay},
+        check_known_bad=False,
+        tags_then=_tags_then(inc),
+        scan_obfuscation=corpus.C005,
     )
 
 
@@ -129,6 +134,7 @@ def _npm_options(inc: dict[str, Any]) -> Options:
         npm_replay={str(inc["candidate"]): replay},
         check_known_bad=False,
         tags_then=_tags_then(inc),
+        scan_obfuscation=corpus.C005,
     )
 
 
@@ -151,7 +157,7 @@ def run_incidents() -> list[dict[str, object]]:
             str(inc["baseline"]),
             str(inc["candidate"]),
         )
-        result = compare(eco, package, baseline, candidate, options=opts)
+        result = compare(eco, package, baseline, candidate, policy=corpus.POLICY, options=opts)
         rules = _detected(result)
         print(f"=== incident {inc['id']}: {inc['summary']}")
         if opts.tags_then:
@@ -167,7 +173,14 @@ def run_incidents() -> list[dict[str, object]]:
             "verdict": result.verdict.value,
         }
         if opts.tags_then:
-            today = compare(eco, package, baseline, candidate, options=replace(opts, tags_then={}))
+            today = compare(
+                eco,
+                package,
+                baseline,
+                candidate,
+                policy=corpus.POLICY,
+                options=replace(opts, tags_then={}),
+            )
             print("tags as of today:")
             print(to_text(report([today])))
             row["rules_with_todays_tags"] = _detected(today)
@@ -180,7 +193,14 @@ def run_clean() -> list[dict[str, object]]:
     pairs = [("pypi", *p) for p in data["pairs"]] + [("npm", *p) for p in data.get("npm_pairs", [])]
     rows = []
     for eco, package, old, new in pairs:
-        result = compare(eco, package, old, new, options=Options(check_known_bad=False))
+        result = compare(
+            eco,
+            package,
+            old,
+            new,
+            policy=corpus.POLICY,
+            options=Options(check_known_bad=False, scan_obfuscation=corpus.C005),
+        )
         rules = _detected(result)
         errors = sorted({f.rule_id for f in result.findings if f.rule_id.startswith("GRN-E")})
         print(
@@ -205,8 +225,6 @@ def run_clean() -> list[dict[str, object]]:
 def main(argv: list[str]) -> int:
     which = argv[0] if argv else "all"
     if which in ("select", "corpus"):
-        from . import corpus
-
         return corpus.select(argv[1:]) if which == "select" else corpus.corpus(argv[1:])
     out: dict[str, object] = {}
     ok = True

@@ -79,6 +79,7 @@ def artifact(
     package: str = "demo",
     provenance: FileProvenance | None | str = "ok",
     limits: Limits | None = None,
+    obfuscation: bool = False,
 ) -> tuple[ArtifactFacts, tuple[FactError, ...], bytes | None]:
     """One wheel or sdist of ``package``, inspected when ``files`` is given.
 
@@ -101,7 +102,9 @@ def artifact(
     if files is None:
         return art, (), None
     data = wheel(files) if kind == "wheel" else sdist(f"{package}-{version}", files)
-    ins = inspect_artifact(filename, data, limits or Limits(), sdist=kind == "sdist")
+    ins = inspect_artifact(
+        filename, data, limits or Limits(), sdist=kind == "sdist", obfuscation=obfuscation
+    )
     art = replace(
         art,
         inspected=True,
@@ -132,6 +135,7 @@ def release(
     sdist_only: bool = False,
     limits: Limits | None = None,
     compare_sdist: bool = True,
+    obfuscation: bool = False,
 ) -> ReleaseFacts:
     """A release with a wheel (``files``), and an sdist when ``sdist_files`` is given.
 
@@ -148,7 +152,13 @@ def release(
         kinds.append(("sdist", sdist_files))
     for kind, content in kinds:
         art, errs, data = artifact(
-            version, content, kind=kind, package=package, provenance=provenance, limits=limits
+            version,
+            content,
+            kind=kind,
+            package=package,
+            provenance=provenance,
+            limits=limits,
+            obfuscation=obfuscation,
         )
         artifacts.append(art)
         errors.extend(errs)

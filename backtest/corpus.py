@@ -42,6 +42,7 @@ from garnet_guard.models import (
     DependencyProfile,
     FactError,
     Limits,
+    Policy,
     ReleaseFacts,
     Severity,
 )
@@ -57,8 +58,12 @@ FIRST = {
 }
 NOT_DETECTION = {"GRN-K001", "GRN-E001", "GRN-E002", "GRN-E003"}
 RELEASES_PER_PACKAGE = 11  # 11 releases give 10 updates per package
-CACHE_FORMAT = 59  # 58 + cwd in front of the paths a setup.py call names
+CACHE_FORMAT = 60  # 59 + GRN-C005 (off by default; read only when asked)
 PY = f"{sys.version_info.major}{sys.version_info.minor}"
+# GRN-C005 is off by default and its read costs about as much again as the
+# rest, so the backtest reads its sites only when asked, in a cache of its own.
+C005 = os.environ.get("GARNET_BACKTEST_C005", "") not in ("", "0")
+POLICY = Policy(rules={"GRN-C005": Severity.INFO}) if C005 else Policy()
 
 
 def _ecosystem(argv: list[str]) -> tuple[str, int, list[str]]:
@@ -206,7 +211,7 @@ class FactCache:
     def __init__(self, root: Path) -> None:
         # Facts hold syntax-tree digests (GRN-C002's argument keys), whose
         # fields can differ between Python versions, so each version caches apart.
-        self.root = root / f"v{CACHE_FORMAT}-garnet-{__version__}-py{PY}"
+        self.root = root / f"v{CACHE_FORMAT}-garnet-{__version__}-py{PY}{'-c005' if C005 else ''}"
 
     def _path(self, ecosystem: str, package: str, version: str) -> Path:
         return self.root / ecosystem / package / f"{version}.json"
@@ -332,7 +337,9 @@ def fetch_package(
 
         else:
             trees = gittree.TreeLookup(http)
-            pctx = pypi.FetchContext(http=http, limits=Limits(), tags=tags, trees=trees)
+            pctx = pypi.FetchContext(
+                http=http, limits=Limits(), tags=tags, trees=trees, obfuscation=C005
+            )
 
             def fetch(v: str) -> ReleaseFacts:
                 return pypi.release_facts(package, v, pctx, advisories=False)
@@ -375,7 +382,7 @@ def run_package(
     rows: list[dict[str, Any]] = []
     for old, new in zip(versions, versions[1:], strict=False):
         cand = with_profiles(ecosystem, facts[old], facts[new], profiles)
-        result = run_checks(Change(ecosystem, package, old, new), facts[old], cand)
+        result = run_checks(Change(ecosystem, package, old, new), facts[old], cand, policy=POLICY)
         findings = finding_rows(result)
         warn_rules = sorted(
             {
