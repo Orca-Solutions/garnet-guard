@@ -412,20 +412,22 @@ class Tracker:
         sensitive: Callable[[str], bool],
         tree: ast.AST | None = None,
         heads: frozenset[str] = frozenset(),
+        facts: TreeFacts | None = None,
     ) -> None:
         self.resolve = resolve
         self.sensitive = sensitive
         self.heads = heads  # modules a §6.3 name starts with: os, subprocess, socket, ...
         self.names: dict[str, Built] = {}  # names bound to a literal or a built value
         self.consumed: set[int] = set()  # nodes already described by an enclosing site
-        self.rebound = _rebound(tree) if tree is not None else frozenset()
+        if facts is None:
+            facts = TreeFacts.read(tree) if tree is not None else TreeFacts()
+        self.rebound = facts.rebound
         self.depth = 0
         self.loop: dict[str, Built] = {}  # a comprehension's variable, while it is folded
-        nodes = sum(1 for _ in ast.walk(tree)) if tree is not None else 0
-        self.allowance = BUILD_ALLOWANCE + BUILDS_PER_NODE * nodes
+        self.allowance = BUILD_ALLOWANCE + BUILDS_PER_NODE * facts.nodes
         self.stopped = False  # past a value Garnet couldn't read: nothing more is tracked
         self.blobs: dict[tuple[int, str | bytes], Blob | None] = {}
-        self.stored = _stored(tree) if tree is not None else frozenset()
+        self.stored = facts.stored
 
     def callee(self, func: ast.expr) -> str | None:
         """The dotted name of what a call calls. ``bytes.fromhex`` too, which the
@@ -887,6 +889,21 @@ class Tracker:
             return [(what, f"built:{how}:{mod}:{built.key()}")]
         what = f"looks up {target} by a name not written in the source: {written_call}"
         return [(what, f"lookup:{mod}{how}{_written_key(key)}")]
+
+
+@dataclass(frozen=True)
+class TreeFacts:
+    """What a ``Tracker`` reads from a whole module before tracking: read once
+    per module (``pyindex.ModulePrep``) when the module is scanned from many
+    entries, since each read walks the whole tree."""
+
+    rebound: frozenset[str] = frozenset()  # names the module rebinds (``_rebound``)
+    stored: frozenset[str] = frozenset()  # ``sys.modules`` keys it stores (``_stored``)
+    nodes: int = 0  # size of the tree, for the build allowance
+
+    @classmethod
+    def read(cls, tree: ast.AST) -> TreeFacts:
+        return cls(_rebound(tree), _stored(tree), sum(1 for _ in ast.walk(tree)))
 
 
 def _rebound(tree: ast.AST) -> frozenset[str]:

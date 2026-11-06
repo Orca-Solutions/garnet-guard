@@ -51,7 +51,7 @@ from collections.abc import Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 
 from ..models import CallSite
-from .obfuscation import Tracker
+from .obfuscation import Tracker, TreeFacts
 
 SENSITIVE_SET_VERSION = "2026-10-c"
 
@@ -715,13 +715,19 @@ class ModulePrep:
     imports: tuple[ast.Import | ast.ImportFrom, ...]  # in ``ast.walk`` order
     defined: frozenset[str]  # names the module's top level binds
     reachable: Mapping[str, list[ast.AST]]  # ``_reachable``
+    tree_facts: TreeFacts | None = None  # what GRN-C005's tracker reads first, when it is on
 
 
 def prepare_module(
-    source: bytes, *, path: str = "<module>", tree: ast.Module | None = None
+    source: bytes,
+    *,
+    path: str = "<module>",
+    tree: ast.Module | None = None,
+    obfuscation: bool = False,
 ) -> ModulePrep:
     """Parse ``source`` (or take ``tree``) and read what every scan of it
-    needs. Raises SyntaxError/ValueError."""
+    needs, with GRN-C005's tree facts when ``obfuscation`` is on. Raises
+    SyntaxError/ValueError."""
     if tree is None:
         tree = parse(source, path=path)
     imports = tuple(n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom)))
@@ -733,7 +739,8 @@ def prepare_module(
             defined.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
         elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
             defined.add(stmt.target.id)
-    return ModulePrep(tree, imports, frozenset(defined), _reachable(tree))
+    facts = TreeFacts.read(tree) if obfuscation else None
+    return ModulePrep(tree, imports, frozenset(defined), _reachable(tree), facts)
 
 
 def scan_module(
@@ -780,7 +787,9 @@ def scan_module(
     reachable = prep.reachable
     # GRN-C005, off by default: a None tracker reads nothing.
     tracker = (
-        Tracker(resolver.resolve, is_sensitive, tree, SENSITIVE_HEADS) if obfuscation else None
+        Tracker(resolver.resolve, is_sensitive, tree, SENSITIVE_HEADS, prep.tree_facts)
+        if obfuscation
+        else None
     )
     calls: list[CallSite] = []
     calls_out: set[str] = set()

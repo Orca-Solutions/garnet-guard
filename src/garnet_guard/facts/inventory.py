@@ -478,7 +478,9 @@ def _follow_calls_out(
             index = result.modules[by_module[mod]]
             try:
                 if mod not in preps:
-                    preps[mod] = prepare_module(sources[mod], path=index.path)
+                    preps[mod] = prepare_module(
+                        sources[mod], path=index.path, obfuscation=obfuscation
+                    )
                 prep = preps[mod]
                 scans[target, to] = (
                     None

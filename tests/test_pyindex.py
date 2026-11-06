@@ -759,10 +759,13 @@ def test_a_module_reached_from_many_entries_is_parsed_once(monkeypatch) -> None:
     assert sorted({(c.via, c.from_module) for c in helpers_index.top_level_calls}) == [
         (f"h{i}", f"demo/m{i}.py") for i in range(5)
     ]
-    # A prepared module scans the same as a fresh one, from the body or an entry.
+    # A prepared module scans the same as a fresh one, from the body or an
+    # entry, with GRN-C005's tracker reading the tree facts the prep holds.
     src = helpers.encode()
-    prep = prepare_module(src, path="demo/helpers.py")
-    for entry in (None, "h2"):
-        assert scan_module(src, path="demo/helpers.py", entry=entry, prep=prep) == scan_module(
-            src, path="demo/helpers.py", entry=entry
-        )
+    for on in (False, True):
+        prep = prepare_module(src, path="demo/helpers.py", obfuscation=on)
+        assert (prep.tree_facts is not None) is on
+        for entry in (None, "h2"):
+            assert scan_module(
+                src, path="demo/helpers.py", entry=entry, prep=prep, obfuscation=on
+            ) == scan_module(src, path="demo/helpers.py", entry=entry, obfuscation=on)
