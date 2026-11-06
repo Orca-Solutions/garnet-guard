@@ -234,6 +234,7 @@ class FileEntry:
 
 
 ARGS_TEXT_LIMIT = 1000  # characters of a call's argument text kept in CallSite.args
+MAKEFILES = ("GNUmakefile", "makefile", "Makefile")  # what ``make`` reads, in make's order
 
 
 @dataclass(frozen=True)
@@ -251,6 +252,10 @@ class CallSite:
     # clipped; ``args_key`` a hash of the full, normalized tree, to compare.
     args: str | None = None
     args_key: str | None = None
+    # Relative paths the arguments may name (each string, and each word of
+    # it, ``make`` as its Makefile), for GRN-C002 to look up in the sdist:
+    # a script the call runs can change while the call doesn't.
+    mentions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

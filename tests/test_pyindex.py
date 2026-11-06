@@ -341,6 +341,61 @@ def test_build_script_calls_through_an_alias_are_the_calls_they_name() -> None:
     }
 
 
+def test_build_script_calls_record_the_paths_their_strings_may_name() -> None:
+    from garnet_guard.facts.pyindex import MENTION_LIMIT, index_build_script
+
+    src = (
+        "import subprocess, os\n"
+        "cmd = ['sh', './scripts/build.sh', '-v']\n"
+        "subprocess.call(cmd, cwd='docs')\n"
+        "os.system('make -C docs html; /usr/bin/env python ./gen.py')\n"
+        f"os.system('{'x' * (MENTION_LIMIT + 1)}' + 'y')\n"
+    )
+    call, system, long = index_build_script(src.encode())
+    assert long.mentions == ("y",)
+    assert call.mentions == ("docs/-v", "docs/scripts/build.sh", "docs/sh")
+    assert system.mentions == (
+        "-C",
+        "GNUmakefile",
+        "Makefile",
+        "docs",
+        "gen.py",
+        "html;",
+        "make",
+        "make -C docs html; /usr/bin/env python ./gen.py",
+        "makefile",
+        "python",
+    )
+
+
+def test_a_build_script_calls_cwd_says_where_its_paths_are() -> None:
+    """A ``cwd`` written out, or held by a variable the index follows, goes in
+    front of each path; a ``cwd`` that can't be read, or is absolute, leaves
+    no path to look up, since the files aren't where a name alone says."""
+    from garnet_guard.facts.pyindex import index_build_script
+
+    def mentions(line: str) -> tuple[str, ...]:
+        src = "import subprocess, os\nwhere = 'vendor/libuv'\n" + line + "\n"
+        [c] = index_build_script(src.encode())
+        return c.mentions
+
+    under = (
+        "vendor/libuv/GNUmakefile",
+        "vendor/libuv/Makefile",
+        "vendor/libuv/make",
+        "vendor/libuv/makefile",
+    )
+    root = ("GNUmakefile", "Makefile", "make", "makefile")
+    assert mentions("subprocess.run(['make'], cwd='vendor/libuv/')") == under
+    assert mentions("subprocess.run(['make'], cwd='./vendor/libuv')") == under
+    assert mentions("subprocess.run(['make'], cwd=where)") == under
+    assert mentions("subprocess.run(['make'], cwd='.')") == root
+    assert mentions("subprocess.run(['make'], cwd=None)") == root
+    assert mentions("subprocess.run(['make'], cwd=os.path.dirname(__file__))") == ()
+    assert mentions("subprocess.run(['make'], cwd='/tmp')") == ()
+    assert mentions("subprocess.run(['make'], cwd=where + '/x')") == ()
+
+
 def test_build_script_variables_are_read_as_the_literal_they_hold() -> None:
     """A variable bound once, to a value written out in full, that nothing else
     touches, is keyed as that value and shown beside the call."""

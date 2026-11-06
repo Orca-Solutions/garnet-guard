@@ -48,7 +48,7 @@ from collections.abc import Callable, Container, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from functools import partial
 
-from ..models import ARGS_TEXT_LIMIT, CallSite
+from ..models import ARGS_TEXT_LIMIT, MAKEFILES, CallSite
 
 SENSITIVE_SET_VERSION = "2026-10-c"
 
@@ -951,8 +951,18 @@ def sensitive_calls(
     bindings = _Bindings(tree, passed)
     kept = []
     for call, name, via, scope in found:
-        args, key = call_arguments(call, shapes, partial(bindings.value, scope))
-        kept.append(CallSite(name=name, line=call.lineno, via=via, args=args, args_key=key))
+        follow = partial(bindings.value, scope)
+        args, key = call_arguments(call, shapes, follow)
+        kept.append(
+            CallSite(
+                name=name,
+                line=call.lineno,
+                via=via,
+                args=args,
+                args_key=key,
+                mentions=argument_mentions(call, follow),
+            )
+        )
     return tuple(sorted(kept, key=lambda c: (c.line, c.name, c.via or "", c.args_key or "")))
 
 
@@ -1198,6 +1208,68 @@ def call_arguments(
     if len(text) > ARGS_TEXT_LIMIT:
         text = text[: ARGS_TEXT_LIMIT - 1] + "…"
     return text, key
+
+
+MENTION_LIMIT = 200  # characters of a string argument read as a path
+
+
+def argument_mentions(
+    call: ast.Call, follow: Callable[[str], ast.expr | None] | None = None
+) -> tuple[str, ...]:
+    """The relative paths a call's string arguments may name, for a check to
+    look up among the release's files: each string constant in the
+    arguments (and in a variable ``follow`` reads), each whitespace-separated
+    word of it, with a leading ``./`` taken off, and the files ``make``
+    reads for the word ``make``, each under the directory a ``cwd`` keyword
+    names. An absolute path, an empty string and a string over
+    ``MENTION_LIMIT`` characters are left out. A ``cwd`` that isn't a string
+    written out (or held by a variable ``follow`` reads), or that is
+    absolute, puts the paths where this can't see, so none is recorded.
+    Nothing is evaluated: ``'build.sh'`` is read as a name, not opened.
+    """
+    base = ""
+    nodes: list[ast.AST] = list(call.args)
+    for k in call.keywords:
+        if k.arg != "cwd":
+            nodes.append(k.value)
+            continue
+        where: ast.expr | None = k.value
+        if follow is not None and isinstance(where, ast.Name) and isinstance(where.ctx, ast.Load):
+            where = follow(where.id)
+        if isinstance(where, ast.Constant) and where.value is None:
+            continue
+        if not (isinstance(where, ast.Constant) and isinstance(where.value, str)):
+            return ()
+        base = where.value
+        while base.startswith("./"):
+            base = base[2:]
+        base = base.rstrip("/")
+        if base.startswith("/") or "\0" in base:
+            return ()
+        if base == ".":
+            base = ""
+    if follow is not None:
+        for a in list(nodes):
+            if isinstance(a, ast.Name) and isinstance(a.ctx, ast.Load):
+                value = follow(a.id)
+                if value is not None:
+                    nodes.append(value)
+    out: set[str] = set()
+    for node in nodes:
+        for n in ast.walk(node):
+            if not (isinstance(n, ast.Constant) and isinstance(n.value, str)):
+                continue
+            text = n.value
+            if len(text) > MENTION_LIMIT:
+                continue
+            for word in {text, *text.split()}:
+                if word == "make":
+                    out.update(f"{base}/{m}" if base else m for m in MAKEFILES)
+                while word.startswith("./"):
+                    word = word[2:]
+                if word and not word.startswith("/") and "\0" not in word:
+                    out.add(f"{base}/{word}" if base else word)
+    return tuple(sorted(out))
 
 
 def index_build_script(source: bytes, *, path: str = "setup.py") -> tuple[CallSite, ...]:

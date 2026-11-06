@@ -64,6 +64,19 @@ argument trees, counted with repeats:
   the trusted `subprocess.call` or `subprocess.check_call`, so renaming a call isn't a
   change and a new command given to the renamed call is. The alias counts from the line it
   is assigned, and a name the file defines itself (`def call(...)`) is never one.
+- A call whose arguments didn't change may still run something that did: the strings in
+  its arguments (each string, each word of it, and the Makefile behind `make`), under the
+  directory a `cwd` keyword names, are looked up among the sdist's files, and a file they
+  name that changed since the trusted release, or
+  that the trusted sdist didn't have, is reported (`calls subprocess.call(['sh',
+  'build.sh']) as 1.0 did, but build.sh changed since 1.0`). Only a file that runs counts: a
+  Python or shell script outside the release's own packages, or the Makefile behind `make`.
+  A `cwd` the rule can't read (a path the script computes) or an absolute one means the files
+  aren't where a name alone says, so nothing is looked up for that call.
+  `setup.py` naming itself (`python setup.py sdist`), data a call reads or writes
+  (`pyproject.toml`, a `.gitrev`) and the release's own modules (`exec(open('pkg/_version.py').read())`,
+  which GRN-C003 and the other content rules read already) don't. A path built at run
+  time, a file outside the sdist, and what a changed file does are not read.
 - A changed call is shown beside a trusted call to the same name that nothing matched, in
   line order, with both argument lists. A long shared beginning is cut to its last 20
   characters so the place they differ stays on the line.

