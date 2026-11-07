@@ -1,6 +1,6 @@
 # Garnet Guard in VS Code
 
-Garnet Guard has no VS Code extension yet. One is planned for after 0.3 ([ROADMAP.md](../ROADMAP.md), [SPEC §10.5](SPEC-v1.md#105-vs-code-extension)): it will run `garnet check` when a lockfile changes and put each finding on the line that pins the new version. Until then, two things work in VS Code with no extension of Garnet's own.
+Garnet Guard has no VS Code extension yet. One is planned for 1.0, targeted for January 31, 2027 ([ROADMAP.md](../ROADMAP.md), [SPEC §10.5](SPEC-v1.md#105-vs-code-extension)): it will run `garnet check` when a lockfile changes and put each finding on the line that pins the new version. Until then, two things work in VS Code with no extension of Garnet's own.
 
 ## The Action's comment, in the editor
 
