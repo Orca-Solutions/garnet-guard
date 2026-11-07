@@ -84,6 +84,19 @@ jobs:
         run: |
           mkdir provenance
           cp "$BUNDLE" "provenance/garnet_guard-${TAG#v}.provenance.sigstore.json"
+          # The same bundle as one JSON line: the .intoto.jsonl name is how
+          # tools such as OpenSSF Scorecard find build provenance.
+          jq -c . "$BUNDLE" > "provenance/garnet_guard-${TAG#v}.intoto.jsonl"
+      - name: Check both copies verify against this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          for file in dist/*; do
+            for bundle in provenance/*; do
+              gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" --bundle "$bundle"
+            done
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: provenance
