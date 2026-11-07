@@ -2,6 +2,12 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-11-06: 0.3.0 released
+
+**State.** 0.3.0, the first beta, is on PyPI with the `4 - Beta` classifier, tagged `v0.3.0` at `0bdfb20`, the merge of #130. The release workflow passed, Verify included, and drafted the GitHub release with the signed files. The changelog date, 2026-11-06, is the day of the tag. The Action examples in the README, docs/action.md and `action/examples/` pin `0bdfb20`. The dogfood workflow still pins `69c8e01` on main.
+
+**Open tasks.** Publish the draft GitHub release. On the site, bump the rule-page pin to `v0.3.0` and quote 637 of 18,181.
+
 ## 2026-11-06: clean-corpus numbers for 0.3.0
 
 **State.** The top-1,000 PyPI corpus was run on 0.3.0's code (main at `680789c`, GRN-C005 off by default) from an empty cache: 331 of 9,439 updates flagged for a look (3.5%, 0.2.0: 300), in 243 packages. npm is unchanged at 306 of 8,742 (the 0.3 run flags the same updates with the same rules; only release counts in `info` text moved, so its files stay). Combined: 637 of 18,181 (3.5%, 0.2.0: 606, 3.3%). `backtest/corpus-results-pypi-1000/` holds the new `updates.json`, `summary.json`, `triage.json` and REPORT; README, the badge, ARCHITECTURE, PROJECT_BRIEF, the expert brief and rule coverage quote the new numbers.

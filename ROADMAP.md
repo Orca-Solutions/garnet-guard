@@ -6,7 +6,7 @@ Months count from the repository going live. Version numbers are targets, not pr
 |---|---|---|
 | 0.1 | end of month 1 | Engine and PyPI checks, CLI |
 | 0.2 | end of month 2 (launch week from Tue Dec 8, 2026) | Public launch: GitHub Action, policy, docs, replay write-up |
-| 0.3 | month 3 (January 2027) | Second beat: install wrapper, agent hooks, full backtest |
+| 0.3 | month 3 (January 2027); 0.3.0 released 2026-11-06 | Second beat: install wrapper, agent hooks, full backtest |
 | **1.0** | months 4–6 | Stable interfaces, acceptance criteria met |
 | **2.x** | months 6–12 | History and depth: richer baselines, new signals, plugins |
 | **3.x** | year 2 | Breadth and upstream: more ecosystems, native adoption |
@@ -18,7 +18,7 @@ Months count from the repository going live. Version numbers are targets, not pr
 - [x] Create `orca-solutions/garnet-guard` **public from day one** (ADR-0011) and seed it from the founding documents
 - [x] Turn on GitHub private vulnerability reporting
 - [ ] Branch protection and required signed commits
-- [x] Reserve `garnet-guard` on PyPI with Trusted Publishing configured (ADR-0007); 0.1.0a1 and 0.2.0 are published
+- [x] Reserve `garnet-guard` on PyPI with Trusted Publishing configured (ADR-0007); 0.1.0a1, 0.2.0 and 0.3.0 are published
 - [ ] GitHub Sponsors and `.github/FUNDING.yml`
 - [ ] Enable GitHub Discussions as the community space (off for now; questions go to issues)
 
@@ -103,12 +103,13 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 ## Month 3 → 0.3: second beat (January 2027)
 
 - [x] Install wrapper: `garnet pip install …`, `garnet uv add|remove|lock|sync` (preview; [docs/install-wrapper.md](docs/install-wrapper.md))
-- [ ] Install wrapper for npm, pnpm and yarn: waits on the npm lockfile parsers (package-lock, pnpm-lock, yarn.lock); the hooks report these installs as not checked until then
+- [x] Install wrapper for npm: `garnet npm install|ci|update` (preview; [docs/install-wrapper.md](docs/install-wrapper.md#npm)), checked by the hooks too
+- [ ] Install wrapper for pnpm and yarn; the hooks report these installs as not checked until then
 - [x] Pre-install hooks for Claude Code and Codex (SPEC §10.4), pip and uv (preview), announced as the second beat
 - [x] Rule GRN-C005, off by default, `info` when turned on ([#54](https://github.com/orca-solutions/garnet-guard/issues/54)); GRN-T006 and C004 moved to the launch list in [Closing the evasion gaps](#closing-the-evasion-gaps)
 - [x] Rule GRN-C006 ([#60](https://github.com/orca-solutions/garnet-guard/issues/60))
-- [ ] npm adapter, if it didn't make the launch
-- [ ] Full backtest on the 1.0 clean corpus (SPEC §13.2: the last 11 releases of the top 1,000 PyPI and top 1,000 npm packages) with the 0.3 rules (January–February); publish warn rate per rule and set the 1.0 target. These numbers feed the PyCon talk.
+- [x] npm adapter (in 0.2)
+- [x] Full backtest on the 1.0 clean corpus (SPEC §13.2: the last 11 releases of the top 1,000 PyPI and top 1,000 npm packages) with the 0.3 rules (January–February); publish warn rate per rule and set the 1.0 target. These numbers feed the PyCon talk. Run 2026-11-06 on 0.3.0's rules: 637 of 18,181 updates flagged for a look (3.5%), with per-rule counts in [backtest/corpus-results-pypi-1000/REPORT.md](backtest/corpus-results-pypi-1000/REPORT.md) and [backtest/corpus-results-npm-1000/REPORT.md](backtest/corpus-results-npm-1000/REPORT.md); the 1.0 target is still to set.
 
 **Exit:** the wrapper and hooks ship; the full backtest is published.
 
