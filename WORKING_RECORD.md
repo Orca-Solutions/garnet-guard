@@ -2,6 +2,12 @@
 
 Current state, open tasks, verification and review dispositions. Newest first.
 
+## 2026-11-07: 1.0 target moved to January 31, 2027
+
+**State.** The maintainer moved 1.0 from months 4–6 to January 31, 2027, with the full listed scope: the SPEC §13 criteria and interface freeze, the VS Code extension (SPEC §10.5, previously about February to March 2027) and every open gap check (#55–#59, #61–#63, #91, #92), plus the pnpm and yarn install wrapper. Gate A, Gate B and the Alpha-Omega application keep their dates.
+
+**Open tasks.** Set the §13.2 overall warn-rate target. The site's /roadmap/ page changes in gg-landing to match.
+
 ## 2026-11-06: 0.3.0 released
 
 **State.** 0.3.0, the first beta, is on PyPI with the `4 - Beta` classifier, tagged `v0.3.0` at `0bdfb20`, the merge of #130. The release workflow passed, Verify included, and drafted the GitHub release with the signed files. The changelog date, 2026-11-06, is the day of the tag. The Action examples in the README, docs/action.md and `action/examples/` pin `0bdfb20`. The dogfood workflow still pins `69c8e01` on main.

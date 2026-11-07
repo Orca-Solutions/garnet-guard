@@ -7,7 +7,7 @@ Months count from the repository going live. Version numbers are targets, not pr
 | 0.1 | end of month 1 | Engine and PyPI checks, CLI |
 | 0.2 | end of month 2 (launch week from Tue Dec 8, 2026) | Public launch: GitHub Action, policy, docs, replay write-up |
 | 0.3 | month 3 (January 2027); 0.3.0 released 2026-11-06 | Second beat: install wrapper, agent hooks, full backtest |
-| **1.0** | months 4–6 | Stable interfaces, acceptance criteria met |
+| **1.0** | January 31, 2027 | Stable interfaces, acceptance criteria met, VS Code extension, the remaining gap checks |
 | **2.x** | months 6–12 | History and depth: richer baselines, new signals, plugins |
 | **3.x** | year 2 | Breadth and upstream: more ecosystems, native adoption |
 
@@ -76,7 +76,7 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 - [x] JavaScript content rule for npm (GRN-C011, at `info`; a dependency-free scan) [#52](https://github.com/orca-solutions/garnet-guard/issues/52)
 - [x] Package-level capability signal: measured on the corpus and replays, and not built, since it added no detection and misses ultralytics 8.3.42 [#53](https://github.com/orca-solutions/garnet-guard/issues/53)
 
-**After launch (0.3 to 1.0):**
+**After launch (0.3 to 1.0, by January 31, 2027):**
 
 - [x] GRN-C005 obfuscated-blob, off by default (`info` when a policy turns it on): new encoded literals at import, values built from literals that reach `exec` or a name lookup, and `os`, `sys`, `builtins`, `ctypes` or `importlib` looked up by a name the source doesn't hold (PyPI; JavaScript not yet). Measure on the corpus before choosing `warn` [#54](https://github.com/orca-solutions/garnet-guard/issues/54)
 - [ ] A listed call reached by reference: passed to another call (`Thread(target=os.system)`) or assigned to another name (`json.dumps = subprocess.Popen`) [#91](https://github.com/orca-solutions/garnet-guard/issues/91)
@@ -113,11 +113,13 @@ A red-team pass over the rules on 2026-10-30 listed the ways a malicious release
 
 **Exit:** the wrapper and hooks ship; the full backtest is published.
 
-## Months 4–6 → 1.0: stabilize
+## 1.0: stabilize (target January 31, 2027)
+
+The target moved from months 4–6 to January 31, 2027 on 2026-11-07. Everything below and every open gap check above is in scope for 1.0; the gates and the Alpha-Omega application keep their own dates.
 
 - [ ] Meet every acceptance criterion in SPEC §13
 - [ ] Freeze the JSON schema, policy `version = 1`, Action inputs and the public Python API
-- [ ] VS Code extension (SPEC §10.5), built after 0.3 and alongside the freeze (about February to March 2027): a thin shell over the CLI in its own repository, free, on the Marketplace and Open VSX. It watches the lockfiles `garnet check` reads, runs the check in the background when one changes against the git base, shows each finding on the line that pins the new version with the rule page linked (`warn` and `block` as squiggles, `info` in the Problems panel only), and offers one quick fix that writes an expiring ignore to `garnet.toml`. No rule lives in the extension, it runs only in trusted workspaces, and it sends nothing anywhere. It needs the download cache (`--cache-dir`), the npm lockfile parsers and the frozen JSON schema first. Until it ships, `garnet check --format sarif` opens in Microsoft's SARIF Viewer extension with the same findings on the same lines ([docs/vscode.md](docs/vscode.md)).
+- [ ] VS Code extension (SPEC §10.5), built after 0.3 and alongside the freeze, for 1.0 (January 2027): a thin shell over the CLI in its own repository, free, on the Marketplace and Open VSX. It watches the lockfiles `garnet check` reads, runs the check in the background when one changes against the git base, shows each finding on the line that pins the new version with the rule page linked (`warn` and `block` as squiggles, `info` in the Problems panel only), and offers one quick fix that writes an expiring ignore to `garnet.toml`. No rule lives in the extension, it runs only in trusted workspaces, and it sends nothing anywhere. It needs the download cache (`--cache-dir`), the npm lockfile parsers and the frozen JSON schema first. Until it ships, `garnet check --format sarif` opens in Microsoft's SARIF Viewer extension with the same findings on the same lines ([docs/vscode.md](docs/vscode.md)).
 - [ ] Long-run fuzzing for every parser; an external security review of `safe_archive.py`, `net.py` and the Action if a grant or volunteer allows
 - [ ] Respond to launch feedback: false-positive fixes take priority over new rules
 - [ ] OpenSSF Alpha-Omega application in its first window after launch data (target April 2027)
